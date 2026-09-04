@@ -91,7 +91,12 @@
     </div>
   </div>
   <header class="h-16 bg-slate-950 border-b border-slate-800 px-6 flex items-center justify-between sticky top-0 z-30">
-    <div><h1 class="font-black text-xl">OTAMATİK <span class="text-blue-500">EDIT</span></h1><p class="text-[10px] text-slate-500">Manuel kurgu + akıllı kırpma</p></div>
+    <div>
+      <h1 class="font-black text-xl">OTAMATİK <span class="text-blue-500">EDIT</span></h1>
+      <p class="text-[10px] text-slate-500 flex items-center gap-2">
+        Manuel kurgu + akıllı kırpma <span id="app-version-display" class="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded-md">v1.0.0</span>
+      </p>
+    </div>
     <nav class="bg-slate-900 border border-slate-800 rounded-xl p-1 flex">
       <button class="tab active px-5 py-2 rounded-lg text-sm font-bold" data-tab="manual">1. Manuel Edit</button>
       <button class="tab px-5 py-2 rounded-lg text-sm font-bold text-slate-400" data-tab="auto">2. Otomatik Kırpıcı</button>
@@ -1374,6 +1379,11 @@
     /* ═══════════════════════════════════════════════════════
        Güncelleme Sistemi
        ═══════════════════════════════════════════════════════ */
+    fetch('/api/version').then(r=>r.json()).then(d=>{
+      const el = document.getElementById('app-version-display');
+      if (el) el.textContent = 'v' + d.version;
+    }).catch(e=>{});
+
     (async function checkForUpdates(){
       try{
         const res=await fetch('/api/check-update');
