@@ -1,0 +1,20 @@
+# Python / venv
+venv/
+.venv-windows/
+__pycache__/
+*.pyc
+*.pyo
+
+# Kullanıcı verileri
+uploads/
+outputs/
+projects/
+.backup/
+
+# Windows yerel araçlar
+tools/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp

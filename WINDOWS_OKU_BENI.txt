@@ -1,0 +1,34 @@
+OTOMATIK EDIT - WINDOWS KULLANIMI
+=================================
+
+Desteklenen sistem: Windows 10 veya Windows 11, 64-bit.
+
+ILK KEZ KURULUM
+1. Bu klasoru bilgisayara tamamen kopyalayin ve ZIP icindeyse cikartin.
+2. Python 3.11 (64-bit) kurulu degilse https://www.python.org/downloads/windows/
+   adresinden kurun. Kurulum ekraninda "Add python.exe to PATH" secenegini acin.
+3. WINDOWS_KUR.bat dosyasina cift tiklayin.
+4. Kurulumun tamamlanmasini bekleyin. Ilk kurulum internet hizina gore uzun surebilir.
+
+PROGRAMI ACMA
+1. WINDOWS_BASLAT.bat dosyasina cift tiklayin.
+2. Tarayici otomatik olarak http://127.0.0.1:4242 adresinde acilir.
+3. Program acikken siyah komut penceresini kapatmayin.
+4. Kapatmak icin komut penceresinde Ctrl+C tuslarina basin.
+
+NOTLAR
+- FFmpeg proje klasorune otomatik kurulur; Windows PATH ayari veya yonetici izni gerekmez.
+- Otomatik altyazi ve kelime analizi modelleri ilk kullanimda indirildigi icin internet gerekir.
+- Otomatik altyazi Windows'ta dusuk bellekli modelle ayri bir islemde calisir. Model hata
+  verirse editor acik kalir ve ekranda anlasilir bir hata mesaji gosterilir.
+- Proje adi verip "Projeyi kaydet" dugmesine basin. Ani kapanmaya karsi otomatik kurtarma
+  aciktir; kayitli projeler ve bir proje icindeki birden fazla timeline tekrar acilabilir.
+- Projeyi OneDrive gibi surekli esitleme yapan klasor yerine normal bir klasorde calistirmak
+  daha sagliklidir (ornegin C:\OtomatikEdit).
+- Klasoru baska yere tasirsaniz .venv-windows klasorunu silip WINDOWS_KUR.bat dosyasini
+  yeniden calistirin.
+
+SORUN OLURSA
+- WINDOWS_KUR.bat dosyasini yeniden calistirin.
+- Python bulunamadi hatasinda Python 3.11 64-bit kurup bilgisayari yeniden baslatin.
+- Port kullanimda hatasinda ayni programin acik olan diger penceresini kapatin.
