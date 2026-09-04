@@ -53,6 +53,8 @@ Windows bilgisayarda proje klasörünü ZIP'ten tamamen çıkartın. Python 3.11
 
 Windows kurulumu ayrı bir `.venv-windows` ortamı oluşturur. FFmpeg ve FFprobe sistemde yoksa projenin `tools/ffmpeg/bin` klasörüne otomatik indirilir; yönetici izni veya sistem PATH değişikliği gerekmez. Ayrıntılar için `WINDOWS_OKU_BENI.txt` dosyasına bakın.
 
+Yeni ve eski FFmpeg sürümlerindeki filtre-dosyası komut farkı otomatik algılanır. Windows'ta görülen `2880417800 / 0xABAFB008` hatası için güncel paketi kullanıp `WINDOWS_KUR.bat` dosyasını yeniden çalıştırın; render başarısız olursa arayüz artık gerçek FFmpeg hata ayrıntısını da gösterir.
+
 > Projeyle birlikte gelen macOS/Linux `venv` klasörünü Windows'ta kullanmayın. Sanal ortamlar taşınabilir değildir; `WINDOWS_KUR.bat` Windows'a uygun ortamı yeniden oluşturur.
 
 ### Gereksinimler

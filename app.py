@@ -227,6 +227,59 @@ FFPROBE_BIN = resolve_media_binary("ffprobe")
 FONT_REGULAR = resolve_font(False)
 FONT_BOLD = resolve_font(True)
 
+_ffmpeg_filter_script_option = None
+
+
+def ffmpeg_filter_script_args(script_path: str) -> list[str]:
+    """Return the filter-script syntax supported by the installed FFmpeg.
+
+    FFmpeg 7/8 deprecated the old ``-filter_complex_script`` switch and some
+    Windows builds compile it out completely. Those builds return
+    AVERROR_OPTION_NOT_FOUND (0xABAFB008). Older FFmpeg releases, however,
+    still need the legacy switch, so detect the supported form once.
+    """
+    global _ffmpeg_filter_script_option
+    if _ffmpeg_filter_script_option is None:
+        option = "-filter_complex_script"
+        try:
+            import subprocess
+            probe = subprocess.run(
+                [FFMPEG_BIN, "-hide_banner", "-h", "full"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                timeout=15,
+                check=False,
+            )
+            help_text = probe.stdout or ""
+            legacy_available = "-filter_complex_script" in help_text
+            new_file_syntax_advertised = "use -/filter_complex instead" in help_text
+            if new_file_syntax_advertised or not legacy_available:
+                option = "-/filter_complex"
+        except (OSError, subprocess.SubprocessError):
+            # The bundled Windows build is modern. Prefer the new syntax when
+            # capability probing itself cannot run there.
+            if os.name == "nt":
+                option = "-/filter_complex"
+        _ffmpeg_filter_script_option = option
+    return [_ffmpeg_filter_script_option, script_path]
+
+
+def format_ffmpeg_error(returncode: int, stderr_lines: list[str]) -> str:
+    unsigned_code = returncode & 0xFFFFFFFF
+    meaningful_lines = [line.strip() for line in stderr_lines if line.strip()]
+    detail = "\n".join(meaningful_lines[-8:])[-1800:]
+    if unsigned_code == 0xABAFB008 or "option not found" in detail.lower():
+        message = (
+            "FFmpeg bir komut seçeneğini tanımadı. Windows FFmpeg sürümünü "
+            "WINDOWS_KUR.bat ile güncelleyip yeniden deneyin."
+        )
+    else:
+        message = f"Render hatası. Çıkış kodu: {returncode}"
+    return f"{message}\n\nFFmpeg ayrıntısı:\n{detail}" if detail else message
+
 app = FastAPI()
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
@@ -2033,10 +2086,8 @@ async def run_render_job(job_id: str):
             cmd.extend(["-framerate", str(target_fps), "-loop", "1", "-i", image_item["path"]])
         for audio_item in audio_items:
             cmd.extend(["-i", audio_item["path"]])
-        cmd.extend([
-            "-filter_complex_script", script_path,
-            "-map", "[outv]", "-map", "[outa]"
-        ])
+        cmd.extend(ffmpeg_filter_script_args(script_path))
+        cmd.extend(["-map", "[outv]", "-map", "[outa]"])
         
         fmt = job['format'].lower()
         crf = {"draft": 30, "standard": 23, "high": 18, "ultra": 14}[quality]
@@ -2067,12 +2118,16 @@ async def run_render_job(job_id: str):
         )
         
         time_regex = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
+        ffmpeg_stderr_tail = []
         
         while True:
             line = await proc.stderr.readline()
             if not line:
                 break
             line_str = line.decode('utf-8', errors='ignore')
+            ffmpeg_stderr_tail.append(line_str.rstrip())
+            if len(ffmpeg_stderr_tail) > 80:
+                del ffmpeg_stderr_tail[0]
             
             match = time_regex.search(line_str)
             if match:
@@ -2104,7 +2159,9 @@ async def run_render_job(job_id: str):
             )
             _, convert_error = await convert_proc.communicate()
             if convert_proc.returncode != 0:
-                await q.put({"type": "log", "message": convert_error.decode("utf-8", errors="ignore")[-1200:]})
+                conversion_detail = convert_error.decode("utf-8", errors="ignore")
+                ffmpeg_stderr_tail.extend(conversion_detail.splitlines()[-40:])
+                await q.put({"type": "log", "message": conversion_detail[-1200:]})
                 final_returncode = convert_proc.returncode
             try:
                 os.remove(render_path)
@@ -2116,7 +2173,10 @@ async def run_render_job(job_id: str):
             await q.put({"type": "log", "message": "Render başarıyla tamamlandı!"})
             await q.put({"type": "result", "download_url": f"/download/{job_id}/{fmt}"})
         else:
-            await q.put({"type": "error", "message": f"Render hatası. Çıkış kodu: {final_returncode}"})
+            await q.put({
+                "type": "error",
+                "message": format_ffmpeg_error(final_returncode, ffmpeg_stderr_tail),
+            })
             
     except Exception as e:
         await q.put({"type": "error", "message": f"Hata oluştu: {str(e)}"})

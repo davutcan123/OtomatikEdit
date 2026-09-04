@@ -30,5 +30,8 @@ NOTLAR
 
 SORUN OLURSA
 - WINDOWS_KUR.bat dosyasini yeniden calistirin.
+- Render hatasi 2880417800 eski FFmpeg komut secenegi anlamina gelir. Bu surum yeni ve
+  eski FFmpeg komutlarini otomatik ayirt eder. Hatayi eski pakette aliyorsaniz bu klasorle
+  degistirin ve WINDOWS_KUR.bat dosyasini bir kez yeniden calistirin.
 - Python bulunamadi hatasinda Python 3.11 64-bit kurup bilgisayari yeniden baslatin.
 - Port kullanimda hatasinda ayni programin acik olan diger penceresini kapatin.
