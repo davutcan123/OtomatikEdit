@@ -15,6 +15,7 @@ if exist "tools\ffmpeg\bin\ffprobe.exe" set "SMART_EDITOR_FFPROBE=%CD%\tools\ffm
 set "SMART_EDITOR_HOST=127.0.0.1"
 set "SMART_EDITOR_PORT=4242"
 set "SMART_EDITOR_OPEN_BROWSER=1"
+set "SMART_EDITOR_GITHUB_REPO=davutcan123/OtomatikEdit"
 set "PYTHONUTF8=1"
 
 ".venv-windows\Scripts\python.exe" windows_setup.py --check
