@@ -238,8 +238,23 @@ os.makedirs(PROJECT_DIR, exist_ok=True)
 # ── Sürüm ve güncelleme sistemi ────────────────────────
 VERSION_FILE = os.path.join(BASE_DIR, "version.json")
 BACKUP_DIR = os.path.join(BASE_DIR, ".backup")
-GITHUB_REPO = os.environ.get("SMART_EDITOR_GITHUB_REPO", "").strip()
-# Repo ayarlanmamışsa güncelleme kontrolü sessizce devre dışı kalır.
+GITHUB_REPO = os.environ.get("SMART_EDITOR_GITHUB_REPO", "").strip() or "davutcan123/OtomatikEdit"
+
+def _make_ssl_context():
+    """Windows'ta SSL sertifika sorunlarını aşmak için context oluşturur."""
+    import ssl
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    except Exception:
+        return None
 
 def _load_version() -> str:
     try:
@@ -2134,7 +2149,8 @@ async def api_check_update():
         "User-Agent": "OtomatikEdit-Updater/1.0",
     })
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        ssl_ctx = _make_ssl_context()
+        with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         return {"update_available": False, "reason": str(exc)}
@@ -2198,7 +2214,8 @@ async def api_apply_update(request: Request):
             temp_zip = os.path.join(tempfile.gettempdir(), f"otamatik_update_{job_id}.zip")
 
             def _download():
-                with urllib.request.urlopen(req, timeout=120) as resp, open(temp_zip, "wb") as out:
+                ssl_ctx = _make_ssl_context()
+                with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp, open(temp_zip, "wb") as out:
                     total = int(resp.headers.get("Content-Length", "0") or 0)
                     downloaded = 0
                     while True:
