@@ -2213,6 +2213,8 @@ async def api_apply_update(request: Request):
             })
             temp_zip = os.path.join(tempfile.gettempdir(), f"otamatik_update_{job_id}.zip")
 
+            loop = asyncio.get_running_loop()
+
             def _download():
                 ssl_ctx = _make_ssl_context()
                 with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp, open(temp_zip, "wb") as out:
@@ -2228,7 +2230,7 @@ async def api_apply_update(request: Request):
                             pct = min(100, round(downloaded / total * 100))
                             asyncio.run_coroutine_threadsafe(
                                 q.put({"type": "progress", "percent": pct, "phase": "download"}),
-                                asyncio.get_running_loop(),
+                                loop,
                             )
 
             await asyncio.to_thread(_download)
