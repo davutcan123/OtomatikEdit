@@ -63,6 +63,8 @@ Bazı MOV dosyalarının bozuk veya standart dışı `UDTA` metadata alanı içi
 
 MOV videolarındaki farklı zaman tabanları katman birleştirilmeden önce çıktı FPS değerine eşitlenir. Böylece kısa bir klibin gereksiz yere onlarca kat fazla kare üretmesi, ses-görüntü süresinin ayrılması ve buna bağlı Windows bellek taşması engellenir.
 
+Efektsiz ve varsayılan konumdaki klipler hızlı render yolunu kullanır. Saydamlık, döndürme, maske ve arka plan katmanı yalnız gerçekten gerektiğinde oluşturulur; normal 1080p render bu yüzden belirgin biçimde hızlanır. Efekt kullanılan klipler ihtiyaç duydukları ayrıntılı filtre yolunda kalır.
+
 > Projeyle birlikte gelen macOS/Linux `venv` klasörünü Windows'ta kullanmayın. Sanal ortamlar taşınabilir değildir; `WINDOWS_KUR.bat` Windows'a uygun ortamı yeniden oluşturur.
 
 ### Gereksinimler

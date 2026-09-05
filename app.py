@@ -151,6 +151,14 @@ ALLOWED_CLIP_ANIMATIONS = {
     "revealright", "revealup", "revealdown", "breathe", "float", "sway",
     "focusin", "focusout", "cinematicleft", "cinematicright",
 }
+CANVAS_CLIP_ANIMATIONS = {
+    "slideleft", "slideright", "slideup", "slidedown", "bounce", "shake",
+    "driftleft", "driftright", "driftup", "driftdown", "slideleftout",
+    "sliderightout", "slideupout", "slidedownout", "revealleft", "revealright",
+    "revealup", "revealdown", "whipleft", "whipright", "cinematicleft",
+    "cinematicright", "rise", "drop", "float", "wobble", "sway",
+    "rotatein", "rotateout", "spin", "spinout", "swing",
+}
 ALLOWED_BACKGROUND_MODES = {"none", "chroma", "brush"}
 ALLOWED_BRUSH_MODES = {"keep", "remove"}
 ALLOWED_BLEND_MODES = {"normal", "multiply", "screen", "overlay"}
@@ -1607,6 +1615,7 @@ async def run_render_job(job_id: str):
         
         lines = []
         n = len(segments)
+        fast_path_segments = 0
         
         for i, seg in enumerate(segments):
             start = seg["start"]
@@ -1677,7 +1686,13 @@ async def run_render_job(job_id: str):
             contrast = max(.05, min(3.0, contrast))
             saturation = seg.get("saturation", 100) / 100
             gamma = max(.25, min(4.0, 1 + seg.get("shadows", 0) * .003 - seg.get("highlights", 0) * .002))
-            video_filters += f",eq=brightness={brightness:.5f}:contrast={contrast:.5f}:saturation={saturation:.5f}:gamma={gamma:.5f}"
+            if (
+                abs(brightness) > .00001
+                or abs(contrast - 1) > .00001
+                or abs(saturation - 1) > .00001
+                or abs(gamma - 1) > .00001
+            ):
+                video_filters += f",eq=brightness={brightness:.5f}:contrast={contrast:.5f}:saturation={saturation:.5f}:gamma={gamma:.5f}"
             temperature = seg.get("temperature", 0) / 1000
             tint = seg.get("tint", 0) / 1000
             if abs(temperature) > 0.0001 or abs(tint) > 0.0001:
@@ -1825,134 +1840,160 @@ async def run_render_job(job_id: str):
                 angle_expression = f"{angle:.8f}+sin(t*6)*.07"
             elif animation in {"wobble", "sway"}:
                 angle_expression = f"{angle:.8f}+sin(t*{10 if animation == 'wobble' else 3})*{'.095' if animation == 'wobble' else '.055'}"
-            transform_scale_filter = "" if fixed_zoom_transform else (
-                f",scale=w='max(2,trunc(iw*({scale_expression})/2)*2)':"
-                f"h='max(2,trunc(ih*({scale_expression})/2)*2)':eval=frame"
-            )
-            video_filters += (
-                f"{transform_scale_filter},format=rgba,"
-                "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-                f"a='alpha(X,Y)*({opacity_geq_expression})',"
-                f"rotate='{angle_expression}':ow=iw:oh=ih:c=none,"
-                "setsar=1"
-            )
-            if seg.get("backgroundMode") == "brush" and seg.get("brushStrokes"):
-                brush_terms = []
-                for stroke in seg["brushStrokes"]:
-                    radius = max(.01, min(.15, stroke.get("size", 12) / 200))
-                    for point in stroke.get("points", []):
-                        brush_terms.append(
-                            "lte(pow((X-W*{x:.6f})/(min(W,H)*{r:.6f}),2)+"
-                            "pow((Y-H*{y:.6f})/(min(W,H)*{r:.6f}),2),1)".format(
-                                x=point["x"], y=point["y"], r=radius
-                            )
-                        )
-                        if len(brush_terms) >= 120:
-                            break
-                    if len(brush_terms) >= 120:
-                        break
-                if brush_terms:
-                    brush_condition = "+".join(brush_terms)
-                    brush_alpha = (
-                        f"if(gt({brush_condition},0),alpha(X,Y),0)"
-                        if seg.get("brushMode") == "keep"
-                        else f"if(gt({brush_condition},0),0,alpha(X,Y))"
-                    )
-                    video_filters += (
-                        ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-                        f"a='{brush_alpha}'"
-                    )
             mask = seg.get("mask", "none")
-            if mask in {"circle", "ellipse", "rounded"}:
-                mask_expression = alpha_mask_expression(
-                    mask, seg.get("maskScale", 100), seg.get("maskX", 50), seg.get("maskY", 50)
-                )
-                video_filters += (
-                    ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-                    f"a='{mask_expression}'"
-                )
-                if seg.get("maskFeather", 0) >= 1:
-                    video_filters += f",gblur=sigma={seg['maskFeather'] / 3:.5f}:planes=8"
-            # MOV streams commonly use a finer source time base (for example
-            # 1/600).  Normalize both overlay inputs before framesync so FFmpeg
-            # cannot interpret one source frame as many output frames.
-            video_filters += (
-                f",fps={target_fps},settb=AVTB,"
-                f"setpts=N/({target_fps}*TB)"
-            )
-            foreground_label = f"[clipfg{i}]"
-            lines.append(f"[{input_index}:v]{video_filters}{foreground_label}")
-            lines.append(
-                f"color=c=black:s={render_width}x{render_height}:r={target_fps}:d={clip_duration:.8f},"
-                f"settb=AVTB,setpts=N/({target_fps}*TB)[clipbg{i}]"
-            )
             position_x = 50 if seg.get("autoReframe", False) else seg.get("x", 50)
             position_y = 50 if seg.get("autoReframe", False) else seg.get("y", 50)
-            if fixed_zoom_transform:
-                base_x = f"W*{position_x / 100:.6f}-w/2"
-                base_y = f"H*{position_y / 100:.6f}-h/2"
-            else:
-                zoom_width_delta = f"(w-w/max(({scale_expression}),.0001))"
-                zoom_height_delta = f"(h-h/max(({scale_expression}),.0001))"
-                base_x = (
-                    f"W*{position_x / 100:.6f}-w/2+"
-                    f"({zoom_width_delta})*(.5-({focus_x_expression}))"
-                )
-                base_y = (
-                    f"H*{position_y / 100:.6f}-h/2+"
-                    f"({zoom_height_delta})*(.5-({focus_y_expression}))"
-                )
-            x_expr, y_expr = base_x, base_y
-            if animation == "slideleft":
-                x_expr = f"if(lt(t,{animation_duration:.6f}),-w+(({base_x})+w)*t/{animation_duration:.6f},{base_x})"
-            elif animation == "slideright":
-                x_expr = f"if(lt(t,{animation_duration:.6f}),W+(({base_x})-W)*t/{animation_duration:.6f},{base_x})"
-            elif animation == "slideup":
-                y_expr = f"if(lt(t,{animation_duration:.6f}),H+(({base_y})-H)*t/{animation_duration:.6f},{base_y})"
-            elif animation == "slidedown":
-                y_expr = f"if(lt(t,{animation_duration:.6f}),-h+(({base_y})+h)*t/{animation_duration:.6f},{base_y})"
-            elif animation == "bounce":
-                y_expr = f"({base_y})-abs(sin(t*12))*H*.12*max(0,1-t/{animation_duration:.6f})"
-            elif animation == "shake":
-                x_expr = f"({base_x})+sin(t*75)*W*.018*max(0,1-t/{animation_duration:.6f})"
-            elif animation == "driftleft":
-                x_expr = f"({base_x})-W*.08*t/{clip_duration:.6f}"
-            elif animation == "driftright":
-                x_expr = f"({base_x})+W*.08*t/{clip_duration:.6f}"
-            elif animation == "driftup":
-                y_expr = f"({base_y})-H*.07*t/{clip_duration:.6f}"
-            elif animation == "driftdown":
-                y_expr = f"({base_y})+H*.07*t/{clip_duration:.6f}"
-            elif animation in {"slideleftout", "revealleft"}:
-                x_expr = f"if(gt(t,{clip_duration-animation_duration:.6f}),({base_x})-W*(t-{clip_duration-animation_duration:.6f})/{animation_duration:.6f},{base_x})"
-            elif animation in {"sliderightout", "revealright"}:
-                x_expr = f"if(gt(t,{clip_duration-animation_duration:.6f}),({base_x})+W*(t-{clip_duration-animation_duration:.6f})/{animation_duration:.6f},{base_x})"
-            elif animation in {"slideupout", "revealup"}:
-                y_expr = f"if(gt(t,{clip_duration-animation_duration:.6f}),({base_y})-H*(t-{clip_duration-animation_duration:.6f})/{animation_duration:.6f},{base_y})"
-            elif animation in {"slidedownout", "revealdown"}:
-                y_expr = f"if(gt(t,{clip_duration-animation_duration:.6f}),({base_y})+H*(t-{clip_duration-animation_duration:.6f})/{animation_duration:.6f},{base_y})"
-            elif animation in {"whipleft", "cinematicleft"}:
-                x_expr = f"({base_x})-W*{'.22' if animation == 'whipleft' else '.06'}*t/{clip_duration:.6f}"
-            elif animation in {"whipright", "cinematicright"}:
-                x_expr = f"({base_x})+W*{'.22' if animation == 'whipright' else '.06'}*t/{clip_duration:.6f}"
-            elif animation == "rise":
-                y_expr = f"if(lt(t,{animation_duration:.6f}),({base_y})+H*.28*(1-t/{animation_duration:.6f}),{base_y})"
-            elif animation == "drop":
-                y_expr = f"if(lt(t,{animation_duration:.6f}),({base_y})-H*.28*(1-t/{animation_duration:.6f}),{base_y})"
-            elif animation == "float":
-                y_expr = f"({base_y})+sin(t*2.4)*H*.018"
-            elif animation in {"wobble", "sway"}:
-                x_expr = f"({base_x})+sin(t*{10 if animation == 'wobble' else 3})*W*{'.018' if animation == 'wobble' else '.012'}"
             visible_filter = "" if job.get("video_visible", True) else ",drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill"
             gap_video_filter = (
                 f",tpad=start_duration={gap_before:.8f}:start_mode=add:color=black"
                 if gap_before >= .001 else ""
             )
-            lines.append(
-                f"[clipbg{i}]{foreground_label}overlay=x='{x_expr}':y='{y_expr}':"
-                f"shortest=1:eval=frame{visible_filter},fps={target_fps},format=yuv420p,settb=AVTB"
-                f"{gap_video_filter}[v{i}]"
+            opacity_is_animated = any(
+                abs(float(frame.get("opacity", 100)) - 100) > .001
+                for frame in seg.get("zoomKeyframes", [])
             )
+            needs_canvas = (
+                fit == "contain"
+                or (not fixed_zoom_transform and abs(seg.get("scale", 100) - 100) > .001)
+                or abs(seg.get("opacity", 100) - 100) > .001
+                or opacity_is_animated
+                or abs(seg.get("rotation", 0)) > .001
+                or abs(position_x - 50) > .001
+                or abs(position_y - 50) > .001
+                or animation in CANVAS_CLIP_ANIMATIONS
+                or seg.get("backgroundMode") == "chroma"
+                or (seg.get("backgroundMode") == "brush" and bool(seg.get("brushStrokes")))
+                or mask in {"circle", "ellipse", "rounded"}
+            )
+            if needs_canvas:
+                transform_scale_filter = "" if fixed_zoom_transform else (
+                    f",scale=w='max(2,trunc(iw*({scale_expression})/2)*2)':"
+                    f"h='max(2,trunc(ih*({scale_expression})/2)*2)':eval=frame"
+                )
+                video_filters += (
+                    f"{transform_scale_filter},format=rgba,"
+                    "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                    f"a='alpha(X,Y)*({opacity_geq_expression})',"
+                    f"rotate='{angle_expression}':ow=iw:oh=ih:c=none,"
+                    "setsar=1"
+                )
+                if seg.get("backgroundMode") == "brush" and seg.get("brushStrokes"):
+                    brush_terms = []
+                    for stroke in seg["brushStrokes"]:
+                        radius = max(.01, min(.15, stroke.get("size", 12) / 200))
+                        for point in stroke.get("points", []):
+                            brush_terms.append(
+                                "lte(pow((X-W*{x:.6f})/(min(W,H)*{r:.6f}),2)+"
+                                "pow((Y-H*{y:.6f})/(min(W,H)*{r:.6f}),2),1)".format(
+                                    x=point["x"], y=point["y"], r=radius
+                                )
+                            )
+                            if len(brush_terms) >= 120:
+                                break
+                        if len(brush_terms) >= 120:
+                            break
+                    if brush_terms:
+                        brush_condition = "+".join(brush_terms)
+                        brush_alpha = (
+                            f"if(gt({brush_condition},0),alpha(X,Y),0)"
+                            if seg.get("brushMode") == "keep"
+                            else f"if(gt({brush_condition},0),0,alpha(X,Y))"
+                        )
+                        video_filters += (
+                            ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                            f"a='{brush_alpha}'"
+                        )
+                if mask in {"circle", "ellipse", "rounded"}:
+                    mask_expression = alpha_mask_expression(
+                        mask, seg.get("maskScale", 100), seg.get("maskX", 50), seg.get("maskY", 50)
+                    )
+                    video_filters += (
+                        ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                        f"a='{mask_expression}'"
+                    )
+                    if seg.get("maskFeather", 0) >= 1:
+                        video_filters += f",gblur=sigma={seg['maskFeather'] / 3:.5f}:planes=8"
+                # MOV streams commonly use a finer source time base (for example
+                # 1/600). Normalize both inputs before overlay framesync.
+                video_filters += (
+                    f",fps={target_fps},settb=AVTB,"
+                    f"setpts=N/({target_fps}*TB)"
+                )
+                foreground_label = f"[clipfg{i}]"
+                lines.append(f"[{input_index}:v]{video_filters}{foreground_label}")
+                lines.append(
+                    f"color=c=black:s={render_width}x{render_height}:r={target_fps}:d={clip_duration:.8f},"
+                    f"settb=AVTB,setpts=N/({target_fps}*TB)[clipbg{i}]"
+                )
+                if fixed_zoom_transform:
+                    base_x = f"W*{position_x / 100:.6f}-w/2"
+                    base_y = f"H*{position_y / 100:.6f}-h/2"
+                else:
+                    zoom_width_delta = f"(w-w/max(({scale_expression}),.0001))"
+                    zoom_height_delta = f"(h-h/max(({scale_expression}),.0001))"
+                    base_x = (
+                        f"W*{position_x / 100:.6f}-w/2+"
+                        f"({zoom_width_delta})*(.5-({focus_x_expression}))"
+                    )
+                    base_y = (
+                        f"H*{position_y / 100:.6f}-h/2+"
+                        f"({zoom_height_delta})*(.5-({focus_y_expression}))"
+                    )
+                x_expr, y_expr = base_x, base_y
+                if animation == "slideleft":
+                    x_expr = f"if(lt(t,{animation_duration:.6f}),-w+(({base_x})+w)*t/{animation_duration:.6f},{base_x})"
+                elif animation == "slideright":
+                    x_expr = f"if(lt(t,{animation_duration:.6f}),W+(({base_x})-W)*t/{animation_duration:.6f},{base_x})"
+                elif animation == "slideup":
+                    y_expr = f"if(lt(t,{animation_duration:.6f}),H+(({base_y})-H)*t/{animation_duration:.6f},{base_y})"
+                elif animation == "slidedown":
+                    y_expr = f"if(lt(t,{animation_duration:.6f}),-h+(({base_y})+h)*t/{animation_duration:.6f},{base_y})"
+                elif animation == "bounce":
+                    y_expr = f"({base_y})-abs(sin(t*12))*H*.12*max(0,1-t/{animation_duration:.6f})"
+                elif animation == "shake":
+                    x_expr = f"({base_x})+sin(t*75)*W*.018*max(0,1-t/{animation_duration:.6f})"
+                elif animation == "driftleft":
+                    x_expr = f"({base_x})-W*.08*t/{clip_duration:.6f}"
+                elif animation == "driftright":
+                    x_expr = f"({base_x})+W*.08*t/{clip_duration:.6f}"
+                elif animation == "driftup":
+                    y_expr = f"({base_y})-H*.07*t/{clip_duration:.6f}"
+                elif animation == "driftdown":
+                    y_expr = f"({base_y})+H*.07*t/{clip_duration:.6f}"
+                elif animation in {"slideleftout", "revealleft"}:
+                    x_expr = f"if(gt(t,{clip_duration-animation_duration:.6f}),({base_x})-W*(t-{clip_duration-animation_duration:.6f})/{animation_duration:.6f},{base_x})"
+                elif animation in {"sliderightout", "revealright"}:
+                    x_expr = f"if(gt(t,{clip_duration-animation_duration:.6f}),({base_x})+W*(t-{clip_duration-animation_duration:.6f})/{animation_duration:.6f},{base_x})"
+                elif animation in {"slideupout", "revealup"}:
+                    y_expr = f"if(gt(t,{clip_duration-animation_duration:.6f}),({base_y})-H*(t-{clip_duration-animation_duration:.6f})/{animation_duration:.6f},{base_y})"
+                elif animation in {"slidedownout", "revealdown"}:
+                    y_expr = f"if(gt(t,{clip_duration-animation_duration:.6f}),({base_y})+H*(t-{clip_duration-animation_duration:.6f})/{animation_duration:.6f},{base_y})"
+                elif animation in {"whipleft", "cinematicleft"}:
+                    x_expr = f"({base_x})-W*{'.22' if animation == 'whipleft' else '.06'}*t/{clip_duration:.6f}"
+                elif animation in {"whipright", "cinematicright"}:
+                    x_expr = f"({base_x})+W*{'.22' if animation == 'whipright' else '.06'}*t/{clip_duration:.6f}"
+                elif animation == "rise":
+                    y_expr = f"if(lt(t,{animation_duration:.6f}),({base_y})+H*.28*(1-t/{animation_duration:.6f}),{base_y})"
+                elif animation == "drop":
+                    y_expr = f"if(lt(t,{animation_duration:.6f}),({base_y})-H*.28*(1-t/{animation_duration:.6f}),{base_y})"
+                elif animation == "float":
+                    y_expr = f"({base_y})+sin(t*2.4)*H*.018"
+                elif animation in {"wobble", "sway"}:
+                    x_expr = f"({base_x})+sin(t*{10 if animation == 'wobble' else 3})*W*{'.018' if animation == 'wobble' else '.012'}"
+                lines.append(
+                    f"[clipbg{i}]{foreground_label}overlay=x='{x_expr}':y='{y_expr}':"
+                    f"shortest=1:eval=frame{visible_filter},fps={target_fps},format=yuv420p,settb=AVTB"
+                    f"{gap_video_filter}[v{i}]"
+                )
+            else:
+                fast_path_segments += 1
+                video_filters += (
+                    f",setsar=1,fps={target_fps},settb=AVTB,"
+                    f"setpts=N/({target_fps}*TB),format=yuv420p"
+                )
+                lines.append(
+                    f"[{input_index}:v]{video_filters}{visible_filter}{gap_video_filter}[v{i}]"
+                )
             audio_filters = f"atrim=start={start}:end={end}"
             if seg.get("reverse", False):
                 audio_filters += ",areverse"
@@ -2223,6 +2264,11 @@ async def run_render_job(job_id: str):
         audio_message = f", {len(audio_items)} ses" if audio_items else ""
         transition_message = f", {len(transitions)} geçiş" if transitions else ""
         await q.put({"type": "log", "message": f"FFmpeg komutu çalıştırılıyor (Toplam {n} parça{text_message}{sticker_message}{image_message}{audio_message}{transition_message}, ~{total_duration:.2f}s çıktı)."})
+        if fast_path_segments:
+            await q.put({
+                "type": "log",
+                "message": f"Hızlı render etkin: {fast_path_segments}/{n} klipte gereksiz saydamlık ve katman işlemleri atlandı.",
+            })
         if LOW_MEMORY_RENDER:
             await q.put({
                 "type": "log",
