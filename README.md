@@ -57,6 +57,8 @@ Yeni ve eski FFmpeg sürümlerindeki filtre-dosyası komut farkı otomatik algı
 
 Windows FFmpeg'in tek satırda 64 KB'tan büyük tanılama çıktısı üretmesi de desteklenir. Çıktı güvenli parçalar hâlinde işlendiği için `Separator is not found, and chunk exceed the limit` hatası render işlemini durdurmaz.
 
+Windows render motoru bellek taşmasını önlemek için filtre işlemcilerini ve encoder iş parçacıklarını sınırlar; x264 lookahead tamponu da küçültülür. Windows'un işaretsiz gösterdiği `4294967284` (`-12`, yetersiz bellek) hatasında gerçek hata satırı encoder özetinden ayrı tutulur.
+
 > Projeyle birlikte gelen macOS/Linux `venv` klasörünü Windows'ta kullanmayın. Sanal ortamlar taşınabilir değildir; `WINDOWS_KUR.bat` Windows'a uygun ortamı yeniden oluşturur.
 
 ### Gereksinimler

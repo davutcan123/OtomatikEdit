@@ -35,5 +35,8 @@ SORUN OLURSA
   degistirin ve WINDOWS_KUR.bat dosyasini bir kez yeniden calistirin.
 - "Separator is not found, and chunk exceed the limit" hatasi duzeltildi. Cok uzun FFmpeg
   kayitlari artik guvenli parcalar halinde okunur ve render yarida kesilmez.
+- Windows renderlari dusuk bellek modunda calisir: filtre motoru tek is parcacigi, video
+  kodlayici en fazla iki is parcacigi kullanir. 4294967284 (-12) bellek hatasi bu sekilde
+  engellenir. Cok agir 4K/60 FPS projelerde gerekirse 1080p/30 FPS secin.
 - Python bulunamadi hatasinda Python 3.11 64-bit kurup bilgisayari yeniden baslatin.
 - Port kullanimda hatasinda ayni programin acik olan diger penceresini kapatin.

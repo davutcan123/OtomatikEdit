@@ -226,6 +226,17 @@ FFMPEG_BIN = resolve_media_binary("ffmpeg")
 FFPROBE_BIN = resolve_media_binary("ffprobe")
 FONT_REGULAR = resolve_font(False)
 FONT_BOLD = resolve_font(True)
+LOW_MEMORY_RENDER = (
+    os.name == "nt"
+    or os.environ.get("SMART_EDITOR_LOW_MEMORY_RENDER", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+try:
+    RENDER_THREAD_LIMIT = max(
+        1, min(4, int(os.environ.get("SMART_EDITOR_RENDER_THREADS", "2")))
+    )
+except ValueError:
+    RENDER_THREAD_LIMIT = 2
 
 _ffmpeg_filter_script_option = None
 
@@ -269,9 +280,16 @@ def ffmpeg_filter_script_args(script_path: str) -> list[str]:
 
 def format_ffmpeg_error(returncode: int, stderr_lines: list[str]) -> str:
     unsigned_code = returncode & 0xFFFFFFFF
+    signed_code = returncode if returncode < 0x80000000 else returncode - 0x100000000
     meaningful_lines = [line.strip() for line in stderr_lines if line.strip()]
     detail = "\n".join(meaningful_lines[-8:])[-1800:]
-    if unsigned_code == 0xABAFB008 or "option not found" in detail.lower():
+    detail_lower = detail.lower()
+    if signed_code == -12 or "cannot allocate memory" in detail_lower:
+        message = (
+            "Windows render belleği yetersiz kaldı. Düşük bellek modu açık; "
+            "devam ederse çıktı çözünürlüğünü veya FPS değerini düşürüp yeniden deneyin."
+        )
+    elif unsigned_code == 0xABAFB008 or "option not found" in detail_lower:
         message = (
             "FFmpeg bir komut seçeneğini tanımadı. Windows FFmpeg sürümünü "
             "WINDOWS_KUR.bat ile güncelleyip yeniden deneyin."
@@ -292,7 +310,12 @@ async def collect_ffmpeg_stderr(proc, q: asyncio.Queue, total_duration: float) -
     time_regex = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
     scan_tail = ""
     stderr_window = ""
+    important_lines = []
     last_progress = -1.0
+    important_markers = (
+        "error", "failed", "cannot", "memory", "invalid", "not found",
+        "no space", "permission denied", "access is denied",
+    )
 
     while True:
         chunk = await proc.stderr.read(16 * 1024)
@@ -312,18 +335,29 @@ async def collect_ffmpeg_stderr(proc, q: asyncio.Queue, total_duration: float) -
 
         scan_tail = scan_text[-128:]
         stderr_window = (stderr_window + chunk_text)[-64 * 1024:]
-        if "error" in chunk_text.lower():
-            error_parts = [
-                part.strip() for part in chunk_text.splitlines()
-                if "error" in part.lower()
-            ]
-            if error_parts:
+        for part in scan_text.splitlines():
+            clean_part = part.strip()
+            if clean_part and any(marker in clean_part.lower() for marker in important_markers):
+                if not important_lines or important_lines[-1] != clean_part:
+                    important_lines.append(clean_part[-2000:])
+                    if len(important_lines) > 32:
+                        del important_lines[0]
+        if important_lines and any(marker in chunk_text.lower() for marker in important_markers):
+            if "error" in chunk_text.lower() or "failed" in chunk_text.lower():
                 await q.put({
                     "type": "log",
-                    "message": f"[FFMPEG] {error_parts[-1][-1200:]}",
+                    "message": f"[FFMPEG] {important_lines[-1][-1200:]}",
                 })
 
-    return stderr_window.splitlines() or ([stderr_window] if stderr_window else [])
+    tail_lines = stderr_window.splitlines() or ([stderr_window] if stderr_window else [])
+    # Keep diagnostics last so format_ffmpeg_error cannot lose the real cause
+    # behind libx264's final statistics block.
+    combined_lines = tail_lines[-8:] + important_lines[-16:]
+    unique_lines = []
+    for line in combined_lines:
+        if line and line not in unique_lines:
+            unique_lines.append(line)
+    return unique_lines
 
 app = FastAPI()
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
@@ -2122,7 +2156,9 @@ async def run_render_job(job_id: str):
         with open(script_path, "w") as f:
             f.write(";\n".join(lines))
             
-        cmd = [FFMPEG_BIN, "-y"]
+        cmd = [FFMPEG_BIN, "-y", "-nostdin", "-hide_banner"]
+        if LOW_MEMORY_RENDER:
+            cmd.extend(["-filter_complex_threads", "1"])
         for video_input in video_inputs:
             cmd.extend(["-i", video_input["path"]])
         for overlay_path in text_overlay_paths + sticker_overlay_paths:
@@ -2136,7 +2172,10 @@ async def run_render_job(job_id: str):
         
         fmt = job['format'].lower()
         crf = {"draft": 30, "standard": 23, "high": 18, "ultra": 14}[quality]
-        preset = {"draft": "veryfast", "standard": "medium", "high": "slow", "ultra": "slower"}[quality]
+        preset_map = {"draft": "veryfast", "standard": "medium", "high": "slow", "ultra": "slower"}
+        if LOW_MEMORY_RENDER:
+            preset_map = {"draft": "ultrafast", "standard": "veryfast", "high": "faster", "ultra": "medium"}
+        preset = preset_map[quality]
         render_fmt = "mp4" if fmt in {"gif", "mp3"} else fmt
         if render_fmt == "mp4":
             cmd.extend(["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"])
@@ -2146,6 +2185,13 @@ async def run_render_job(job_id: str):
             cmd.extend(["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-c:a", "aac", "-b:a", "192k"])
         else:
             cmd.extend(["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"])
+        if LOW_MEMORY_RENDER:
+            cmd.extend(["-threads:v", str(RENDER_THREAD_LIMIT), "-threads:a", "1"])
+            if render_fmt != "webm":
+                cmd.extend([
+                    "-x264-params",
+                    f"threads={RENDER_THREAD_LIMIT}:lookahead_threads=1:sync-lookahead=0:rc-lookahead=10",
+                ])
             
         cmd.extend(["-r", str(target_fps), render_path])
         
@@ -2155,6 +2201,11 @@ async def run_render_job(job_id: str):
         audio_message = f", {len(audio_items)} ses" if audio_items else ""
         transition_message = f", {len(transitions)} geçiş" if transitions else ""
         await q.put({"type": "log", "message": f"FFmpeg komutu çalıştırılıyor (Toplam {n} parça{text_message}{sticker_message}{image_message}{audio_message}{transition_message}, ~{total_duration:.2f}s çıktı)."})
+        if LOW_MEMORY_RENDER:
+            await q.put({
+                "type": "log",
+                "message": f"Windows düşük bellek renderı etkin: {RENDER_THREAD_LIMIT} encoder iş parçacığı, tek filtre iş parçacığı.",
+            })
         
         proc = await asyncio.create_subprocess_exec(
             *cmd,
