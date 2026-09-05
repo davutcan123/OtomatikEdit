@@ -38,5 +38,9 @@ SORUN OLURSA
 - Windows renderlari dusuk bellek modunda calisir: filtre motoru tek is parcacigi, video
   kodlayici en fazla iki is parcacigi kullanir. 4294967284 (-12) bellek hatasi bu sekilde
   engellenir. Cok agir 4K/60 FPS projelerde gerekirse 1080p/30 FPS secin.
+- Bazi MOV dosyalarindaki "UDTA parsing failed retrying raw" satiri metadata uyarisidir;
+  render hatasi degildir. Program bu uyariyi sessizce atlayip videoyu islemeye devam eder.
+- MOV zaman tabani cikis FPS degerine otomatik esitlenir. Kisa klibin gereksiz yere cok
+  kare uretip sesi gecmesi ve Windows bellegini doldurmasi engellenir.
 - Python bulunamadi hatasinda Python 3.11 64-bit kurup bilgisayari yeniden baslatin.
 - Port kullanimda hatasinda ayni programin acik olan diger penceresini kapatin.

@@ -59,6 +59,10 @@ Windows FFmpeg'in tek satırda 64 KB'tan büyük tanılama çıktısı üretmesi
 
 Windows render motoru bellek taşmasını önlemek için filtre işlemcilerini ve encoder iş parçacıklarını sınırlar; x264 lookahead tamponu da küçültülür. Windows'un işaretsiz gösterdiği `4294967284` (`-12`, yetersiz bellek) hatasında gerçek hata satırı encoder özetinden ayrı tutulur.
 
+Bazı MOV dosyalarının bozuk veya standart dışı `UDTA` metadata alanı için FFmpeg'in yazdığı `UDTA parsing failed retrying raw` satırı zararsız bir geri dönüş uyarısıdır. Uygulama bu satırı render hatası olarak göstermeden ham metadata ile işlemeye devam eder.
+
+MOV videolarındaki farklı zaman tabanları katman birleştirilmeden önce çıktı FPS değerine eşitlenir. Böylece kısa bir klibin gereksiz yere onlarca kat fazla kare üretmesi, ses-görüntü süresinin ayrılması ve buna bağlı Windows bellek taşması engellenir.
+
 > Projeyle birlikte gelen macOS/Linux `venv` klasörünü Windows'ta kullanmayın. Sanal ortamlar taşınabilir değildir; `WINDOWS_KUR.bat` Windows'a uygun ortamı yeniden oluşturur.
 
 ### Gereksinimler

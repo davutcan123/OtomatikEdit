@@ -281,7 +281,10 @@ def ffmpeg_filter_script_args(script_path: str) -> list[str]:
 def format_ffmpeg_error(returncode: int, stderr_lines: list[str]) -> str:
     unsigned_code = returncode & 0xFFFFFFFF
     signed_code = returncode if returncode < 0x80000000 else returncode - 0x100000000
-    meaningful_lines = [line.strip() for line in stderr_lines if line.strip()]
+    meaningful_lines = [
+        line.strip() for line in stderr_lines
+        if line.strip() and not is_benign_ffmpeg_warning(line)
+    ]
     detail = "\n".join(meaningful_lines[-8:])[-1800:]
     detail_lower = detail.lower()
     if signed_code == -12 or "cannot allocate memory" in detail_lower:
@@ -297,6 +300,11 @@ def format_ffmpeg_error(returncode: int, stderr_lines: list[str]) -> str:
     else:
         message = f"Render hatası. Çıkış kodu: {returncode}"
     return f"{message}\n\nFFmpeg ayrıntısı:\n{detail}" if detail else message
+
+
+def is_benign_ffmpeg_warning(line: str) -> bool:
+    normalized = line.strip().lower()
+    return "udta parsing failed retrying raw" in normalized
 
 
 async def collect_ffmpeg_stderr(proc, q: asyncio.Queue, total_duration: float) -> list[str]:
@@ -335,21 +343,27 @@ async def collect_ffmpeg_stderr(proc, q: asyncio.Queue, total_duration: float) -
 
         scan_tail = scan_text[-128:]
         stderr_window = (stderr_window + chunk_text)[-64 * 1024:]
+        new_important_lines = []
         for part in scan_text.splitlines():
             clean_part = part.strip()
+            if is_benign_ffmpeg_warning(clean_part):
+                continue
             if clean_part and any(marker in clean_part.lower() for marker in important_markers):
                 if not important_lines or important_lines[-1] != clean_part:
                     important_lines.append(clean_part[-2000:])
+                    new_important_lines.append(clean_part[-2000:])
                     if len(important_lines) > 32:
                         del important_lines[0]
-        if important_lines and any(marker in chunk_text.lower() for marker in important_markers):
-            if "error" in chunk_text.lower() or "failed" in chunk_text.lower():
+        if new_important_lines:
+            newest_diagnostic = new_important_lines[-1]
+            if "error" in newest_diagnostic.lower() or "failed" in newest_diagnostic.lower():
                 await q.put({
                     "type": "log",
-                    "message": f"[FFMPEG] {important_lines[-1][-1200:]}",
+                    "message": f"[FFMPEG] {newest_diagnostic[-1200:]}",
                 })
 
-    tail_lines = stderr_window.splitlines() or ([stderr_window] if stderr_window else [])
+    raw_tail_lines = stderr_window.splitlines() or ([stderr_window] if stderr_window else [])
+    tail_lines = [line for line in raw_tail_lines if not is_benign_ffmpeg_warning(line)]
     # Keep diagnostics last so format_ffmpeg_error cannot lose the real cause
     # behind libx264's final statistics block.
     combined_lines = tail_lines[-8:] + important_lines[-16:]
@@ -1859,10 +1873,18 @@ async def run_render_job(job_id: str):
                 )
                 if seg.get("maskFeather", 0) >= 1:
                     video_filters += f",gblur=sigma={seg['maskFeather'] / 3:.5f}:planes=8"
+            # MOV streams commonly use a finer source time base (for example
+            # 1/600).  Normalize both overlay inputs before framesync so FFmpeg
+            # cannot interpret one source frame as many output frames.
+            video_filters += (
+                f",fps={target_fps},settb=AVTB,"
+                f"setpts=N/({target_fps}*TB)"
+            )
             foreground_label = f"[clipfg{i}]"
             lines.append(f"[{input_index}:v]{video_filters}{foreground_label}")
             lines.append(
-                f"color=c=black:s={render_width}x{render_height}:r={target_fps}:d={clip_duration:.8f}[clipbg{i}]"
+                f"color=c=black:s={render_width}x{render_height}:r={target_fps}:d={clip_duration:.8f},"
+                f"settb=AVTB,setpts=N/({target_fps}*TB)[clipbg{i}]"
             )
             position_x = 50 if seg.get("autoReframe", False) else seg.get("x", 50)
             position_y = 50 if seg.get("autoReframe", False) else seg.get("y", 50)
