@@ -280,6 +280,51 @@ def format_ffmpeg_error(returncode: int, stderr_lines: list[str]) -> str:
         message = f"Render hatası. Çıkış kodu: {returncode}"
     return f"{message}\n\nFFmpeg ayrıntısı:\n{detail}" if detail else message
 
+
+async def collect_ffmpeg_stderr(proc, q: asyncio.Queue, total_duration: float) -> list[str]:
+    """Read FFmpeg output in bounded chunks instead of newline-delimited records.
+
+    FFmpeg can print a complete filter graph as one very long line. StreamReader.readline
+    has a 64 KiB separator limit and raises LimitOverrunError in that case, especially on
+    Windows. Chunked reads keep progress reporting and a useful rolling error tail without
+    depending on line length.
+    """
+    time_regex = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
+    scan_tail = ""
+    stderr_window = ""
+    last_progress = -1.0
+
+    while True:
+        chunk = await proc.stderr.read(16 * 1024)
+        if not chunk:
+            break
+        chunk_text = chunk.decode("utf-8", errors="ignore")
+        scan_text = scan_tail + chunk_text
+        matches = list(time_regex.finditer(scan_text))
+        if matches:
+            h, m, s = matches[-1].groups()
+            current_time = int(h) * 3600 + int(m) * 60 + float(s)
+            progress = min(100.0, (current_time / max(0.001, total_duration)) * 100.0)
+            rounded_progress = round(progress, 1)
+            if rounded_progress != last_progress:
+                last_progress = rounded_progress
+                await q.put({"type": "progress", "percent": rounded_progress})
+
+        scan_tail = scan_text[-128:]
+        stderr_window = (stderr_window + chunk_text)[-64 * 1024:]
+        if "error" in chunk_text.lower():
+            error_parts = [
+                part.strip() for part in chunk_text.splitlines()
+                if "error" in part.lower()
+            ]
+            if error_parts:
+                await q.put({
+                    "type": "log",
+                    "message": f"[FFMPEG] {error_parts[-1][-1200:]}",
+                })
+
+    return stderr_window.splitlines() or ([stderr_window] if stderr_window else [])
+
 app = FastAPI()
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
@@ -2117,27 +2162,7 @@ async def run_render_job(job_id: str):
             stdout=asyncio.subprocess.PIPE
         )
         
-        time_regex = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
-        ffmpeg_stderr_tail = []
-        
-        while True:
-            line = await proc.stderr.readline()
-            if not line:
-                break
-            line_str = line.decode('utf-8', errors='ignore')
-            ffmpeg_stderr_tail.append(line_str.rstrip())
-            if len(ffmpeg_stderr_tail) > 80:
-                del ffmpeg_stderr_tail[0]
-            
-            match = time_regex.search(line_str)
-            if match:
-                h, m, s = match.groups()
-                current_time = int(h) * 3600 + int(m) * 60 + float(s)
-                progress = min(100.0, (current_time / total_duration) * 100.0)
-                await q.put({"type": "progress", "percent": round(progress, 1)})
-                
-            if "Error" in line_str or "error" in line_str.lower():
-                await q.put({"type": "log", "message": f"[FFMPEG] {line_str.strip()}"})
+        ffmpeg_stderr_tail = await collect_ffmpeg_stderr(proc, q, total_duration)
 
         await proc.wait()
         final_returncode = proc.returncode

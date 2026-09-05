@@ -55,6 +55,8 @@ Windows kurulumu ayrı bir `.venv-windows` ortamı oluşturur. FFmpeg ve FFprobe
 
 Yeni ve eski FFmpeg sürümlerindeki filtre-dosyası komut farkı otomatik algılanır. Windows'ta görülen `2880417800 / 0xABAFB008` hatası için güncel paketi kullanıp `WINDOWS_KUR.bat` dosyasını yeniden çalıştırın; render başarısız olursa arayüz artık gerçek FFmpeg hata ayrıntısını da gösterir.
 
+Windows FFmpeg'in tek satırda 64 KB'tan büyük tanılama çıktısı üretmesi de desteklenir. Çıktı güvenli parçalar hâlinde işlendiği için `Separator is not found, and chunk exceed the limit` hatası render işlemini durdurmaz.
+
 > Projeyle birlikte gelen macOS/Linux `venv` klasörünü Windows'ta kullanmayın. Sanal ortamlar taşınabilir değildir; `WINDOWS_KUR.bat` Windows'a uygun ortamı yeniden oluşturur.
 
 ### Gereksinimler
