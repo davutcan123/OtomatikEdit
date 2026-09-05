@@ -65,6 +65,8 @@ MOV videolarındaki farklı zaman tabanları katman birleştirilmeden önce çı
 
 Efektsiz ve varsayılan konumdaki klipler hızlı render yolunu kullanır. Saydamlık, döndürme, maske ve arka plan katmanı yalnız gerçekten gerektiğinde oluşturulur; normal 1080p render bu yüzden belirgin biçimde hızlanır. Efekt kullanılan klipler ihtiyaç duydukları ayrıntılı filtre yolunda kalır.
 
+MP4 çıktıları Windows oynatıcı uyumluluğu için H.264 Main/High (çözünürlüğe uygun seviye), `avc1`, 8-bit `yuv420p`, sabit kare hızı ve AAC-LC 48 kHz stereo olarak hazırlanır. MP4 dosyaları doğru `video/mp4` MIME türüyle indirilir; Windows için önerilen dışa aktarma biçimi MP4'tür.
+
 > Projeyle birlikte gelen macOS/Linux `venv` klasörünü Windows'ta kullanmayın. Sanal ortamlar taşınabilir değildir; `WINDOWS_KUR.bat` Windows'a uygun ortamı yeniden oluşturur.
 
 ### Gereksinimler

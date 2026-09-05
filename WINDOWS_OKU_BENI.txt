@@ -44,5 +44,7 @@ SORUN OLURSA
   kare uretip sesi gecmesi ve Windows bellegini doldurmasi engellenir.
 - Normal, efektsiz klipler hizli render yolunu kullanir. Maske, dondurme ve saydamlik
   katmanlari yalniz gercekten kullanildiginda islenir; 1080p render belirgin hizlanir.
+- Windows Media Player icin MP4 secin. MP4 ciktilari H.264 Main/High, 8-bit yuv420p,
+  sabit FPS ve AAC-LC 48 kHz stereo uyumluluk ayarlariyla hazirlanir.
 - Python bulunamadi hatasinda Python 3.11 64-bit kurup bilgisayari yeniden baslatin.
 - Port kullanimda hatasinda ayni programin acik olan diger penceresini kapatin.

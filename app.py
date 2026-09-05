@@ -286,6 +286,16 @@ def ffmpeg_filter_script_args(script_path: str) -> list[str]:
     return [_ffmpeg_filter_script_option, script_path]
 
 
+def h264_compatibility_settings(width: int, height: int, fps: int) -> tuple[str, str]:
+    """Choose a Windows-friendly H.264 profile and a valid decoder level."""
+    pixels = width * height
+    if pixels <= 1920 * 1080:
+        return "main", "4.2" if fps > 30 else "4.1"
+    if pixels <= 2560 * 1440:
+        return "high", "5.1"
+    return "high", "5.2" if fps > 30 else "5.1"
+
+
 def format_ffmpeg_error(returncode: int, stderr_lines: list[str]) -> str:
     unsigned_code = returncode & 0xFFFFFFFF
     signed_code = returncode if returncode < 0x80000000 else returncode - 0x100000000
@@ -2241,7 +2251,19 @@ async def run_render_job(job_id: str):
         preset = preset_map[quality]
         render_fmt = "mp4" if fmt in {"gif", "mp3"} else fmt
         if render_fmt == "mp4":
-            cmd.extend(["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"])
+            h264_profile, h264_level = h264_compatibility_settings(
+                render_width, render_height, target_fps
+            )
+            cmd.extend([
+                "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+                "-profile:v", h264_profile, "-level:v", h264_level,
+                "-pix_fmt", "yuv420p", "-tag:v", "avc1",
+                "-colorspace", "bt709", "-color_primaries", "bt709",
+                "-color_trc", "bt709", "-color_range", "tv",
+                "-c:a", "aac", "-profile:a", "aac_low", "-b:a", "192k",
+                "-ar", "48000", "-ac", "2",
+                "-movflags", "+faststart", "-brand", "mp42",
+            ])
         elif fmt == "webm":
             cmd.extend(["-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0", "-c:a", "libopus", "-b:a", "160k"])
         elif fmt == "mkv":
@@ -2256,7 +2278,7 @@ async def run_render_job(job_id: str):
                     f"threads={RENDER_THREAD_LIMIT}:lookahead_threads=1:sync-lookahead=0:rc-lookahead=10",
                 ])
             
-        cmd.extend(["-r", str(target_fps), render_path])
+        cmd.extend(["-r", str(target_fps), "-fps_mode", "cfr", render_path])
         
         text_message = f", {len(text_items)} metin" if text_items else ""
         sticker_message = f", {len(sticker_items)} sticker" if sticker_items else ""
@@ -2273,6 +2295,11 @@ async def run_render_job(job_id: str):
             await q.put({
                 "type": "log",
                 "message": f"Windows düşük bellek renderı etkin: {RENDER_THREAD_LIMIT} encoder iş parçacığı, tek filtre iş parçacığı.",
+            })
+        if render_fmt == "mp4":
+            await q.put({
+                "type": "log",
+                "message": f"Windows uyumlu MP4: H.264 {h264_profile.title()} / Level {h264_level}, AAC-LC stereo.",
             })
         
         proc = await asyncio.create_subprocess_exec(
@@ -3160,7 +3187,8 @@ async def download_file(job_id: str, fmt: str):
         raise HTTPException(400, "Desteklenmeyen çıktı formatı")
     path = os.path.join(OUTPUT_DIR, f"out_{job_id}.{fmt}")
     if os.path.exists(path):
-        return FileResponse(path, media_type="application/octet-stream", filename=f"edited_video.{fmt}")
+        media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        return FileResponse(path, media_type=media_type, filename=f"edited_video.{fmt}")
     raise HTTPException(404, "Dosya bulunamadı")
 
 if __name__ == "__main__":
