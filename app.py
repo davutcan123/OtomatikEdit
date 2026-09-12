@@ -27,6 +27,7 @@ from runtime_paths import resolve_runtime_paths, import_legacy_projects, release
 from render_resources import choose_render_resources
 from render_encoder import select_video_encoder, invalidate_nvenc, is_nvenc_failure
 from render_overlays import compact_overlay
+from render_image_animation import image_animation_expressions
 
 RUNTIME_PATHS = resolve_runtime_paths(__file__)
 BASE_DIR = str(RUNTIME_PATHS.source_dir)
@@ -694,6 +695,10 @@ def normalize_image_layers(items, total_duration: float) -> list[dict]:
             y = float(item.get("y", 50))
             scale = float(item.get("scale", 55))
             rotation = float(item.get("rotation", 0))
+            opacity = float(item.get("opacity", 100))
+            effect_intensity = float(item.get("effectIntensity", 100))
+            filter_intensity = float(item.get("filterIntensity", 100))
+            animation_duration = float(item.get("animationDuration", 1))
             mask_scale = float(item.get("maskScale", 100))
             mask_x = float(item.get("maskX", 50))
             mask_y = float(item.get("maskY", 50))
@@ -703,8 +708,16 @@ def normalize_image_layers(items, total_duration: float) -> list[dict]:
             brush_size = float(item.get("brushSize", 12))
         except (TypeError, ValueError):
             raise HTTPException(400, "Geçersiz görsel ayarı")
-        if not all(math.isfinite(value) for value in (start, end, x, y, scale, rotation, mask_scale, mask_x, mask_y, mask_feather, key_similarity, key_blend, brush_size)):
+        if not all(math.isfinite(value) for value in (start, end, x, y, scale, rotation, opacity, effect_intensity, filter_intensity, animation_duration, mask_scale, mask_x, mask_y, mask_feather, key_similarity, key_blend, brush_size)):
             raise HTTPException(400, "Geçersiz görsel ayarı")
+        effect = str(item.get("effect", "none")).strip().lower()
+        image_filter = str(item.get("filter", "none")).strip().lower()
+        animation = str(item.get("animation", "none")).strip().lower()
+        for value, allowed, label in ((effect, ALLOWED_VIDEO_EFFECTS, "efekti"),
+                                      (image_filter, ALLOWED_CLIP_FILTERS, "filtresi"),
+                                      (animation, ALLOWED_CLIP_ANIMATIONS, "animasyonu")):
+            if value not in allowed:
+                raise HTTPException(400, f"Desteklenmeyen görsel {label}")
         mask = str(item.get("mask", "none")).strip().lower()
         if mask not in ALLOWED_MASKS:
             raise HTTPException(400, "Desteklenmeyen görsel maskesi")
@@ -744,6 +757,12 @@ def normalize_image_layers(items, total_duration: float) -> list[dict]:
                     break
         start = max(0.0, min(start, max(0.0, total_duration - 0.05)))
         end = max(start + 0.05, min(end, total_duration))
+        raw_frames = item.get("transformKeyframes", [])
+        if isinstance(raw_frames, list):
+            raw_frames = [{**frame, "x": frame.get("x", x), "y": frame.get("y", y),
+                           "opacity": frame.get("opacity", opacity)}
+                          if isinstance(frame, dict) else frame for frame in raw_frames]
+        transform_keyframes = normalize_zoom_keyframes(raw_frames, end - start)
         normalized.append({
             "fileId": file_id,
             "path": path,
@@ -753,6 +772,14 @@ def normalize_image_layers(items, total_duration: float) -> list[dict]:
             "y": max(0.0, min(y, 100.0)),
             "scale": max(5.0, min(scale, 160.0)),
             "rotation": max(-3600.0, min(rotation, 3600.0)),
+            "opacity": max(0.0, min(opacity, 100.0)),
+            "transformKeyframes": transform_keyframes,
+            "effect": effect,
+            "effectIntensity": max(0.0, min(effect_intensity, 100.0)),
+            "filter": image_filter,
+            "filterIntensity": max(0.0, min(filter_intensity, 100.0)),
+            "animation": animation,
+            "animationDuration": max(.05, min(animation_duration, 10.0)),
             "mask": mask,
             "maskScale": max(10.0, min(mask_scale, 150.0)),
             "maskX": max(0.0, min(mask_x, 100.0)),
@@ -1756,6 +1783,110 @@ def freeze_snapshot_expressions(filters, elapsed, fps):
     return re.sub(r"'([^']*)'", lambda match: "'" + snapshot_time_expression(match.group(1), elapsed, fps) + "'", filters)
 
 
+def image_effect_chain(lines, source, label, effect, intensity):
+    """Apply existing color presets without discarding an imported PNG's alpha.
+
+    eq/hue and several other FFmpeg filters negotiate formats without alpha.
+    Keep the original channel separate and reattach it after RGB processing.
+    Intensity blends color only; transparent pixels cannot turn into a box.
+    """
+    if not effect or intensity <= 0:
+        return source
+    amount = max(0.0, min(1.0, intensity / 100))
+    lines.append(f"{source}format=rgba,split=2[{label}color][{label}alpha0]")
+    lines.append(f"[{label}alpha0]alphaextract[{label}alpha]")
+    if amount < .99999:
+        lines.append(f"[{label}color]format=gbrp,split=2[{label}original][{label}process]")
+        lines.append(f"[{label}process]{effect},format=gbrp[{label}effect]")
+        lines.append(f"[{label}original][{label}effect]blend=all_expr='A*(1-{amount:.8f})+B*{amount:.8f}'[{label}rgb]")
+    else:
+        lines.append(f"[{label}color]{effect},format=gbrp[{label}rgb]")
+    lines.append(f"[{label}rgb][{label}alpha]alphamerge,format=rgba[{label}]")
+    return f"[{label}]"
+
+
+def append_animated_image(lines, source, destination, item, index, width, height,
+                          base_width, base_height, fps, snapshot):
+    """Compose an image object on a fixed RGBA surface at its own local time.
+
+    Variable-size scale outputs must not reach overlay framesync: that can reset
+    its frame queue and cause stutter. rotate centers into a fixed transparent
+    surface, bounded by the largest visible portion of this image object.
+    """
+    frames = item.get("transformKeyframes", [])
+    animation = image_animation_expressions(
+        item.get("animation", "none"),
+        item.get("snapshot_layer_duration", item["end"] - item["start"]),
+        item.get("animationDuration", 1),
+    )
+
+    def local(expression, variable="t"):
+        if snapshot:
+            return snapshot_time_expression(expression, item["snapshot_elapsed"], fps)
+        return re.sub(r"\bt\b", f"max(0,{variable}-{item['start']:.8f})", expression)
+
+    scale = zoom_keyframe_scale_expression(100, frames)
+    opacity = zoom_keyframe_opacity_expression(item.get("opacity", 100), frames)
+    focus_x = zoom_keyframe_focus_expression(frames, "x", item.get("x", 50))
+    focus_y = zoom_keyframe_focus_expression(frames, "y", item.get("y", 50))
+    sx = f"({scale})*({animation['scale_x']})"
+    sy = f"({scale})*({animation['scale_y']})"
+    if item.get("effect") == "mirror":
+        sx += f"*(1-2*{item.get('effectIntensity', 100) / 100:.8f})"
+    angle = f"{item.get('rotation', 0) * math.pi / 180:.8f}+({animation['angle']})"
+    opacity = f"({opacity})*({animation['opacity']})"
+    # Slide percentages are local image-box distances. The keyframe transform
+    # scales this inner animation, as in the preview's nested CSS transforms.
+    dx = f"({animation['x']})*{base_width}*({scale})"
+    dy = f"({animation['y']})*{base_height}*({scale})"
+    base_angle = item.get("rotation", 0) * math.pi / 180
+    x = f"W*({focus_x})-w/2+({dx})*{math.cos(base_angle):.8f}-({dy})*{math.sin(base_angle):.8f}"
+    y = f"H*({focus_y})-h/2+({dx})*{math.sin(base_angle):.8f}+({dy})*{math.cos(base_angle):.8f}"
+    # Keep small objects compact. Very large objects need only the portion that
+    # can reach the canvas, including the extra off-center travel of slide cards.
+    maximum_scale = max([1.0] + [frame["scale"] / 100 for frame in frames])
+    maximum_width, maximum_height = base_width * maximum_scale * 1.25, base_height * maximum_scale * 1.25
+    rotated = item.get("rotation", 0) != 0 or animation["angle"] != "0"
+    bound_width = bound_height = math.hypot(maximum_width, maximum_height)
+    if not rotated:
+        bound_width, bound_height = maximum_width, maximum_height
+    movement = 1.1 if animation["x"] != "0" or animation["y"] != "0" else 0
+    extra_travel = movement * maximum_scale * math.hypot(base_width, base_height)
+    stage_width = max(4, 2 * math.ceil(min(bound_width, 2 * (width + extra_travel)) / 2) + 4)
+    stage_height = max(4, 2 * math.ceil(min(bound_height, 2 * (height + extra_travel)) / 2) + 4)
+    filters = ["format=rgba"]
+    needs_opacity = (item.get("opacity", 100) != 100 or animation["opacity"] != "1"
+                     or any(frame.get("opacity", 100) != 100 for frame in frames))
+    if needs_opacity or animation["brightness"] != "1" or animation["contrast"] != "1":
+        brightness = local(animation["brightness"], "T")
+        contrast = local(animation["contrast"], "T")
+        channels = [f"{ch}='clip(clip({ch}(X,Y)*({brightness}),0,255)*({contrast})+127.5*(1-({contrast})),0,255)'"
+                    for ch in "rgb"]
+        filters.append("geq=" + ":".join(channels) + f":a='alpha(X,Y)*({local(opacity, 'T')})'")
+    # Evaluate opacity/color on the compact image before expanding it. A pure
+    # position/zoom animation needs no per-pixel geq operation at all.
+    filters.extend([
+        f"hflip=enable='lt({local(sx)},0)'",
+        f"vflip=enable='lt({local(sy)},0)'",
+        f"scale=w='max(2,trunc({base_width}*abs({local(sx)})/2)*2)':"
+        f"h='max(2,trunc({base_height}*abs({local(sy)})/2)*2)':eval=frame",
+        f"rotate='{local(angle)}':ow={stage_width}:oh={stage_height}:c=none",
+    ])
+    label = f"imageanimated{index}"
+    lines.append(f"{source}{','.join(filters)},setsar=1[{label}]")
+    if animation["blur"] != "0":
+        # A continuous blend avoids stepped radius changes and preserves alpha
+        # around the image edge. This approximates CSS's variable Gaussian blur.
+        blur_amount = local(f"min(1,({animation['blur']})/10)", "T")
+        lines.append(f"[{label}]split=2[{label}sharp][{label}blur0]")
+        lines.append(f"[{label}blur0]gblur=sigma=5[{label}blur]")
+        lines.append(f"[{label}sharp][{label}blur]blend=all_expr='A*(1-({blur_amount}))+B*({blur_amount})'[{label}soft]")
+        label += "soft"
+    lines.append(f"{destination}[{label}]overlay=x='{local(x)}':y='{local(y)}':eval=frame:"
+                 f"enable='between(t,{item['start']},{item['end']})':eof_action=pass:shortest=1[imagev{index}]")
+    return f"[imagev{index}]"
+
+
 def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
     """Select at most two active video inputs and a short source window.
 
@@ -1808,7 +1939,8 @@ def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
         snapshot_segments.append({**seg, "fileId": identifier, "timelineStart": 0, "snapshot_elapsed": elapsed})
     for kind in ("texts", "stickers", "images"):
         job[kind] = [
-            {**item, "start": 0, "end": 1, "snapshot_elapsed": time_at - item["start"], "_reference_height": canvas_height}
+            {**item, "start": 0, "end": 1, "snapshot_elapsed": time_at - item["start"],
+             "snapshot_layer_duration": item["end"] - item["start"], "_reference_height": canvas_height}
             for item in job[kind] if item["start"] <= time_at <= item["end"]
         ]
     job.update({"type": "snapshot", "format": "png", "segments": snapshot_segments,
@@ -2420,16 +2552,44 @@ async def run_render_job(job_id: str):
                     mask_filter += f",gblur=sigma={image_item['maskFeather'] / 3:.5f}:planes=8"
                 lines.append(f"[{input_index}:v]{mask_filter}{scaled_label}")
                 x_expr, y_expr = "0", "0"
+                base_width, base_height = render_width, render_height
             else:
                 target_width = max(2, int(render_width * image_item["scale"] / 100))
-                angle = image_item.get("rotation", 0) * math.pi / 180
-                lines.append(
-                    f"[{input_index}:v]{background_prefix},scale={target_width}:-2,"
-                    f"rotate={angle:.8f}:ow=rotw({angle:.8f}):oh=roth({angle:.8f}):c=none,"
-                    f"format=rgba{scaled_label}"
+                lines.append(f"[{input_index}:v]{background_prefix},scale={target_width}:-2,format=rgba{scaled_label}")
+                source_width, source_height = await asyncio.to_thread(get_video_dimensions, image_item["path"])
+                base_width = target_width
+                base_height = max(2, round(source_height * target_width / max(1, source_width) / 2) * 2)
+                # Image coordinates name its center, including edge positions
+                # where part of the image is intentionally outside the canvas.
+                x_expr = f"W*{image_item['x'] / 100:.5f}-w/2"
+                y_expr = f"H*{image_item['y'] / 100:.5f}-h/2"
+            effect = image_item.get("effect", "none")
+            for kind, preset, catalog in (("effect", effect, VIDEO_EFFECT_FILTERS),
+                                           ("filter", image_item.get("filter", "none"), CLIP_FILTER_FILTERS)):
+                # Mirroring belongs to the object transform so its alpha flips
+                # too, including the half-flipped intensity/animation states.
+                if kind == "effect" and preset == "mirror":
+                    continue
+                scaled_label = image_effect_chain(
+                    lines, scaled_label, f"image{kind}{index}", catalog.get(preset, ""),
+                    image_item.get(kind + "Intensity", 100),
                 )
-                x_expr = f"max(0,min(W-w,W*{image_item['x'] / 100:.5f}-w/2))"
-                y_expr = f"max(0,min(H-h,H*{image_item['y'] / 100:.5f}-h/2))"
+            if (image_item.get("transformKeyframes") or image_item.get("animation", "none") != "none"
+                    or effect == "mirror"):
+                current_video = append_animated_image(
+                    lines, scaled_label, current_video, image_item, index,
+                    render_width, render_height, base_width, base_height, target_fps, snapshot,
+                )
+                continue
+            angle = image_item.get("rotation", 0) * math.pi / 180
+            static_filters = []
+            if image_mask not in {"circle", "ellipse", "rounded"}:
+                static_filters.append(f"rotate={angle:.8f}:ow=rotw({angle:.8f}):oh=roth({angle:.8f}):c=none")
+            if image_item.get("opacity", 100) != 100:
+                static_filters.append(f"colorchannelmixer=aa={image_item['opacity'] / 100:.8f}")
+            if static_filters:
+                lines.append(f"{scaled_label}{','.join(static_filters)},format=rgba[imagestatic{index}]")
+                scaled_label = f"[imagestatic{index}]"
             lines.append(
                 f"{current_video}{scaled_label}overlay=x='{x_expr}':y='{y_expr}':"
                 f"enable='between(t,{image_item['start']},{image_item['end']})':"

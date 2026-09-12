@@ -45,7 +45,7 @@ function fixture() {
     line('const defaultTrackState='), line('const TRANSITION_NAMES='),
     between('    const clipSettings=', '    const hydrateText='),
     between('    const hydrateText=', '    const imageLayerSettings='),
-    line('const copyLayers='), line('const copyTrackState='),
+    line('const imageLayerSettings='), line('const hydrateImageLayer='), line('const copyLayers='), line('const copyTrackState='),
     between('    const clipOutputDuration=', '    const ft='),
     script.includes('    function newClipId') ? between('    function newClipId', '    const clipInputId=') : line('function clampClipTransitions'),
     line('function remember(){'), line('const selectedClip='), line('function updateClipSetting('),

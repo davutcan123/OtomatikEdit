@@ -136,6 +136,20 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   const split = await mainWindow.webContents.executeJavaScript('S.clips.map(c=>({start:c.start,end:c.end}))');
   assert.equal(split.length, 2, JSON.stringify(split));
   assert.ok(split[0].end > .6 && split[0].end < 1.3, JSON.stringify(split));
+  // Imported image transforms must remain usable after the library entry is
+  // removed and after recovery across a fresh browser origin.
+  const imageFixture = path.join(dataDir, 'test-image.png');
+  await execFile(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=magenta:s=128x64', '-frames:v', '1', imageFixture], { timeout: 30000 });
+  const imageUpload = new FormData();imageUpload.set('file', new Blob([await fs.readFile(imageFixture)], { type: 'image/png' }), 'Görsel deneme.png');
+  const imageResponse = await request('/upload', { method: 'POST', body: imageUpload });assert.equal(imageResponse.status, 200);
+  const imageMedia = await imageResponse.json();
+  const imageBefore = await mainWindow.webContents.executeJavaScript(`(()=>{
+    const asset={id:'smoke-image-asset',fileId:${JSON.stringify(imageMedia.file_id)},name:'Görsel deneme.png',kind:'image',src:'/video/'+${JSON.stringify(imageMedia.file_id)}};
+    S.mediaAssets.push(asset);S.imageLayers.push(hydrateImageLayer({id:'smoke-image',assetId:asset.id,fileId:asset.fileId,src:asset.src,name:asset.name,start:.1,end:1.8,x:20,y:70,scale:20,opacity:100,animation:'fadein',animationDuration:.2,effect:'vivid',effectIntensity:45,filter:'daylight',filterIntensity:15,transformKeyframes:[{id:'IF-smoke-1',time:0,scale:80,x:20,y:70,opacity:100,easing:'linear'},{id:'IF-smoke-2',time:1.2,scale:120,x:70,y:40,opacity:80,easing:'linear'}]}));
+    removeProjectAsset(asset.id,false);drawClips();
+    return {item:S.imageLayers[0],library:S.mediaAssets.map(item=>item.id)};
+  })()`);
+  assert.equal(imageBefore.library.includes('smoke-image-asset'), false);assert.equal(imageBefore.item.transformKeyframes.length, 2);
   // A transition must survive unrelated adjustments and a real disk recovery,
   // even with all origin-local browser data removed (as during an upgrade).
   const transitionBefore = await mainWindow.webContents.executeJavaScript(`(async()=>{
@@ -159,6 +173,22 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   assert.equal(transitionAfter.pair.leftClipId, transitionBefore.pair.leftClipId);
   assert.equal(transitionAfter.pair.rightClipId, transitionBefore.pair.rightClipId);
   assert.deepEqual(transitionAfter.exported, transitionBefore.exported);
+  const imageAfter = await mainWindow.webContents.executeJavaScript(`({item:S.imageLayers[0],exported:manualExportData().images[0],library:S.mediaAssets.map(item=>item.id),middle:imageTransformAtTime(S.imageLayers[0],.7)})`);
+  assert.deepEqual(imageAfter.item.transformKeyframes, imageBefore.item.transformKeyframes);
+  assert.equal(imageAfter.library.includes('smoke-image-asset'), false);
+  assert.equal(imageAfter.exported.effect, 'vivid');assert.equal(imageAfter.exported.filter, 'daylight');assert.equal(imageAfter.exported.animation, 'fadein');
+  assert.ok(Math.abs(imageAfter.middle.x - 45) < .01);assert.ok(Math.abs(imageAfter.middle.opacity - 90) < .01);
+  assert.equal((await request('/video/' + imageMedia.file_id)).status, 200);
+  assert.deepEqual(persistedProject.timelines[0].state.imageLayers[0].transformKeyframes, imageAfter.item.transformKeyframes);
+  const imageRendered = await mainWindow.webContents.executeJavaScript(`(async()=>{
+    const data=manualExportData();data.resolution={width:640,height:360};data.options.hardware='cpu';
+    const response=await fetch('/start-render',{method:'POST',body:buildRenderForm(data)});if(!response.ok)throw new Error(await response.text());
+    return await events((await response.json()).job_id,()=>{});
+  })()`);
+  assert.ok(imageRendered.download_url, JSON.stringify(imageRendered));
+  const imageRenderPath = path.join(dataDir, 'test-image-render.mp4');
+  await fs.writeFile(imageRenderPath, Buffer.from(await (await request(imageRendered.download_url)).arrayBuffer()));
+  await execFile(ffmpeg, ['-v', 'error', '-i', imageRenderPath, '-f', 'null', '-'], { timeout: 30000 });
   const beforeSnapshots = new Set(await fs.readdir(path.join(dataDir, 'outputs')));
   await mainWindow.webContents.executeJavaScript(`seekOutputTime(.6);openSnapshotModal();document.getElementById('snapshot-quality').value='1280';updateSnapshotSize();startSnapshot()`);
   const captures = (await fs.readdir(path.join(dataDir, 'outputs'))).filter(name => name.endsWith('.png') && !beforeSnapshots.has(name));
@@ -195,11 +225,12 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   assert.deepEqual(frozenUpdate, { frozen: true, modal: true, inert: true, paused: true });
   const updateRecovery = JSON.parse(await fs.readFile(path.join(dataDir, 'recovery.json'), 'utf8'));
   assert.equal(updateRecovery.name, payload.name);assert.equal(updateRecovery.timelines[0].state.clips.length, 2);
+  assert.deepEqual(updateRecovery.timelines[0].state.imageLayers[0].transformKeyframes, imageBefore.item.transformKeyframes);
   mainWindow.webContents.send('desktop:update-cancelled', attempt);
   const updateCancelled = await mainWindow.webContents.executeJavaScript(`new Promise(resolve=>requestAnimationFrame(()=>resolve({frozen:desktopUpdateFrozen,inert:document.querySelector('main').inert,modal:el('desktop-update-dialog').open})))`);
   assert.deepEqual(updateCancelled, { frozen: false, inert: false, modal: false });
   mainWindow.webContents.send('desktop:update-state', updaterState);
   assert.equal((await request('/api/apply-update', { method: 'POST' })).status, 409);
   assert.deepEqual(errors, []);
-  return { ok: true, packaged: app.isPackaged, health, ui, storage, played, recoveredVideo, layouts, split, transitionRecovery: transitionAfter, snapshot: captures[0], savedProject: saved.id, screenshot, terminal: { isolated: terminalProof.editor === 'undefined' && terminalProof.node === 'undefined', screenshot: terminalScreenshot }, renderPath, nativeSaved, nativeSaveResult, updaterState, updatePopup, updateScreenshot, frozenUpdate, updateCancelled, errors };
+  return { ok: true, packaged: app.isPackaged, health, ui, storage, played, recoveredVideo, layouts, split, transitionRecovery: transitionAfter, imageRecovery: imageAfter, imageRenderPath, snapshot: captures[0], savedProject: saved.id, screenshot, terminal: { isolated: terminalProof.editor === 'undefined' && terminalProof.node === 'undefined', screenshot: terminalScreenshot }, renderPath, nativeSaved, nativeSaveResult, updaterState, updatePopup, updateScreenshot, frozenUpdate, updateCancelled, errors };
 };
