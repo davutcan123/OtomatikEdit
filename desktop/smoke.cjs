@@ -6,6 +6,7 @@ const path = require('node:path');
 const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
 const { app } = require('electron');
+const { waitForMedia } = require('./media-ready.cjs');
 
 exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   const errors = [];
@@ -16,7 +17,7 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   const request = (route, options = {}) => fetch(origin + route, { ...options, headers: { ...headers, ...options.headers }, signal: AbortSignal.timeout(120000) });
   const waitForVideo = async () => {
     try {
-      await mainWindow.webContents.executeJavaScript(`new Promise((resolve,reject)=>{const v=document.getElementById('manual-video');if(v.readyState>=2)return resolve();const cleanup=()=>{clearTimeout(timer);v.removeEventListener('loadeddata',ready);v.removeEventListener('error',failed)},ready=()=>{cleanup();resolve()},failed=()=>{cleanup();reject(new Error('Video decode failed'))},timer=setTimeout(()=>{cleanup();reject(new Error('Video load timeout'))},15000);v.addEventListener('loadeddata',ready);v.addEventListener('error',failed)})`);
+      await mainWindow.webContents.executeJavaScript(`(${waitForMedia.toString()})(document.getElementById('manual-video'))`);
     } catch (error) {
       const state = await mainWindow.webContents.executeJavaScript(`(()=>{const v=document.getElementById('manual-video');return{readyState:v.readyState,networkState:v.networkState,seeking:v.seeking,time:v.currentTime,duration:v.duration,error:v.error?.message,src:v.currentSrc,preview:S.preview,selected:S.selected,outputTime:currentOutputTime()}})()`);
       throw new Error(error.message + ': ' + JSON.stringify(state));

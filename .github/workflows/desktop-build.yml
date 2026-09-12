@@ -3,6 +3,12 @@ name: Build desktop installers
 # Build explicitly requested revisions; never publish an untested installer.
 on:
   workflow_dispatch:
+    inputs:
+      prepare_release:
+        description: Prepare a draft GitHub release after both installers pass validation
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -70,3 +76,72 @@ jobs:
             dist/latest*.yml
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: Prepare validated installers as a draft release
+    needs: desktop
+    if: ${{ inputs.prepare_release && needs.desktop.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Download validated installers from this workflow run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: OtomatikEdit-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Create a new draft without replacing any existing release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          release_version="$(node -e '
+            const version = require("./package.json").version;
+            if (!/^\d+\.\d+\.\d+$/.test(version) || require("./version.json").version !== version) {
+              throw new Error("Desktop and backend release versions must match.");
+            }
+            process.stdout.write(version);
+          ')"
+          release_tag="v${release_version}"
+          release_assets=(
+            "release-artifacts/OtomatikEdit-${release_version}-win-x64.exe"
+            "release-artifacts/OtomatikEdit-${release_version}-mac-arm64.dmg"
+          )
+          for installer in "${release_assets[@]}"; do
+            if [[ ! -s "$installer" || -L "$installer" ]]; then
+              printf 'Missing or invalid validated installer: %s\n' "$installer" >&2
+              exit 1
+            fi
+            if [[ -s "${installer}.blockmap" && ! -L "${installer}.blockmap" ]]; then
+              release_assets+=("${installer}.blockmap")
+            fi
+          done
+          if gh release view "$release_tag" --json id >/dev/null 2>&1; then
+            printf 'Release %s already exists; no release or assets will be overwritten.\n' "$release_tag" >&2
+            exit 1
+          fi
+          # --target only creates a missing tag. Refuse to attach these binaries
+          # to an existing tag that resolves to a different revision.
+          remote_tag="$(git ls-remote --tags origin "refs/tags/${release_tag}" "refs/tags/${release_tag}^{}")"
+          if [[ -n "$remote_tag" ]]; then
+            tagged_commit="$(printf '%s\n' "$remote_tag" | awk '$2 ~ /\^\{\}$/ { peeled=$1 } { direct=$1 } END { print peeled ? peeled : direct }')"
+            if [[ "$tagged_commit" != "$GITHUB_SHA" ]]; then
+              printf 'Tag %s does not point to this validated revision; refusing to create release.\n' "$release_tag" >&2
+              exit 1
+            fi
+          fi
+          gh release create "$release_tag" "${release_assets[@]}" \
+            --draft --target "$GITHUB_SHA" \
+            --title "Otomatik Edit ${release_version}" \
+            --notes "Windows x64 ve macOS Apple Silicon kurulum dosyaları. Her iki platformda paket bağımlılıkları, medya oynatma, proje kurtarma, render ve kare kaydetme kontrolleri tamamlandı. Bu taslak elle incelendikten sonra yayımlanmalıdır."
+          printf 'Prepared draft **%s** from validated commit `%s`. Publishing remains manual.\n' "$release_tag" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
