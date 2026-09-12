@@ -24,6 +24,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import Headers
 from runtime_paths import resolve_runtime_paths, import_legacy_projects, release_download_url
+from render_resources import choose_render_resources
+from render_encoder import select_video_encoder, invalidate_nvenc, is_nvenc_failure
+from render_overlays import compact_overlay
 
 RUNTIME_PATHS = resolve_runtime_paths(__file__)
 BASE_DIR = str(RUNTIME_PATHS.source_dir)
@@ -249,18 +252,6 @@ FFMPEG_BIN = resolve_media_binary("ffmpeg")
 FFPROBE_BIN = resolve_media_binary("ffprobe")
 FONT_REGULAR = resolve_font(False)
 FONT_BOLD = resolve_font(True)
-LOW_MEMORY_RENDER = (
-    os.name == "nt"
-    or os.environ.get("SMART_EDITOR_LOW_MEMORY_RENDER", "").strip().lower()
-    in {"1", "true", "yes", "on"}
-)
-try:
-    RENDER_THREAD_LIMIT = max(
-        1, min(4, int(os.environ.get("SMART_EDITOR_RENDER_THREADS", "2")))
-    )
-except ValueError:
-    RENDER_THREAD_LIMIT = 2
-
 _ffmpeg_filter_script_option = None
 
 
@@ -322,7 +313,7 @@ def format_ffmpeg_error(returncode: int, stderr_lines: list[str]) -> str:
     detail_lower = detail.lower()
     if signed_code == -12 or "cannot allocate memory" in detail_lower:
         message = (
-            "Windows render belleği yetersiz kaldı. Düşük bellek modu açık; "
+            "Render belleği yetersiz kaldı. Koruyucu bellek ayarlarına rağmen "
             "devam ederse çıktı çözünürlüğünü veya FPS değerini düşürüp yeniden deneyin."
         )
     elif unsigned_code == 0xABAFB008 or "option not found" in detail_lower:
@@ -1794,6 +1785,7 @@ def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
 async def run_render_job(job_id: str):
     job = jobs[job_id]
     q = job["q"]
+    render_started = time.monotonic()
     try:
         resolution_text = f", Boyut: {job['width']}x{job['height']}" if job.get("width") else ""
         target_fps = job.get("fps", 30)
@@ -1837,6 +1829,7 @@ async def run_render_job(job_id: str):
         render_height = job.get("height") or job.get("source_height") or 1080
         text_overlay_paths = []
         text_overlay_sizes = []
+        text_overlay_positions = []
         for index, text_item in enumerate(text_items):
             overlay_path = os.path.join(OUTPUT_DIR, f"text_{job_id}_{index}.png")
             overlay_item = text_item
@@ -1847,13 +1840,21 @@ async def run_render_job(job_id: str):
             )
             text_overlay_paths.append(overlay_path)
             text_overlay_sizes.append(overlay_size)
+            position = (0, 0)
+            if not text_item.get("transformKeyframes"):
+                x, y, _, _ = await asyncio.to_thread(compact_overlay, overlay_path)
+                position = (x, y)
+            text_overlay_positions.append(position)
         sticker_overlay_paths = []
+        sticker_overlay_positions = []
         for index, sticker_item in enumerate(sticker_items):
             overlay_path = os.path.join(OUTPUT_DIR, f"sticker_{job_id}_{index}.png")
             await asyncio.to_thread(
                 create_sticker_overlay, overlay_path, sticker_item, render_width, render_height
             )
             sticker_overlay_paths.append(overlay_path)
+            x, y, _, _ = await asyncio.to_thread(compact_overlay, overlay_path)
+            sticker_overlay_positions.append((x, y))
         
         lines = []
         n = len(segments)
@@ -2124,13 +2125,16 @@ async def run_render_job(job_id: str):
                     f",scale=w='max(2,trunc(iw*({scale_expression})/2)*2)':"
                     f"h='max(2,trunc(ih*({scale_expression})/2)*2)':eval=frame"
                 )
-                video_filters += (
-                    f"{transform_scale_filter},format=rgba,"
-                    "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-                    f"a='alpha(X,Y)*({opacity_geq_expression})',"
-                    f"rotate='{angle_expression}':ow=iw:oh=ih:c=none,"
-                    "setsar=1"
-                )
+                video_filters += f"{transform_scale_filter},format=rgba"
+                # A fully opaque clip needs no per-pixel expression evaluator.
+                # Contain/position/rotation alone used to trigger this expensive
+                # identity operation on every pixel of every frame.
+                if abs(seg.get("opacity", 100) - 100) > .001 or opacity_is_animated:
+                    video_filters += (
+                        ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                        f"a='alpha(X,Y)*({opacity_geq_expression})'"
+                    )
+                video_filters += f",rotate='{angle_expression}':ow=iw:oh=ih:c=none,setsar=1"
                 if seg.get("backgroundMode") == "brush" and seg.get("brushStrokes"):
                     brush_terms = []
                     for stroke in seg["brushStrokes"]:
@@ -2416,10 +2420,10 @@ async def run_render_job(job_id: str):
         for index, text_item in enumerate(text_items):
             input_index = len(video_inputs) + index
             next_label = f"[textv{index}]"
-            overlay_input = f"[{input_index}:v]"
+            overlay_input = f"[textcached{index}]"
+            lines.append(f"[{input_index}:v]loop=loop=-1:size=1:start=0,setpts=N/({target_fps}*TB){overlay_input}")
             frames = text_item.get("transformKeyframes", [])
-            x_expr = "0"
-            y_expr = "0"
+            x_expr, y_expr = map(str, text_overlay_positions[index])
             if frames:
                 text_scale = zoom_keyframe_scale_expression(100, frames)
                 text_opacity = zoom_keyframe_opacity_expression(100, frames)
@@ -2461,8 +2465,10 @@ async def run_render_job(job_id: str):
         for index, sticker_item in enumerate(sticker_items):
             input_index = len(video_inputs) + len(text_overlay_paths) + index
             next_label = f"[stickerv{index}]"
+            x, y = sticker_overlay_positions[index]
+            lines.append(f"[{input_index}:v]loop=loop=-1:size=1:start=0,setpts=N/({target_fps}*TB)[stickercached{index}]")
             lines.append(
-                f"{current_video}[{input_index}:v]overlay=0:0:"
+                f"{current_video}[stickercached{index}]overlay={x}:{y}:"
                 f"enable='between(t,{sticker_item['start']},{sticker_item['end']})':"
                 f"eof_action=pass:shortest=1{next_label}"
             )
@@ -2495,62 +2501,70 @@ async def run_render_job(job_id: str):
         with open(script_path, "w") as f:
             f.write(";\n".join(lines))
             
-        cmd = [FFMPEG_BIN, "-y", "-nostdin", "-hide_banner"]
-        if LOW_MEMORY_RENDER:
-            cmd.extend(["-filter_complex_threads", "1"])
-        for video_input in video_inputs:
-            if snapshot:
-                cmd.extend(["-ss", f"{video_input['snapshot_seek']:.8f}", "-t", f"{video_input['snapshot_duration']:.8f}"])
-            cmd.extend(["-i", video_input["path"]])
-        for overlay_path in text_overlay_paths + sticker_overlay_paths:
-            cmd.extend(["-framerate", str(target_fps), "-loop", "1", "-i", overlay_path])
-        for image_item in image_items:
-            cmd.extend(["-framerate", str(target_fps), "-loop", "1", "-i", image_item["path"]])
-        for audio_item in audio_items:
-            cmd.extend(["-i", audio_item["path"]])
-        cmd.extend(ffmpeg_filter_script_args(script_path))
-        cmd.extend(["-map", "[outv]"])
-        if not snapshot:
-            cmd.extend(["-map", "[outa]"])
-        
         fmt = job['format'].lower()
         crf = {"draft": 30, "standard": 23, "high": 18, "ultra": 14}[quality]
-        preset_map = {"draft": "veryfast", "standard": "medium", "high": "slow", "ultra": "slower"}
-        if LOW_MEMORY_RENDER:
-            preset_map = {"draft": "ultrafast", "standard": "veryfast", "high": "faster", "ultra": "medium"}
-        preset = preset_map[quality]
         render_fmt = "mp4" if fmt in {"gif", "mp3"} else fmt
-        if snapshot:
-            cmd.extend(["-an", "-c:v", "png", "-pix_fmt", "rgb24", "-compression_level", "3", "-frames:v", "1", "-update", "1"])
-        elif render_fmt == "mp4":
-            h264_profile, h264_level = h264_compatibility_settings(
-                render_width, render_height, target_fps
-            )
-            cmd.extend([
-                "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
-                "-profile:v", h264_profile, "-level:v", h264_level,
-                "-pix_fmt", "yuv420p", "-tag:v", "avc1",
-                "-colorspace", "bt709", "-color_primaries", "bt709",
-                "-color_trc", "bt709", "-color_range", "tv",
-                "-c:a", "aac", "-profile:a", "aac_low", "-b:a", "192k",
-                "-ar", "48000", "-ac", "2",
-                "-movflags", "+faststart", "-brand", "mp42",
-            ])
-        elif fmt == "webm":
-            cmd.extend(["-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0", "-c:a", "libopus", "-b:a", "160k"])
-        elif fmt == "mkv":
-            cmd.extend(["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-c:a", "aac", "-b:a", "192k"])
-        else:
-            cmd.extend(["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"])
-        if LOW_MEMORY_RENDER:
-            cmd.extend(["-threads:v", str(RENDER_THREAD_LIMIT), "-threads:a", "1"])
-            if render_fmt != "webm" and not snapshot:
-                cmd.extend([
-                    "-x264-params",
-                    f"threads={RENDER_THREAD_LIMIT}:lookahead_threads=1:sync-lookahead=0:rc-lookahead=10",
+        resource_options = dict(
+            video_input_count=len(video_inputs), segment_count=n,
+            overlay_input_count=len(text_overlay_paths) + len(sticker_overlay_paths) + len(image_items),
+            heavy_filter_graph=any(seg.get("opticalFlow") or seg.get("backgroundMode") == "brush"
+                                   or seg.get("reverse") for seg in segments),
+        )
+        resources = await asyncio.to_thread(choose_render_resources, render_width, render_height, **resource_options)
+        encoder = await asyncio.to_thread(
+            select_video_encoder, FFMPEG_BIN, fmt, quality,
+            hardware="cpu" if snapshot else job.get("hardware", "auto"),
+        )
+        h264_profile, h264_level = h264_compatibility_settings(render_width, render_height, target_fps)
+
+        def render_command(use_hardware, policy):
+            cmd = [FFMPEG_BIN, "-y", "-nostdin", "-hide_banner", "-filter_complex_threads", str(policy.filter_threads)]
+            for source in video_inputs:
+                cmd.extend(["-threads", str(policy.decoder_threads)])
+                if snapshot:
+                    cmd.extend(["-ss", f"{source['snapshot_seek']:.8f}", "-t", f"{source['snapshot_duration']:.8f}"])
+                # Full renders trim decoded streams: demux seeking can alter
+                # compressed audio priming and discard-padding at clip edges.
+                cmd.extend(["-i", source["path"]])
+            # Generated PNGs contain a single frame. Cache it in the graph;
+            # image2's -loop 1 would otherwise decompress it every output frame.
+            for overlay_path in text_overlay_paths + sticker_overlay_paths:
+                cmd.extend(["-threads", "1", "-framerate", str(target_fps), "-i", overlay_path])
+            for image_item in image_items:
+                cmd.extend(["-threads", "1", "-framerate", str(target_fps), "-loop", "1", "-i", image_item["path"]])
+            for audio_item in audio_items:
+                cmd.extend(["-threads", "1", "-i", audio_item["path"]])
+            cmd.extend(ffmpeg_filter_script_args(script_path))
+            cmd.extend(["-map", "[outv]"])
+            if not snapshot:
+                cmd.extend(["-map", "[outa]"])
+            # Keep the existing quality targets and Windows CPU presets. More
+            # threads must not secretly select a slower quality preset.
+            preset_map = ({"draft": "ultrafast", "standard": "veryfast", "high": "faster", "ultra": "medium"}
+                          if os.name == "nt" or policy.low_memory else
+                          {"draft": "veryfast", "standard": "medium", "high": "slow", "ultra": "slower"})
+            video_encoding = list(encoder.args) if use_hardware else ["-c:v", "libx264", "-preset", preset_map[quality], "-crf", str(crf)]
+            if snapshot:
+                cmd.extend(["-an", "-c:v", "png", "-pix_fmt", "rgb24", "-compression_level", "3", "-frames:v", "1", "-update", "1"])
+            elif render_fmt == "mp4":
+                cmd.extend(video_encoding + [
+                    "-profile:v", h264_profile, "-level:v", h264_level,
+                    "-pix_fmt", "yuv420p", "-tag:v", "avc1",
+                    "-colorspace", "bt709", "-color_primaries", "bt709",
+                    "-color_trc", "bt709", "-color_range", "tv",
+                    "-c:a", "aac", "-profile:a", "aac_low", "-b:a", "192k",
+                    "-ar", "48000", "-ac", "2", "-movflags", "+faststart", "-brand", "mp42",
                 ])
-            
-        cmd.extend(["-r", str(target_fps), "-fps_mode", "cfr", render_path])
+            elif fmt == "webm":
+                cmd.extend(["-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0", "-c:a", "libopus", "-b:a", "160k"])
+            else:
+                cmd.extend(video_encoding + ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k"])
+                if fmt != "mkv":
+                    cmd.extend(["-movflags", "+faststart"])
+            cmd.extend(["-threads:v", str(policy.encoder_threads), "-threads:a", "1"])
+            if policy.low_memory and not use_hardware and render_fmt != "webm" and not snapshot:
+                cmd.extend(["-x264-params", f"threads={policy.encoder_threads}:lookahead_threads=1:sync-lookahead=0:rc-lookahead=10"])
+            return cmd + ["-r", str(target_fps), "-fps_mode", "cfr", render_path]
         
         text_message = f", {len(text_items)} metin" if text_items else ""
         sticker_message = f", {len(sticker_items)} sticker" if sticker_items else ""
@@ -2563,27 +2577,42 @@ async def run_render_job(job_id: str):
                 "type": "log",
                 "message": f"Hızlı render etkin: {fast_path_segments}/{n} klipte gereksiz saydamlık ve katman işlemleri atlandı.",
             })
-        if LOW_MEMORY_RENDER:
-            await q.put({
-                "type": "log",
-                "message": f"Windows düşük bellek renderı etkin: {RENDER_THREAD_LIMIT} encoder iş parçacığı, tek filtre iş parçacığı.",
-            })
+        await q.put({"type": "log", "message":
+                     f"Render kaynakları: {resources.encoder_threads} kodlama, {resources.filter_threads} filtre, "
+                     f"kaynak başına {resources.decoder_threads} çözme iş parçacığı. {resources.reason}"})
+        await q.put({"type": "log", "message": "NVIDIA ekran kartı kodlaması (NVENC) etkin."
+                     if encoder.hardware else f"İşlemci kodlaması etkin. {encoder.fallback_reason}"})
         if render_fmt == "mp4":
             await q.put({
                 "type": "log",
                 "message": f"Windows uyumlu MP4: H.264 {h264_profile.title()} / Level {h264_level}, AAC-LC stereo.",
             })
         
-        proc = await create_media_process(
-            *cmd,
-            stderr=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE
-        )
-        
-        ffmpeg_stderr_tail = await collect_ffmpeg_stderr(proc, q, total_duration)
-
-        await proc.wait()
-        final_returncode = proc.returncode
+        use_hardware = encoder.hardware
+        safe_retry_used = resources.low_memory
+        while True:
+            proc = await create_media_process(*render_command(use_hardware, resources),
+                                             stderr=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+            ffmpeg_stderr_tail = await collect_ffmpeg_stderr(proc, q, total_duration)
+            await proc.wait()
+            final_returncode = proc.returncode
+            if final_returncode == 0:
+                break
+            signed_code = final_returncode if final_returncode < 0x80000000 else final_returncode - 0x100000000
+            memory_error = signed_code == -12 or any("cannot allocate memory" in line.lower() for line in ffmpeg_stderr_tail)
+            if memory_error and (use_hardware or not safe_retry_used):
+                safe_retry_used = True
+                use_hardware = False
+                resources = await asyncio.to_thread(choose_render_resources, render_width, render_height,
+                    **resource_options, environ={**os.environ, "SMART_EDITOR_LOW_MEMORY_RENDER": "1"})
+                await q.put({"type": "log", "message": "Bellek baskısı algılandı; aynı kalite korunarak koruyucu işlemci ayarlarıyla yeniden deneniyor."})
+            elif use_hardware and is_nvenc_failure(final_returncode, ffmpeg_stderr_tail):
+                use_hardware = False
+                await asyncio.to_thread(invalidate_nvenc, FFMPEG_BIN, "Kodlama sırasında ekran kartı kullanılamadı.")
+                await q.put({"type": "log", "message": "Ekran kartı kodlaması tamamlanamadı; aynı proje ve kaliteyle işlemci üzerinden yeniden deneniyor."})
+            else:
+                break
+            await q.put({"type": "progress", "percent": 0})
 
         if final_returncode == 0 and fmt in {"gif", "mp3"}:
             await q.put({"type": "log", "message": "Seçilen son biçim hazırlanıyor..."})
@@ -2616,6 +2645,9 @@ async def run_render_job(job_id: str):
                 raise RuntimeError("Seçilen zamanda görüntü karesi oluşturulamadı")
             await q.put({"type": "progress", "percent": 100})
             await q.put({"type": "log", "message": "Ekran görüntüsü PNG olarak hazır!" if snapshot else "Render başarıyla tamamlandı!"})
+            if not snapshot:
+                elapsed = max(.001, time.monotonic() - render_started)
+                await q.put({"type": "log", "message": f"Render süresi: {elapsed:.1f} sn · {total_duration / elapsed:.2f}× video hızı."})
             await q.put({"type": "result", "download_url": f"/download/{job_id}/{fmt}"})
         else:
             await q.put({
@@ -3098,6 +3130,7 @@ async def start_render(
     fmt: str = Form("mp4"),
     fps: int = Form(30),
     quality: str = Form("standard"),
+    hardware: str = Form("auto"),
     segments: str = Form(...), # JSON string
     texts: str = Form("[]"),
     stickers: str = Form("[]"),
@@ -3131,6 +3164,9 @@ async def start_render(
     quality = quality.strip().lower()
     if quality not in ALLOWED_QUALITIES:
         raise HTTPException(400, "Desteklenmeyen kalite ayarı")
+    hardware = hardware.strip().lower()
+    if hardware not in {"auto", "cpu"}:
+        raise HTTPException(400, "Desteklenmeyen kodlama tercihi")
     if bool(width) != bool(height):
         raise HTTPException(400, "Çıktı genişliği ve yüksekliği birlikte gönderilmeli")
     if width or height:
@@ -3421,6 +3457,7 @@ async def start_render(
         "format": fmt,
         "fps": fps,
         "quality": quality,
+        "hardware": hardware,
         "width": width,
         "height": height,
         "source_width": source_width,

@@ -23,7 +23,7 @@ test('render and snapshot use a single form containing visible layers and clip t
     texts: [{ text: 'Visible' }, { text: 'Hidden subtitle', kind: 'subtitle' }],
     stickers: [{ preset: 'star' }], audioLayers: [{ fileId: 'music' }], transitions: [{ boundary: 0 }],
     trackState: { subtitle: { visible: false }, text: { visible: true }, sticker: { visible: true }, image: { visible: true }, audio: { muted: false }, video: { visible: true, muted: true } },
-  }, el: id => ({ value: id === 'export-fps' ? '30' : 'standard' }),
+  }, el: id => ({ value: id === 'export-fps' ? '30' : id === 'export-hardware' ? 'auto' : 'standard' }),
   exportableClips: () => [{ start: 0, end: 4, scale: 130, zoomKeyframes: [{ time: 1 }] }],
   exportableImageLayers: () => [{ fileId: 'image', rotation: 20 }], buildMaskImageLayers: () => [{ fileId: 'mask' }] });
   vm.runInContext(between('    function buildRenderForm', '    async function saveCompletedOutput') + between('    function manualExportData', '    async function startManualRender'), c);
@@ -33,6 +33,22 @@ test('render and snapshot use a single form containing visible layers and clip t
   assert.equal(JSON.parse(form.get('segments'))[0].scale, 130);
   assert.equal(JSON.parse(form.get('stickers'))[0].preset, 'star');
   assert.equal(form.get('mute_video_audio'), 'true');
+  assert.equal(form.get('hardware'), 'auto');
+});
+
+test('encoder preference is sent without lowering requested quality, FPS or resolution', () => {
+  const c = vm.createContext({ FormData });
+  vm.runInContext(between('    function buildRenderForm', '    async function saveCompletedOutput'), c);
+  for (const hardware of ['auto', 'cpu']) {
+    const form = c.buildRenderForm({ fileId: 'video', clips: [], resolution: { width: 1920, height: 1080 },
+      options: { hardware, quality: 'high', fps: 60 } });
+    assert.equal(form.get('hardware'), hardware);
+    assert.equal(form.get('quality'), 'high');
+    assert.equal(form.get('fps'), '60');
+    assert.equal(form.get('width'), '1920');
+    assert.equal(form.get('height'), '1080');
+  }
+  assert.equal(c.buildRenderForm({ fileId: 'video', clips: [] }).get('hardware'), 'auto');
 });
 
 function splitContext() {

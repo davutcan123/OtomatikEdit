@@ -70,13 +70,15 @@ Yeni ve eski FFmpeg sürümlerindeki filtre-dosyası komut farkı otomatik algı
 
 Windows FFmpeg'in tek satırda 64 KB'tan büyük tanılama çıktısı üretmesi de desteklenir. Çıktı güvenli parçalar hâlinde işlendiği için `Separator is not found, and chunk exceed the limit` hatası render işlemini durdurmaz.
 
-Windows render motoru bellek taşmasını önlemek için filtre işlemcilerini ve encoder iş parçacıklarını sınırlar; x264 lookahead tamponu da küçültülür. Windows'un işaretsiz gösterdiği `4294967284` (`-12`, yetersiz bellek) hatasında gerçek hata satırı encoder özetinden ayrı tutulur.
+Render motoru kullanılabilir bellek, işlemci kapasitesi, çözünürlük ve katman sayısına göre iş parçacıklarını sınırlar; güçlü Windows bilgisayarları artık sürekli iki iş parçacığına zorlanmaz. Bellek baskısında koruyucu sınırlar ve küçük x264 lookahead tamponu kullanılır; `4294967284` (`-12`, yetersiz bellek) hatasında aynı kaliteyle sınırlı bir güvenli yeniden deneme yapılır. `SMART_EDITOR_LOW_MEMORY_RENDER=1` koruyucu modu elle açar; `SMART_EDITOR_RENDER_THREADS` 1–8 arasında üst sınır belirler.
+
+Windows'ta **Video dışa aktarma → Kodlama → Otomatik · NVIDIA (uygunsa)**, MP4/MOV/MKV için kısa bir gerçek NVENC kodlama denemesi yapar. Uygun ekran kartı ve sürücü varsa NVIDIA kodlaması etkinleşir; yoksa veya donanım kodlaması başarısız olursa işlemci kullanılır. Render günlüğü hangi kodlayıcının kullanıldığını gösterir. **Yalnızca işlemci** seçeneği ekran kartını devre dışı bırakır. Çözünürlük ve FPS düşürülmez; video efektlerinin tamamı GPU'ya taşınmış değildir. Mac, WebM, GIF ve MP3 için bu NVIDIA yolu kullanılmaz.
 
 Bazı MOV dosyalarının bozuk veya standart dışı `UDTA` metadata alanı için FFmpeg'in yazdığı `UDTA parsing failed retrying raw` satırı zararsız bir geri dönüş uyarısıdır. Uygulama bu satırı render hatası olarak göstermeden ham metadata ile işlemeye devam eder.
 
 MOV videolarındaki farklı zaman tabanları katman birleştirilmeden önce çıktı FPS değerine eşitlenir. Böylece kısa bir klibin gereksiz yere onlarca kat fazla kare üretmesi, ses-görüntü süresinin ayrılması ve buna bağlı Windows bellek taşması engellenir.
 
-Efektsiz ve varsayılan konumdaki klipler hızlı render yolunu kullanır. Saydamlık, döndürme, maske ve arka plan katmanı yalnız gerçekten gerektiğinde oluşturulur; normal 1080p render bu yüzden belirgin biçimde hızlanır. Efekt kullanılan klipler ihtiyaç duydukları ayrıntılı filtre yolunda kalır.
+Efektsiz ve varsayılan konumdaki klipler hızlı render yolunu kullanır. Saydamlık, döndürme, maske ve arka plan katmanı yalnız gerçekten gerektiğinde oluşturulur. Tam opak kliplerde gereksiz piksel ifadeleri atlanır; oluşturulan statik metin/sticker PNG'leri saydam boşlukları kırpılarak bir kez çözülür ve kareler arasında yeniden kullanılır. Gerçek saydamlık animasyonları ve efektler korunur; kullanıcı görselleri bu statik önbelleğe alınmaz. Hız kazancı kullanılan efektlere ve bilgisayara bağlıdır.
 
 MP4 çıktıları Windows oynatıcı uyumluluğu için H.264 Main/High (çözünürlüğe uygun seviye), `avc1`, 8-bit `yuv420p`, sabit kare hızı ve AAC-LC 48 kHz stereo olarak hazırlanır. MP4 dosyaları doğru `video/mp4` MIME türüyle indirilir; Windows için önerilen dışa aktarma biçimi MP4'tür.
 

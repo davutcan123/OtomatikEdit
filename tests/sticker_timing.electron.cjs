@@ -22,6 +22,51 @@ async function seek(time) { await evaluate(`seekOutputTime(${time})`);await wait
 const geometry = () => evaluate(`S.stickers.map(item=>{const node=document.querySelector('#sticker-track [data-sticker-id="'+item.id+'"]'),rect=node.getBoundingClientRect(),style=getComputedStyle(node);return{id:item.id,start:item.start,end:item.end,zoom:S.zoom,scale:item.scale,left:parseFloat(node.style.left),inlineWidth:parseFloat(node.style.width),width:rect.width,expectedWidth:(item.end-item.start)*S.zoom,visualEnd:item.start+rect.width/S.zoom,padding:style.padding,border:style.borderWidth}})`);
 const trimStar = delta => evaluate(`(()=>{const node=document.querySelector('#sticker-track [data-sticker-id="S1"]'),handle=node.querySelector('.trim-handle.right'),box=handle.getBoundingClientRect(),x=box.left+box.width/2,y=box.top+box.height/2;handle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:x,clientY:y}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:x+(${delta}),clientY:y}));window.dispatchEvent(new PointerEvent('pointerup'))})()`);
 
+async function clickButton(id) {
+  const point = await evaluate(`(()=>{const node=el(${JSON.stringify(id)});node.scrollIntoView({block:'nearest',inline:'nearest'});const rect=node.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;return{x,y,enabled:!node.disabled,reachable:node.contains(document.elementFromPoint(x,y))}})()`);
+  assert.ok(point.enabled && point.reachable, `${id} must be enabled and reachable`);
+  window.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', x: Math.round(point.x), y: Math.round(point.y), clickCount: 1 });
+  window.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', x: Math.round(point.x), y: Math.round(point.y), clickCount: 1 });
+  await twoFrames();
+}
+
+async function checkExportModal() {
+  const checks = [];
+  window.setContentSize(1366, 768);await twoFrames();
+  await clickButton('manual-render-top');
+  const defaults = await evaluate(`({open:!el('export-modal').classList.contains('hidden'),hardware:el('export-hardware').value,choices:[...el('export-hardware').options].map(option=>option.value),fps:el('export-fps').value,quality:el('export-quality').value})`);
+  assert.deepEqual(defaults, { open: true, hardware: 'auto', choices: ['auto', 'cpu'], fps: '30', quality: 'standard' });
+  await fs.promises.writeFile(path.join(artifacts, 'export-default-1366x768.png'), (await window.webContents.capturePage()).toPNG());
+  await clickButton('export-cancel');
+  // Choose resolution through the existing canvas control, then exercise the
+  // same settings and FormData builder used by the real render action. Never
+  // start an encoder or send a render request from this browser fixture.
+  await evaluate(`el('canvas-preset-top').value='1280x720';el('canvas-preset-top').dispatchEvent(new Event('change',{bubbles:true}))`);
+  for (const [width, height] of [[1366, 768], [1100, 700]]) {
+    window.setContentSize(width, height);await twoFrames();
+    await clickButton('manual-render-top');
+    await evaluate(`for(const [id,value] of [['export-hardware','cpu'],['export-fps','60'],['export-quality','high'],['export-format','mp4']]){el(id).value=value;el(id).dispatchEvent(new Event('change',{bubbles:true}))}`);
+    const layout = await evaluate(`(()=>{const card=el('export-modal').querySelector('.export-modal-card'),bounds=card.getBoundingClientRect();return{width:innerWidth,height:innerHeight,card:{left:bounds.left,top:bounds.top,right:bounds.right,bottom:bounds.bottom},clientWidth:card.clientWidth,scrollWidth:card.scrollWidth,clientHeight:card.clientHeight,scrollHeight:card.scrollHeight,controls:['export-format','export-fps','export-quality','export-hardware','export-render-start'].map(id=>{const node=el(id);node.scrollIntoView({block:'nearest',inline:'nearest'});const box=node.getBoundingClientRect(),x=box.left+box.width/2,y=box.top+box.height/2;return{id,left:box.left,right:box.right,top:box.top,bottom:box.bottom,reachable:node.contains(document.elementFromPoint(x,y)),disabled:node.disabled}})}})()`);
+    assert.equal(layout.width, width);assert.equal(layout.height, height);
+    assert.ok(layout.card.left >= 0 && layout.card.top >= 0 && layout.card.right <= width + 1 && layout.card.bottom <= height + 1, 'Export dialog must fit inside the viewport');
+    assert.ok(layout.scrollWidth <= layout.clientWidth + 1, 'Export dialog must not require horizontal scrolling');
+    for (const control of layout.controls) {
+      assert.ok(control.reachable && !control.disabled && control.top >= 0 && control.bottom <= height + 1, `${width}×${height}: ${control.id} must be reachable (vertical scrolling is allowed)`);
+      assert.ok(control.left >= layout.card.left && control.right <= layout.card.right + 1, `${control.id} must fit inside the dialog`);
+    }
+    const payload = await evaluate(`Object.fromEntries(buildRenderForm(manualExportData(el('export-format').value)).entries())`);
+    assert.equal(payload.hardware, 'cpu');assert.equal(payload.fps, '60');assert.equal(payload.quality, 'high');
+    assert.equal(payload.width, '1280');assert.equal(payload.height, '720');assert.equal(payload.fmt, 'mp4');
+    assert.equal(payload.file_id, 'sticker-fixture.mp4');assert.equal(JSON.parse(payload.stickers).length, 2);
+    assert.equal(await evaluate(`el('export-resolution').textContent`), '1280×720');
+    await fs.promises.writeFile(path.join(artifacts, `export-cpu-${width}x${height}.png`), (await window.webContents.capturePage()).toPNG());
+    checks.push({ layout, requested: { hardware: payload.hardware, fps: payload.fps, quality: payload.quality, width: payload.width, height: payload.height } });
+    await clickButton('export-cancel');
+    assert.ok(await evaluate(`el('export-modal').classList.contains('hidden')`));
+  }
+  return { defaults, checks };
+}
+
 app.whenReady().then(async () => {
   const videoPath = path.join(artifacts, 'fixture.mp4');
   const windowsFFmpeg = path.join(root, 'tools', 'ffmpeg', 'bin', 'ffmpeg.exe');
@@ -77,7 +122,8 @@ app.whenReady().then(async () => {
   await evaluate('S.zoom=.02;drawClips();el("timeline").scrollTop=0');await twoFrames();
   const deepZoom = await geometry();
   await fs.promises.writeFile(path.join(artifacts, 'sticker-low-zoom.png'), (await window.webContents.capturePage()).toPNG());
-  const report = { baseline: process.argv.includes('--baseline'), initial, visibility, scaled, afterResize, afterTrim, extended, shortened, lowZoom, deepZoom, pageErrors, artifacts };
+  const exportModal = process.argv.includes('--baseline') ? null : await checkExportModal();
+  const report = { baseline: process.argv.includes('--baseline'), initial, visibility, scaled, afterResize, afterTrim, extended, shortened, lowZoom, deepZoom, exportModal, pageErrors, artifacts };
   console.log(JSON.stringify(report));
   assert.deepEqual(pageErrors, [], 'The production editor must not raise script or resource errors');
   if (!process.argv.includes('--diagnose')) {
@@ -86,4 +132,5 @@ app.whenReady().then(async () => {
     }
   }
   console.log('Sticker timing: actual visibility, independent presets, preview scaling and timeline trimming passed.');
+  if (exportModal) console.log('Export modal: automatic/CPU selection, requested render settings and reachable controls at both viewport sizes passed.');
 }).catch(error => { console.error(error);process.exitCode = 1; }).finally(() => { window?.destroy();server?.close();app.exit(process.exitCode || 0); });
