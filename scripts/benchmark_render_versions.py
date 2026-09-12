@@ -1,7 +1,9 @@
 """Compare HEAD's full render job to the working tree with synthetic 1080p media.
 
-Run before committing a performance change.  All generated media stay in a
-temporary directory.  CPU-only encoding and identical presets/CRF are used.
+Run before committing a performance change. All generated media stay in a
+temporary directory. CPU-only standard quality is used. The same-policy leg
+preserves the baseline preset/CRF/threads; the adaptive leg uses the host's
+current resource and preset policy, so it is not a threads-only comparison.
 """
 import asyncio
 import importlib.util
@@ -82,6 +84,8 @@ async def main():
             backend.create_media_process = original_create
             command = captured[-1]
             print(json.dumps({"variant": name, "seconds": elapsed,
+                              "preset": command[command.index("-preset") + 1],
+                              "crf": command[command.index("-crf") + 1],
                               "filter_threads": command[command.index("-filter_complex_threads") + 1],
                               "encoder_threads": command[command.index("-threads:v") + 1]}), flush=True)
             frame_hashes = graph_hash(command, scratch / (name + ".md5"))
