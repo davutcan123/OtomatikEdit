@@ -11,7 +11,7 @@
   el('preview-shell').after(controls);
   const playButton = controls.querySelector('button'), seekBar = controls.querySelector('.composite-seek');
   const add = document.createElement('button'); add.type = 'button'; add.id = 'video-track-add';
-  add.className = 'timeline-fit'; add.textContent = '＋ Video kanalı'; add.onclick = () => addVideoTrack();
+  add.className = 'timeline-fit'; add.textContent = '＋ Video kanalı'; add.title = 'Mevcut video kanallarının üstüne yeni kanal ekle'; add.onclick = () => addVideoTrack();
   el('timeline-fit').before(add);
   let entered = false, playing = false, cursor = 0, anchor = 0, started = 0, raf = 0, generation = 0, painting = false, masterVolume = 1, audioContext = null;
   const entries = new Map();

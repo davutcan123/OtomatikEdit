@@ -27,6 +27,7 @@ from runtime_paths import resolve_runtime_paths, import_legacy_projects, release
 from render_resources import choose_render_resources
 from render_encoder import select_video_encoder, invalidate_nvenc, is_nvenc_failure
 from render_overlays import compact_overlay
+from brush_masks import normalize_brush_strokes, brush_mask, create_brushed_image, brush_video_filter
 from render_image_animation import image_animation_expressions
 from render_video_tracks import (normalize_video_track, normalize_source_crop, source_crop_filter,
                                  video_track_groups, next_track_clip, shift_clip_filter_time,
@@ -730,34 +731,10 @@ def normalize_image_layers(items, total_duration: float) -> list[dict]:
             raise HTTPException(400, "Desteklenmeyen görsel arka plan işlemi")
         if brush_mode not in ALLOWED_BRUSH_MODES:
             raise HTTPException(400, "Desteklenmeyen görsel fırça modu")
-        normalized_brush_strokes = []
-        point_count = 0
-        raw_brush_strokes = item.get("brushStrokes", [])
-        if isinstance(raw_brush_strokes, list):
-            for raw_stroke in raw_brush_strokes[:40]:
-                if not isinstance(raw_stroke, dict):
-                    continue
-                try:
-                    stroke_size = max(2.0, min(30.0, float(raw_stroke.get("size", brush_size))))
-                except (TypeError, ValueError):
-                    stroke_size = max(2.0, min(30.0, brush_size))
-                points = []
-                raw_points = raw_stroke.get("points", [])
-                for raw_point in raw_points if isinstance(raw_points, list) else []:
-                    if point_count >= 180 or not isinstance(raw_point, dict):
-                        break
-                    try:
-                        point_x = max(0.0, min(1.0, float(raw_point.get("x", 0))))
-                        point_y = max(0.0, min(1.0, float(raw_point.get("y", 0))))
-                    except (TypeError, ValueError):
-                        continue
-                    if math.isfinite(point_x) and math.isfinite(point_y):
-                        points.append({"x": point_x, "y": point_y})
-                        point_count += 1
-                if points:
-                    normalized_brush_strokes.append({"size": stroke_size, "points": points})
-                if point_count >= 180:
-                    break
+        try:
+            normalized_brush_strokes = normalize_brush_strokes(item.get("brushStrokes", []), brush_size)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         start = max(0.0, min(start, max(0.0, total_duration - 0.05)))
         end = max(start + 0.05, min(end, total_duration))
         raw_frames = item.get("transformKeyframes", [])
@@ -2010,6 +1987,7 @@ async def run_render_job(job_id: str):
     job = jobs[job_id]
     q = job["q"]
     render_started = time.monotonic()
+    brush_assets = []
     try:
         resolution_text = f", Boyut: {job['width']}x{job['height']}" if job.get("width") else ""
         target_fps = job.get("fps", 30)
@@ -2094,6 +2072,42 @@ async def run_render_job(job_id: str):
             x, y, _, _ = await asyncio.to_thread(compact_overlay, overlay_path)
             sticker_overlay_positions.append((x, y))
         
+        # Prepare static selections once, without modifying imported assets.
+        image_items = [dict(item) for item in image_items]
+        animated_brush_images = []
+        for index, item in enumerate(image_items):
+            if item.get("backgroundMode") == "brush" and item.get("brushStrokes"):
+                masked_path = os.path.join(OUTPUT_DIR, f"brush_image_{job_id}_{index}.png")
+                brush_assets.append(masked_path)
+                prepared = await asyncio.to_thread(create_brushed_image, item["path"], masked_path, item)
+                if prepared:
+                    item["path"] = masked_path
+                    item["backgroundMode"] = "none"
+                else:
+                    item["_brushAnimationDuration"] = await asyncio.to_thread(get_video_duration, item["path"])
+                    animated_brush_images.append((index, item))
+        brush_video_paths = []
+        brush_video_indices = {}
+        brush_input_start = (len(video_inputs) + len(text_overlay_paths)
+                             + len(sticker_overlay_paths) + len(image_items) + len(audio_items))
+        for index, segment in enumerate(segments):
+            if segment.get("backgroundMode") == "brush" and segment.get("brushStrokes"):
+                mask_path = os.path.join(OUTPUT_DIR, f"brush_video_{job_id}_{index}.png")
+                brush_assets.append(mask_path)
+                mask_image = await asyncio.to_thread(brush_mask, segment, render_width, render_height)
+                await asyncio.to_thread(mask_image.save, mask_path, "PNG")
+                brush_video_indices[index] = brush_input_start + len(brush_video_paths)
+                brush_video_paths.append(mask_path)
+        brush_image_indices = {}
+        for index, item in animated_brush_images:
+            mask_path = os.path.join(OUTPUT_DIR, f"brush_animation_{job_id}_{index}.png")
+            brush_assets.append(mask_path)
+            source_size = await asyncio.to_thread(get_video_dimensions, item["path"])
+            mask_image = await asyncio.to_thread(brush_mask, item, *source_size)
+            await asyncio.to_thread(mask_image.save, mask_path, "PNG")
+            brush_image_indices[index] = brush_input_start + len(brush_video_paths)
+            brush_video_paths.append(mask_path)
+
         lines = []
         n = len(segments)
         fast_path_segments = 0
@@ -2388,32 +2402,8 @@ async def run_render_job(job_id: str):
                 # scale output sizes must not make rotate cache the first size.
                 rotation_size = f"ow={render_width}:oh={render_height}" if multitrack and fixed_zoom_transform else "ow=iw:oh=ih"
                 video_filters += f"{compact_zoom_filter},rotate='{angle_expression}':{rotation_size}:c=none,setsar=1"
-                if seg.get("backgroundMode") == "brush" and seg.get("brushStrokes"):
-                    brush_terms = []
-                    for stroke in seg["brushStrokes"]:
-                        radius = max(.01, min(.15, stroke.get("size", 12) / 200))
-                        for point in stroke.get("points", []):
-                            brush_terms.append(
-                                "lte(pow((X-W*{x:.6f})/(min(W,H)*{r:.6f}),2)+"
-                                "pow((Y-H*{y:.6f})/(min(W,H)*{r:.6f}),2),1)".format(
-                                    x=point["x"], y=point["y"], r=radius
-                                )
-                            )
-                            if len(brush_terms) >= 120:
-                                break
-                        if len(brush_terms) >= 120:
-                            break
-                    if brush_terms:
-                        brush_condition = "+".join(brush_terms)
-                        brush_alpha = (
-                            f"if(gt({brush_condition},0),alpha(X,Y),0)"
-                            if seg.get("brushMode") == "keep"
-                            else f"if(gt({brush_condition},0),0,alpha(X,Y))"
-                        )
-                        video_filters += (
-                            ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-                            f"a='{brush_alpha}'"
-                        )
+                if i in brush_video_indices:
+                    video_filters += brush_video_filter(brush_video_indices[i], f"brush{i}", target_fps)
                 if mask in {"circle", "ellipse", "rounded"}:
                     mask_expression = alpha_mask_expression(
                         mask, seg.get("maskScale", 100), seg.get("maskX", 50), seg.get("maskY", 50)
@@ -2531,7 +2521,10 @@ async def run_render_job(job_id: str):
                     image_item.get("mask", "none"), image_item.get("maskScale", 100),
                     image_item.get("maskX", 50), image_item.get("maskY", 50))
                 mask_filters = (
-                    f"format=rgba,scale={render_width}:{render_height}:force_original_aspect_ratio=increase,"
+                    "format=rgba"
+                    + (brush_video_filter(brush_image_indices[image_index], f"ownedbrush{image_index}", target_fps)
+                       if image_index in brush_image_indices else "")
+                    + f",scale={render_width}:{render_height}:force_original_aspect_ratio=increase,"
                     f"crop={render_width}:{render_height},"
                     f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{mask_expression}'"
                 )
@@ -2659,33 +2652,18 @@ async def run_render_job(job_id: str):
                 background_filters.append(
                     f"colorkey=0x{chroma_color}:{similarity:.5f}:{blend:.5f}"
                 )
-            elif image_item.get("backgroundMode") == "brush" and image_item.get("brushStrokes"):
-                brush_terms = []
-                for stroke in image_item["brushStrokes"]:
-                    radius = max(.01, min(.15, stroke.get("size", 12) / 200))
-                    for point in stroke.get("points", []):
-                        brush_terms.append(
-                            "lte(pow((X-W*{x:.6f})/(min(W,H)*{r:.6f}),2)+"
-                            "pow((Y-H*{y:.6f})/(min(W,H)*{r:.6f}),2),1)".format(
-                                x=point["x"], y=point["y"], r=radius
-                            )
-                        )
-                        if len(brush_terms) >= 120:
-                            break
-                    if len(brush_terms) >= 120:
-                        break
-                if brush_terms:
-                    brush_condition = "+".join(brush_terms)
-                    brush_alpha = (
-                        f"if(gt({brush_condition},0),alpha(X,Y),0)"
-                        if image_item.get("brushMode") == "keep"
-                        else f"if(gt({brush_condition},0),0,alpha(X,Y))"
-                    )
-                    background_filters.append(
-                        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-                        f"a='{brush_alpha}'"
-                    )
             background_prefix = ",".join(background_filters)
+            if index in brush_image_indices:
+                if snapshot:
+                    elapsed = max(0, image_item.get("snapshot_elapsed", 0))
+                    source_duration = image_item.get("_brushAnimationDuration", 0)
+                    if source_duration > 0:
+                        elapsed %= source_duration
+                    # GIF frame timestamps mark changes, not every displayed
+                    # frame. Expand held frames before taking the current one.
+                    background_prefix += f",fps={target_fps},trim=start={elapsed:.8f},setpts=PTS-STARTPTS"
+                background_prefix += brush_video_filter(brush_image_indices[index], f"imagebrush{index}", target_fps)
+                background_prefix += f",fps={target_fps},setpts=PTS-STARTPTS+{image_item['start']:.8f}/TB"
             if image_mask in {"circle", "ellipse", "rounded"}:
                 mask_expression = alpha_mask_expression(
                     image_mask, image_item.get("maskScale", 100),
@@ -2858,10 +2836,16 @@ async def run_render_job(job_id: str):
             # image2's -loop 1 would otherwise decompress it every output frame.
             for overlay_path in text_overlay_paths + sticker_overlay_paths:
                 cmd.extend(["-threads", "1", "-framerate", str(target_fps), "-i", overlay_path])
-            for image_item in image_items:
-                cmd.extend(["-threads", "1", "-framerate", str(target_fps), "-loop", "1", "-i", image_item["path"]])
+            for index, image_item in enumerate(image_items):
+                if index in brush_image_indices:
+                    cmd.extend(["-threads", "1", "-stream_loop", "-1"])
+                    cmd.extend(["-i", image_item["path"]])
+                else:
+                    cmd.extend(["-threads", "1", "-framerate", str(target_fps), "-loop", "1", "-i", image_item["path"]])
             for audio_item in audio_items:
                 cmd.extend(["-threads", "1", "-i", audio_item["path"]])
+            for mask_path in brush_video_paths:
+                cmd.extend(["-threads", "1", "-framerate", str(target_fps), "-i", mask_path])
             cmd.extend(ffmpeg_filter_script_args(script_path))
             cmd.extend(["-map", "[outv]"])
             if not snapshot:
@@ -2986,6 +2970,11 @@ async def run_render_job(job_id: str):
     except Exception as e:
         await q.put({"type": "error", "message": f"Hata oluştu: {str(e)}"})
     finally:
+        for asset in brush_assets:
+            try:
+                os.remove(asset)
+            except OSError:
+                pass
         await q.put(None)
 
 @app.get("/", response_class=HTMLResponse)
@@ -3647,34 +3636,10 @@ async def start_render(
         for value, allowed, label in enum_values:
             if value not in allowed:
                 raise HTTPException(400, f"Desteklenmeyen {label}")
-        normalized_brush_strokes = []
-        raw_brush_strokes = segment.get("brushStrokes", [])
-        if isinstance(raw_brush_strokes, list):
-            point_count = 0
-            for raw_stroke in raw_brush_strokes[:40]:
-                if not isinstance(raw_stroke, dict):
-                    continue
-                try:
-                    stroke_size = max(2.0, min(30.0, float(raw_stroke.get("size", brush_size))))
-                except (TypeError, ValueError):
-                    stroke_size = max(2.0, min(30.0, brush_size))
-                points = []
-                for raw_point in raw_stroke.get("points", []) if isinstance(raw_stroke.get("points", []), list) else []:
-                    if point_count >= 180 or not isinstance(raw_point, dict):
-                        break
-                    try:
-                        point_x = max(0.0, min(1.0, float(raw_point.get("x", 0))))
-                        point_y = max(0.0, min(1.0, float(raw_point.get("y", 0))))
-                    except (TypeError, ValueError):
-                        continue
-                    if not math.isfinite(point_x) or not math.isfinite(point_y):
-                        continue
-                    points.append({"x": point_x, "y": point_y})
-                    point_count += 1
-                if points:
-                    normalized_brush_strokes.append({"size": stroke_size, "points": points})
-                if point_count >= 180:
-                    break
+        try:
+            normalized_brush_strokes = normalize_brush_strokes(segment.get("brushStrokes", []), brush_size)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         output_duration = (end - start) / max(0.25, min(4.0, speed))
         normalized_segments.append({
             "clipId": str(segment.get("clipId") or "")[:128],

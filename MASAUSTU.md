@@ -2,9 +2,9 @@
 
 ## Kullanım
 
-Windows 10/11 64-bit için `OtomatikEdit-1.1.8-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
+Windows 10/11 64-bit için `OtomatikEdit-1.1.9-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
 
-Apple Silicon Mac için `OtomatikEdit-1.1.8-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
+Apple Silicon Mac için `OtomatikEdit-1.1.9-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
 
 Kurulum paketleri şu aşamada yayıncı sertifikasıyla imzalı/noter onaylı değildir. İşletim sistemi yayıncı doğrulama uyarısı gösterebilir. Genel dağıtım için Windows kod imzası ve Apple Developer imzalama/noter onayı ayrıca yapılandırılmalıdır.
 
@@ -42,6 +42,10 @@ Kaydedilmiş projeyi listeden seçip **Projeyi sil** kullanabilirsiniz. Onaydan 
 
 Geniş masaüstü ekranında oynatıcı ve timeline aynı ekranda kalır; sağdaki küçük ayar/araç panelleri ve timeline kendi içinde kayar. Daha küçük pencerelerde tüm kontrollere erişim için sayfa kaydırma korunur.
 
+## Görsellerde fırça ve silgi
+
+Timeline’daki görseli seçip arka plan kaldırma bölümünde **Fırça** ile gerekli alanı boyayın. **Silgi**, yanlış boyadığınız seçimi düzeltir; kaynak görsel dosyasını değiştirmez. Boyanan alanın kalmasını veya kaldırılmasını seçip **Arka planı kaldır** ile uygulayın. Renkli boyama kılavuzu işlem bitince gizlenir; maskeyi değiştirmek için **Maskeyi düzenle** ile yeniden açılır. Maske, proje kaydında ve dışa aktarılan görüntüde korunur; düzenleme kılavuzu çıktıya eklenmez.
+
 ## Timeline seçimi ve boşluklar
 
 Timeline odaktayken **Ctrl/Cmd+A**, yalnız açık timeline’daki video kliplerinin tamamını seçer. **Ctrl/Cmd+tıklama** tek tek klip ekler veya seçimden çıkarır; normal tıklama seçimi tek klibe indirir. Yazı giriş alanlarında kısayol normal metin seçimi olarak kalır. Seçili video grubunu birlikte taşıyabilir, silebilir veya başka timeline’a kopyalayabilirsiniz. Kopyalar kaynak görüntüyü paylaşır ancak düzenleme ve keyframe ayarları bağımsızdır; göreli zamanlar, kanal boşlukları ve grup içindeki geçişler korunur. Kilitli klip içeren grup taşınmaz/silinmez. Toplu işlem tek adımda geri alınabilir.
@@ -49,6 +53,8 @@ Timeline odaktayken **Ctrl/Cmd+A**, yalnız açık timeline’daki video klipler
 **Mıknatıs** yalnız yakın kenarları hizalar. Ayrı **Boşlukları kapat** düğmesi açıldığında kilitli olmayan video kanalları başlangıçtan itibaren boşluksuz sıralanır; silme, kırpma ve taşıma sonrasında aralıklar yeniden kapanır. Metin, görsel, ses ve sticker zamanları değişmez. Mod timeline’a özel kaydedilir; kapatmak mevcut konumları koruyup yeniden boşluk bırakmaya izin verir. Düğmeyi açma işlemi de geri alınabilir.
 
 Boş metin, altyazı, görsel, ses ve sticker satırları yer kaplamaz. İlk öğeyi sürüklerken uygun hedef satırı geçici olarak açılır; bırakınca kalır, iptal edilince kapanır. Gizlenmiş boş bir kanal kilitliyse **Kilitli boş kanallar** menüsünden açıkça kilidi kaldırabilirsiniz; sürükleme kilidi kendiliğinden açmaz.
+
+**＋ Video kanalı**, mevcut video kanallarının üstüne yeni boş kanal ekler ve görünümü o kanala kaydırır. Önceki klip seçimi temizlenir; kliplerin yerleri, oynatma kafasının zamanı, yatay kaydırma ve timeline yakınlığı değişmez. Yeni kanal ekleme geri alınabilir. Timeline içinde aşağı-yukarı kaydırırken saniye cetveli ve kırmızı oynatma kafasının tutamacı üstte görünür kalır; yatay kaydırırken doğru saniyeleri izler.
 
 ## İnternet gereksinimi
 
