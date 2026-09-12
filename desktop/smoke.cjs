@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
-const { app } = require('electron');
+const { app, ipcMain } = require('electron');
 const { waitForMedia } = require('./media-ready.cjs');
 
 exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
@@ -131,7 +131,37 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   assert.ok((await fs.stat(path.join(dataDir, 'saved-' + captures[0]))).isFile());
   const screenshot = path.join(dataDir, 'desktop-smoke.png');
   await fs.writeFile(screenshot, (await mainWindow.webContents.capturePage()).toPNG());
+  // Exercise the real isolated preload and update save handshake, never the installer/network.
+  const updaterState = await mainWindow.webContents.executeJavaScript('window.desktopApp.getUpdateState()');
+  assert.equal(updaterState.mode, 'disabled');
+  const updateAvailable = { mode: 'automatic', status: 'available', currentVersion: health.version, version: '9.9.9', manualCheck: true };
+  mainWindow.webContents.send('desktop:update-state', updateAvailable);
+  const updatePopup = await mainWindow.webContents.executeJavaScript(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve({open:el('desktop-update-dialog').open,title:el('desktop-update-heading').textContent,action:el('desktop-update-primary').textContent,consent:el('desktop-update-message').textContent}))))`);
+  assert.equal(updatePopup.open, true);assert.equal(updatePopup.action, 'İndir ve güncelle');assert.match(updatePopup.consent, /yeniden açılır/);
+  const updateScreenshot = path.join(dataDir, 'desktop-update-popup.png');
+  await fs.writeFile(updateScreenshot, (await mainWindow.webContents.capturePage()).toPNG());
+  await mainWindow.webContents.executeJavaScript("el('desktop-update-later').click()");
+  const attempt = 9000001;
+  const updateReady = await new Promise((resolve, reject) => {
+    const cleanup = () => { clearTimeout(timeout);ipcMain.removeListener('desktop:ready-for-update', received); };
+    const received = (event, returnedAttempt, error, busy) => {
+      if (event.sender !== mainWindow.webContents || returnedAttempt !== attempt) return;
+      cleanup();resolve({ attempt: returnedAttempt, error, busy });
+    };
+    const timeout = setTimeout(() => { cleanup();reject(new Error('Update recovery handshake timed out')); }, 15000);
+    ipcMain.on('desktop:ready-for-update', received);
+    mainWindow.webContents.send('desktop:prepare-update', attempt);
+  });
+  assert.equal(updateReady.error, undefined);assert.equal(updateReady.busy, false);
+  const frozenUpdate = await mainWindow.webContents.executeJavaScript(`({frozen:desktopUpdateFrozen,modal:el('desktop-update-dialog').open,inert:document.querySelector('main').inert,paused:mv.paused})`);
+  assert.deepEqual(frozenUpdate, { frozen: true, modal: true, inert: true, paused: true });
+  const updateRecovery = JSON.parse(await fs.readFile(path.join(dataDir, 'recovery.json'), 'utf8'));
+  assert.equal(updateRecovery.name, payload.name);assert.equal(updateRecovery.timelines[0].state.clips.length, 2);
+  mainWindow.webContents.send('desktop:update-cancelled', attempt);
+  const updateCancelled = await mainWindow.webContents.executeJavaScript(`new Promise(resolve=>requestAnimationFrame(()=>resolve({frozen:desktopUpdateFrozen,inert:document.querySelector('main').inert,modal:el('desktop-update-dialog').open})))`);
+  assert.deepEqual(updateCancelled, { frozen: false, inert: false, modal: false });
+  mainWindow.webContents.send('desktop:update-state', updaterState);
   assert.equal((await request('/api/apply-update', { method: 'POST' })).status, 409);
   assert.deepEqual(errors, []);
-  return { ok: true, packaged: app.isPackaged, health, ui, storage, played, recoveredVideo, layouts, split, snapshot: captures[0], savedProject: saved.id, screenshot, renderPath, nativeSaved, nativeSaveResult, errors };
+  return { ok: true, packaged: app.isPackaged, health, ui, storage, played, recoveredVideo, layouts, split, snapshot: captures[0], savedProject: saved.id, screenshot, renderPath, nativeSaved, nativeSaveResult, updaterState, updatePopup, updateScreenshot, frozenUpdate, updateCancelled, errors };
 };

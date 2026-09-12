@@ -19,9 +19,10 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
 
 from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.datastructures import Headers
 from runtime_paths import resolve_runtime_paths, import_legacy_projects, release_download_url
 
 RUNTIME_PATHS = resolve_runtime_paths(__file__)
@@ -455,13 +456,59 @@ async def app_lifespan(application):
 app = FastAPI(lifespan=app_lifespan)
 
 
-@app.middleware("http")
-async def desktop_authentication(request: Request, call_next):
-    if DESKTOP_MODE and not secrets.compare_digest(
-        request.headers.get("X-Desktop-Token", "").encode("utf-8"), DESKTOP_TOKEN.encode("utf-8")
-    ):
-        return Response(status_code=403)
-    return await call_next(request)
+class DesktopUpdateState:
+    def __init__(self):
+        # A lock also protects embedders/tests that issue requests on different
+        # threads. Never hold it across an await or a filesystem operation.
+        self.lock = threading.Lock()
+        self.preparing = False
+        self.active_requests = 0
+
+
+desktop_update_state = DesktopUpdateState()
+_DESKTOP_UPDATE_CONTROLS = {
+    "/api/desktop/prepare-update", "/api/desktop/cancel-update",
+}
+
+
+class DesktopLifecycleMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not DESKTOP_MODE:
+            return await self.app(scope, receive, send)
+        if not secrets.compare_digest(
+            Headers(scope=scope).get("X-Desktop-Token", "").encode("utf-8"), DESKTOP_TOKEN.encode("utf-8")
+        ):
+            return await Response(status_code=403)(scope, receive, send)
+        path = scope.get("path", "")
+        # Waveforms are GETs but create files/processes, so they must drain too.
+        mutating = (
+            scope["method"] not in {"GET", "HEAD", "OPTIONS"}
+            or path.startswith("/waveform/")
+        ) and path not in _DESKTOP_UPDATE_CONTROLS
+        if not mutating:
+            return await self.app(scope, receive, send)
+        with desktop_update_state.lock:
+            blocked = desktop_update_state.preparing
+            if not blocked:
+                desktop_update_state.active_requests += 1
+        if blocked:
+            return await JSONResponse(status_code=409, content={
+                "detail": "Güncelleme hazırlanıyor. İşlem iptal edilene kadar düzenlemeler kaydedilemez veya yeni işler başlatılamaz.",
+                "code": "desktop_update_preparing", "preparing": True,
+            })(scope, receive, send)
+        try:
+            # Count the entire request, including a streaming upload and any
+            # response background task, not only the route's response headers.
+            return await self.app(scope, receive, send)
+        finally:
+            with desktop_update_state.lock:
+                desktop_update_state.active_requests -= 1
+
+
+app.add_middleware(DesktopLifecycleMiddleware)
 
 
 app.mount("/static", StaticFiles(directory=os.path.join(RESOURCE_DIR, "static"), check_dir=False), name="static")
@@ -518,11 +565,22 @@ _PROTECTED_DIRS = {"venv", ".venv-windows", "uploads", "outputs", "projects",
 jobs = {}
 
 
+def active_job_count():
+    return sum(1 for job in tuple(jobs.values()) if job.get("task") is not None and not job["task"].done())
+
+
 def schedule_job(job_id, coroutine):
     # Keep the Task, rather than infer activity from unread SSE messages: a
     # completed render may still have progress/results waiting in its queue.
-    task = asyncio.create_task(coroutine)
-    jobs[job_id]["task"] = task
+    with desktop_update_state.lock:
+        if DESKTOP_MODE and desktop_update_state.preparing:
+            # Defensive guard for non-HTTP callers too. Do not leak a coroutine
+            # if a future background producer attempts to start during update.
+            if hasattr(coroutine, "close"):
+                coroutine.close()
+            raise RuntimeError("Güncelleme hazırlanırken yeni iş başlatılamaz")
+        task = asyncio.create_task(coroutine)
+        jobs[job_id]["task"] = task
     return task
 
 
@@ -2606,11 +2664,39 @@ async def api_version():
 
 @app.get("/api/health")
 async def api_health():
-    active_jobs = sum(
-        1 for job in jobs.values()
-        if job.get("task") is not None and not job["task"].done()
-    )
-    return {"status": "ok", "version": APP_VERSION, "desktop": DESKTOP_MODE, "active_jobs": active_jobs}
+    with desktop_update_state.lock:
+        active_jobs = active_job_count()
+        preparing = DESKTOP_MODE and desktop_update_state.preparing
+        active_requests = desktop_update_state.active_requests if DESKTOP_MODE else 0
+    return {"status": "ok", "version": APP_VERSION, "desktop": DESKTOP_MODE,
+            "active_jobs": active_jobs, "active_requests": active_requests,
+            "preparing": preparing, "update_ready": preparing and active_jobs == 0 and active_requests == 0}
+
+
+@app.post("/api/desktop/prepare-update")
+async def api_prepare_desktop_update():
+    if not DESKTOP_MODE:
+        raise HTTPException(404)
+    with desktop_update_state.lock:
+        active_jobs = active_job_count()
+        active_requests = desktop_update_state.active_requests
+        if active_jobs or active_requests:
+            return JSONResponse(status_code=409, content={
+                "detail": "Devam eden yükleme, kayıt veya işlem var. Tamamlandıktan sonra güncellemeyi yeniden deneyin.",
+                "code": "desktop_update_busy", "active_jobs": active_jobs, "active_requests": active_requests,
+                "preparing": desktop_update_state.preparing, "update_ready": False,
+            })
+        desktop_update_state.preparing = True
+    return {"preparing": True, "update_ready": True, "active_jobs": 0, "active_requests": 0}
+
+
+@app.post("/api/desktop/cancel-update")
+async def api_cancel_desktop_update():
+    if not DESKTOP_MODE:
+        raise HTTPException(404)
+    with desktop_update_state.lock:
+        desktop_update_state.preparing = False
+    return {"preparing": False, "update_ready": False}
 
 
 @app.post("/api/desktop/import-projects")

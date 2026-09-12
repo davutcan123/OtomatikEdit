@@ -79,7 +79,7 @@ test('B preserves locks and cuts selected audio using output time with a valid s
 test('keyboard splitting does not intercept text edits, and timeline pointer releases old input focus', () => {
   let keydown, pointerdown, splits = 0;
   const timeline = { focus() { c.document.activeElement = { tagName: 'DIV' }; }, addEventListener(_, callback) { pointerdown = callback; } };
-  const c = vm.createContext({ document: { activeElement: { tagName: 'INPUT' }, addEventListener(_, callback) { keydown = callback; } },
+  const c = vm.createContext({ desktopUpdateFrozen: false, document: { activeElement: { tagName: 'INPUT' }, addEventListener(_, callback) { keydown = callback; } },
     el: id => id === 'timeline' ? timeline : { open: false, classList: { contains: () => true } }, splitSelected: () => splits++,
   });
   vm.runInContext(between("    el('timeline').tabIndex=0", '    function fitTimeline') + between("    document.addEventListener('keydown',e=>{const focused", '    // PROJECT MEDIA LIBRARY'), c);

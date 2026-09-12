@@ -34,6 +34,7 @@ function harness() {
   const event = {};
   const context = {
     closePending: false, closeAttempt: 0, allowClose: false, exiting: false,
+    updateHandoff: null,
     activeNativeSaves: 0, nativeSaveQueue: Promise.resolve(), recoveryQueue: Promise.resolve(),
     lastSaveDirectory: '', origin: 'http://127.0.0.1:4567', dataDir: '/test-library', smoke: false,
     path, note() {},

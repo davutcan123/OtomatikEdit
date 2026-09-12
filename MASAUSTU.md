@@ -2,11 +2,21 @@
 
 ## Kullanım
 
-Windows 10/11 64-bit için `OtomatikEdit-1.1.1-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
+Windows 10/11 64-bit için `OtomatikEdit-1.1.2-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
 
-Apple Silicon Mac için `OtomatikEdit-1.1.1-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
+Apple Silicon Mac için `OtomatikEdit-1.1.2-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
 
 Kurulum paketleri şu aşamada yayıncı sertifikasıyla imzalı/noter onaylı değildir. İşletim sistemi yayıncı doğrulama uyarısı gösterebilir. Genel dağıtım için Windows kod imzası ve Apple Developer imzalama/noter onayı ayrıca yapılandırılmalıdır.
+
+## Güncelleme
+
+**1.1.1 veya daha eski masaüstü sürümünden 1.1.2'ye bir kez elle geçmek gerekir:** GitHub Releases'ten işletim sisteminize uygun kurulum dosyasını indirin ve mevcut uygulamanın üzerine kurun. Eski sürümün içinde uygulama içi kurulum mekanizması bulunmadığından bu ilk geçiş kendiliğinden gerçekleşmez. Önce projenizi kaydedin; Belgeler'deki proje ve medya klasörü korunur.
+
+**Windows 1.1.2 ve sonrası:** uygulama açılıştan sonra ve dört saatte bir yayımlanmış yeni sürümleri GitHub üzerinden kontrol eder. Yardım → Güncellemeleri kontrol et ile de kontrol edilebilir. Bildirimde **İndir ve güncelle** seçilirse paket arka planda indirilir; devam eden render/analiz, dosya kaydı ve düzenleme hareketlerinin bitmesi beklenir. Sonra açık proje kurtarma kaydı doğrulanır, düzenleme motoru kapatılır ve yeni sürüm otomatik kurulup yeniden açılır. Kayıt/indirme doğrulanamazsa kurulum yapılmaz. **Daha sonra** indirmeyi başlatmaz; indirme başladıktan sonraki **Arka planda devam et** ise indirmeyi/kurulum onayını iptal etmez. İnternet yoksa mevcut sürümle düzenlemeye devam edebilirsiniz.
+
+**Mac:** Apple yayıncı sertifikası kullanılmadığı için güncelleme manuel kalır. Yeni DMG dosyasını indirin, açık projenizi kaydedip uygulamayı kapatın ve Applications klasöründeki uygulamayı yenisiyle değiştirin. İmzasız Mac paketlerinde otomatik kurulum veya imza denetimini atlatan bir yöntem kullanılmaz.
+
+Windows güncelleme dosyasının SHA-512 özeti yayımlanan metadata ile doğrulanır. Bu bütünlük kontrolü yayıncı sertifikasının yerine geçmez: mevcut paketler Authenticode imzalı değildir. Uygulamaya GitHub erişim anahtarı gömülmez; yalnız `davutcan123/OtomatikEdit` deposundaki herkese açık sürümler kullanılır.
 
 ## Eski kayıtlar ve yedekleme
 
@@ -58,9 +68,15 @@ npm run dist
 
 `npm run dist`, yerel CSS'yi üretir, Python motorunu PyInstaller ile paketler ve Electron kurulumunu `dist` içine oluşturur. Python ve FFmpeg **aynı işletim sistemi/mimarisinde** paketlenmelidir; macOS'tan Windows motoru çapraz derlenmez. Windows'ta FFmpeg eksikse önce `python windows_setup.py` çalıştırılır. Gerektiğinde `SMART_EDITOR_FFMPEG` ve `SMART_EDITOR_FFPROBE` tam yolları verilebilir.
 
-GitHub Actions'taki **Build desktop installers → Run workflow**, Windows x64 ve macOS arm64 için ayrı derleme/test yapar. Kurulumları artifact olarak saklar; otomatik yayınlamaz. Hiçbir kullanıcı videosu/projesi, geliştirme ortamı veya model önbelleği kurulum paketine alınmaz. Paket içinde üçüncü taraf lisans bilgileri bulunur.
+GitHub Actions'taki **Build desktop installers → Run workflow**, Windows x64 ve macOS arm64 için ayrı derleme/test yapar. Kurulumları artifact olarak saklar; otomatik yayınlamaz. İsteğe bağlı **prepare_release** seçilirse iki platformun kontrolleri geçtikten sonra bir GitHub sürüm taslağı oluşturulur. Aynı sürüm zaten varsa üzerine yazılmaz; yayımlama inceleme sonrası elle yapılır.
+
+Windows otomatik güncellemesi için EXE, varsa ona ait blockmap ve **latest.yml** aynı sürümde bulunmalıdır. İş akışı sürüm numarasını, dosya adını ve SHA-512 özetini yüklemeden önce doğrular. Manuel Mac DMG'si ve **latest-mac.yml** de taslağa eklenir; Mac otomatik güncellemesi kapalıdır ve ZIP hedefi üretilmez. Paket içindeki güncelleme adresi `build.publish` ile sabittir; derleme `--publish never` kullanır. GitHub yazma yetkisi yalnız sürüm taslağını hazırlayan CI işinde bulunur, kurulum paketine aktarılmaz.
+
+Hiçbir kullanıcı videosu/projesi, geliştirme ortamı veya model önbelleği kurulum paketine alınmaz. Paket içinde üçüncü taraf lisans bilgileri bulunur.
 
 `electron . --smoke-test` yalnız geçici bir proje klasöründe açılış, token koruması, CSS, gerçek H.264 oynatma, proje kaydı/kurtarma ve kısa MP4 render kontrolü yapar. Paketlenmiş uygulamanın çalıştırılabilir dosyasına da `--smoke-test` verilebilir; test kullanıcı kayıtlarını değiştirmez.
+
+Windows CI ayrıca gerçek NSIS güncelleme zincirini sınar: üretimdeki güncelleme denetleyicisini kullanan iki küçük test sürümü oluşturur, eskisini geçici dizine kurar, yenisini yerel test sunucusundan özet doğrulamasıyla indirir ve yeniden açılan sürümde proje kurtarma kaydı ile medya dosyasının korunduğunu kontrol eder. Bu test yalnız tek kullanımlık GitHub Windows çalışanında çalışır; test uygulamaları ve yerel güncelleme adresi yayın paketlerine alınmaz. Asıl editörün açılış/render kontrolleri bundan ayrı çalışır.
 
 ## Sorun giderme
 

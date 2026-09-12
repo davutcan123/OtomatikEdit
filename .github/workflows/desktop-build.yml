@@ -57,13 +57,17 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci
       - name: Check desktop persistence and backend isolation
-        run: python -m unittest test_runtime_paths test_desktop_backend test_snapshot
+        run: python -m unittest test_runtime_paths test_desktop_backend test_desktop_update test_snapshot
       - name: Check desktop window security and editor persistence
         run: npm test
       - name: Build and validate desktop installer
         run: npm run dist
       - name: Exercise packaged editor, media playback, recovery and render
         run: python scripts/smoke_desktop.py
+      - name: Verify a real installed Windows update and automatic relaunch
+        if: runner.os == 'Windows'
+        timeout-minutes: 20
+        run: node scripts/windows_update_smoke.cjs
       - name: Save installers for download and testing
         uses: actions/upload-artifact@v4
         with:
@@ -92,12 +96,51 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install locked metadata validation dependencies
+        run: npm ci --omit=dev --ignore-scripts --no-audit
       - name: Download validated installers from this workflow run
         uses: actions/download-artifact@v4
         with:
           pattern: OtomatikEdit-*
           path: release-artifacts
           merge-multiple: true
+      - name: Verify update metadata names, versions and installer checksums
+        shell: bash
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
+          const yaml = require('js-yaml');
+          const version = require('./package.json').version;
+          assert.match(version, /^\d+\.\d+\.\d+$/);
+          assert.equal(require('./version.json').version, version);
+          async function verify(manifest, installer) {
+            const metadata = yaml.load(fs.readFileSync(path.join('release-artifacts', manifest), 'utf8'));
+            assert.equal(metadata.version, version, `${manifest}: wrong version`);
+            assert.ok(Array.isArray(metadata.files) && metadata.files.length === 1, `${manifest}: unexpected files`);
+            const entry = metadata.files[0];
+            assert.equal(entry.url, installer, `${manifest}: unexpected download URL`);
+            assert.equal(metadata.path, installer, `${manifest}: unexpected legacy download path`);
+            const file = path.join('release-artifacts', installer);
+            const stat = fs.lstatSync(file);
+            assert.ok(stat.isFile() && stat.size > 0, `${installer}: expected a regular nonempty file`);
+            const hash = crypto.createHash('sha512');
+            for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+            const sha512 = hash.digest('base64');
+            assert.equal(entry.sha512, sha512, `${manifest}: installer checksum mismatch`);
+            assert.equal(metadata.sha512, sha512, `${manifest}: legacy checksum mismatch`);
+            if (entry.size !== undefined) assert.equal(entry.size, stat.size, `${manifest}: installer size mismatch`);
+            console.log(`Validated ${manifest} against ${installer}`);
+          }
+          (async () => {
+            await verify('latest.yml', `OtomatikEdit-${version}-win-x64.exe`);
+            // This describes the manual DMG only. Unsigned Mac builds never
+            // invoke Squirrel.Mac and intentionally do not produce a ZIP.
+            await verify('latest-mac.yml', `OtomatikEdit-${version}-mac-arm64.dmg`);
+          })().catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
       - name: Create a new draft without replacing any existing release
         shell: bash
         env:
@@ -113,17 +156,20 @@ jobs:
             process.stdout.write(version);
           ')"
           release_tag="v${release_version}"
-          release_assets=(
+          installer_assets=(
             "release-artifacts/OtomatikEdit-${release_version}-win-x64.exe"
             "release-artifacts/OtomatikEdit-${release_version}-mac-arm64.dmg"
           )
-          for installer in "${release_assets[@]}"; do
-            if [[ ! -s "$installer" || -L "$installer" ]]; then
-              printf 'Missing or invalid validated installer: %s\n' "$installer" >&2
-              exit 1
-            fi
+          release_assets=("${installer_assets[@]}" "release-artifacts/latest.yml" "release-artifacts/latest-mac.yml")
+          for installer in "${installer_assets[@]}"; do
             if [[ -s "${installer}.blockmap" && ! -L "${installer}.blockmap" ]]; then
               release_assets+=("${installer}.blockmap")
+            fi
+          done
+          for asset in "${release_assets[@]}"; do
+            if [[ ! -s "$asset" || -L "$asset" ]]; then
+              printf 'Missing or invalid validated release asset: %s\n' "$asset" >&2
+              exit 1
             fi
           done
           if gh release view "$release_tag" --json id >/dev/null 2>&1; then

@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, autoUpdater: nativeUpdater } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -9,6 +9,8 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { isLocalURL, validateRecovery } = require('./security.cjs');
 const { outputFile, requireOutput, copyOutput, prepareLibrary } = require('./storage.cjs');
+const { UpdateController } = require('./updater.cjs');
+const { UpdateHandoff } = require('./update-handoff.cjs');
 
 const RELEASE_URL = 'https://github.com/davutcan123/OtomatikEdit/releases/latest';
 const root = path.resolve(__dirname, '..');
@@ -32,6 +34,8 @@ let backend, mainWindow, origin = '', exiting = false, allowClose = false, close
 let backendFailed = false, recoveryQueue = Promise.resolve();
 let closeAttempt = 0;
 let nativeSaveQueue = Promise.resolve(), activeNativeSaves = 0, lastSaveDirectory = '';
+let updates, updateHandoff, updateTimer, backendStopping = false;
+let activeDesktopTasks = 0, activeDownloads = 0;
 
 function trusted(event) {
   return mainWindow && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame && isLocalURL(event.senderFrame.url, origin);
@@ -71,6 +75,13 @@ ipcMain.handle('desktop:load-recovery', async event => {
   return null;
 });
 ipcMain.handle('desktop:open-release', event => { requireTrusted(event); return shell.openExternal(RELEASE_URL); });
+ipcMain.handle('desktop:update-state', event => { requireTrusted(event); return updates.getState(); });
+ipcMain.handle('desktop:check-updates', event => { requireTrusted(event); return updates.check(true); });
+ipcMain.handle('desktop:download-update', event => { requireTrusted(event); return updates.download(); });
+ipcMain.on('desktop:ready-for-update', (event, attempt, error, busy) => {
+  if (!trusted(event) || !Number.isSafeInteger(attempt)) return;
+  updateHandoff?.acknowledge(attempt, typeof error === 'string' ? error.slice(0, 500) : '', busy === true);
+});
 ipcMain.handle('desktop:storage-info', event => { requireTrusted(event); return { path: dataDir, projectsPath: path.join(dataDir, 'projects') }; });
 ipcMain.handle('desktop:open-projects-folder', async event => {
   requireTrusted(event);
@@ -80,10 +91,11 @@ ipcMain.handle('desktop:open-projects-folder', async event => {
 ipcMain.handle('desktop:save-output', (event, relativeURL) => {
   requireTrusted(event);
   const output = outputFile(relativeURL, dataDir);
-  if (allowClose || exiting) throw new Error('Uygulama kapanıyor; çıktı proje klasöründe korunuyor.');
+  if (allowClose || exiting || updateHandoff?.committed) throw new Error('Uygulama kapanıyor; çıktı proje klasöründe korunuyor.');
   // A render may finish while the close flow awaits health/recovery. A new
   // native save cancels that older close attempt before showing its dialog.
   cancelPendingClose();
+  updateHandoff?.interrupt();
   activeNativeSaves++;
   const save = nativeSaveQueue.catch(() => {}).then(async () => {
     await requireOutput(output.source, dataDir);
@@ -130,6 +142,8 @@ async function backendRequest(route, options = {}) {
   return response.json();
 }
 async function startBackend() {
+  backendFailed = false;
+  backendStopping = false;
   const port = await freePort();
   origin = `http://127.0.0.1:${port}`;
   let executable, args;
@@ -157,11 +171,13 @@ async function startBackend() {
   });
   backend.stdout.on('data', data => log.write(data));
   backend.stderr.on('data', data => log.write(data));
-  backend.on('error', error => { backendFailed = true; note(error.stack); });
+  const child = backend;
+  backend.on('error', error => { if (backend === child) backendFailed = true; note(error.stack); });
   backend.on('exit', (code, signal) => {
+    if (backend !== child) return;
     backendFailed = true;
     note(`Backend exit: ${code} ${signal || ''}`);
-    if (!exiting && mainWindow && isLocalURL(mainWindow.webContents.getURL(), origin)) {
+    if (!exiting && !backendStopping && mainWindow && isLocalURL(mainWindow.webContents.getURL(), origin)) {
       dialog.showMessageBox(mainWindow, { type: 'error', title: 'Düzenleme motoru kapandı', message: 'Çalışmanızın son kurtarma kaydı korunuyor.', detail: `Uygulamayı yeniden açın. Tanılama kaydı: ${logPath}` });
     }
   });
@@ -177,12 +193,19 @@ async function startBackend() {
 }
 async function stopBackend() {
   if (!backend?.pid) return;
+  backendStopping = true;
   const pid = backend.pid;
   if (process.platform === 'win32') {
-    await new Promise(resolve => {
+    if (backend.exitCode !== null || backend.signalCode !== null) return;
+    await new Promise((resolve, reject) => {
       const taskkill = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
-      taskkill.once('error', resolve); taskkill.once('exit', resolve);
-      setTimeout(resolve, 5000).unref();
+      const timer = setTimeout(() => reject(new Error('Düzenleme motorunun kapanması doğrulanamadı.')), 8000);
+      taskkill.once('error', error => { clearTimeout(timer); reject(error); });
+      taskkill.once('exit', code => {
+        clearTimeout(timer);
+        if (code === 0 || backend.exitCode !== null || backend.signalCode !== null) resolve();
+        else reject(new Error('Düzenleme motoru güvenli biçimde kapatılamadı.'));
+      });
     });
   } else {
     try { process.kill(-pid, 'SIGTERM'); } catch { return; }
@@ -193,6 +216,7 @@ async function stopBackend() {
 }
 async function requestClose(event) {
   if (allowClose || exiting) return;
+  if (updateHandoff?.active) { event.preventDefault(); return; }
   if (!isLocalURL(mainWindow.webContents.getURL(), origin)) { allowClose = true; return; }
   event.preventDefault();
   if (closePending) return;
@@ -221,12 +245,92 @@ async function requestClose(event) {
   }, 10000).unref();
 }
 async function importLegacy() {
+  if (updateHandoff?.active) return;
+  activeDesktopTasks++;
+  try {
   const result = await dialog.showOpenDialog(mainWindow, { title: 'Eski Otomatik Edit klasörünü seçin (uploads ve projects içeren klasör)', properties: ['openDirectory'] });
   if (result.canceled) return;
   try {
     const imported = await backendRequest('/api/desktop/import-projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ directory: result.filePaths[0] }), timeout: 600000 });
     await dialog.showMessageBox(mainWindow, { type: 'info', message: 'Eski proje dosyaları içe aktarıldı.', detail: `Mevcut kayıtların üzerine yazılmadı. Proje aç menüsünden erişmek için uygulamayı yeniden açabilirsiniz.\n${JSON.stringify(imported)}` });
   } catch (error) { await dialog.showMessageBox(mainWindow, { type: 'error', message: 'İçe aktarma tamamlanamadı.', detail: error.message }); }
+  } finally { activeDesktopTasks--; }
+}
+
+function initializeUpdates() {
+  const mode = smoke || !app.isPackaged ? 'disabled' : process.platform === 'win32' ? 'automatic' : 'manual';
+  const send = (name, value) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(name, value); };
+  let updater;
+  if (mode === 'automatic') {
+    updater = require('electron-updater').autoUpdater;
+    updater.setFeedURL({ provider: 'github', owner: 'davutcan123', repo: 'OtomatikEdit', private: false, releaseType: 'release' });
+    updater.logger = { info: note, warn: note, error: note, debug: note };
+    updateHandoff = new UpdateHandoff({
+      busy: () => (allowClose || exiting || closePending || !mainWindow || mainWindow.isDestroyed()) ? 'Uygulama kapanıyor; güncelleme bir sonraki açılışta tekrar sunulacak.' : (activeNativeSaves || activeDesktopTasks || activeDownloads) ? 'Dosya kaydı veya içe aktarma bitince otomatik güncellenecek.' : '',
+      prepareBackend: async () => {
+        const response = await fetch(origin + '/api/desktop/prepare-update', { method: 'POST', headers: { 'X-Desktop-Token': token }, signal: AbortSignal.timeout(5000) });
+        const body = await response.json();
+        if (response.status === 409 && body.code === 'desktop_update_busy') return { update_ready: false };
+        if (!response.ok || body.update_ready !== true) throw new Error('Güncelleme için motorun boşta olduğu doğrulanamadı.');
+        return body;
+      },
+      cancelBackend: async () => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const result = await backendRequest('/api/desktop/cancel-update', { method: 'POST' });
+            if (result.preparing === false) return;
+          } catch (error) { note(`Cancel update gate: ${error.message}`); }
+        }
+        const error = new Error('Güncelleme kilidinin kaldırıldığı doğrulanamadı.');
+        error.userMessage = 'Güncelleme durduruldu. Düzenleme motoruyla bağlantı doğrulanamadı; devam etmeden önce uygulamayı kapatıp yeniden açın. Son kurtarma kaydınız korunuyor.';
+        throw error;
+      },
+      send,
+      flushRecovery: () => recoveryQueue,
+      stopBackend,
+      launchInstaller: () => new Promise((resolve, reject) => {
+        // NSIS launches before app.quit(): save and stop must already be done.
+        const cleanup = () => { clearTimeout(timer); updater.removeListener('error', failed); nativeUpdater.removeListener('before-quit-for-update', launched); };
+        const failed = error => { cleanup(); exiting = false; allowClose = false; reject(error); };
+        const launched = () => { cleanup(); resolve(); };
+        const timer = setTimeout(() => failed(new Error('Kurulum başlatılamadı.')), 5000);
+        updater.once('error', failed);
+        nativeUpdater.once('before-quit-for-update', launched);
+        allowClose = true;
+        exiting = true;
+        try { updater.quitAndInstall(true, true); } catch (error) { failed(error); }
+      }),
+      recoverBackend: async () => {
+        allowClose = false; exiting = false;
+        // taskkill may have succeeded even if its exit/timeout was ambiguous.
+        // Reuse a still-healthy engine; never start a second one against dataDir.
+        try {
+          const health = await backendRequest('/api/health');
+          if (health.desktop) { backendStopping = false; return; }
+        } catch { /* Check/stop our own child before replacing it. */ }
+        await stopBackend();
+        await startBackend();
+        await mainWindow.loadURL(origin);
+      },
+    });
+  }
+  updates = new UpdateController({
+    mode, currentVersion: app.getVersion(), updater, log: note,
+    onState: state => send('desktop:update-state', state),
+    prepareInstall: () => updateHandoff.prepare(),
+    cancelInstall: () => updateHandoff?.active ? updateHandoff.cancel() : Promise.resolve(),
+    install: () => updateHandoff.install(),
+    checkManual: async () => {
+      const response = await fetch('https://api.github.com/repos/davutcan123/OtomatikEdit/releases/latest', { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw new Error(`Release check HTTP ${response.status}`);
+      const release = await response.json();
+      const version = /^v?(\d+\.\d+\.\d+)$/.exec(release.tag_name || '')?.[1];
+      if (!version || release.draft || release.prerelease) return null;
+      const current = app.getVersion().split('.').map(Number), next = version.split('.').map(Number);
+      const newer = next[0] > current[0] || (next[0] === current[0] && (next[1] > current[1] || (next[1] === current[1] && next[2] > current[2])));
+      return newer && release.assets?.some(asset => asset.name === `OtomatikEdit-${version}-mac-${process.arch}.dmg`) ? { version } : null;
+    },
+  });
 }
 function installMenu() {
   const template = [
@@ -239,7 +343,7 @@ function installMenu() {
     { label: 'Düzenle', submenu: [{ role: 'cut', label: 'Kes' }, { role: 'copy', label: 'Kopyala' }, { role: 'paste', label: 'Yapıştır' }, { role: 'selectAll', label: 'Tümünü seç' }] },
     { label: 'Görünüm', submenu: [{ role: 'resetZoom', label: 'Normal boyut' }, { role: 'zoomIn', label: 'Arayüzü büyüt' }, { role: 'zoomOut', label: 'Arayüzü küçült' }, { role: 'togglefullscreen', label: 'Tam ekran' }] },
     { label: 'Yardım', submenu: [
-      { label: 'Yeni sürümü indir', click: () => shell.openExternal(RELEASE_URL) },
+      { label: 'Güncellemeleri kontrol et', click: () => updates?.check(true) },
       { label: 'Tanılama kayıtlarını aç', click: () => shell.openPath(logDir) },
       { label: 'Hakkında', click: () => dialog.showMessageBox(mainWindow, { message: `Otomatik Edit ${app.getVersion()}`, detail: 'Video editörü · Yerel masaüstü sürümü\nKonuşma/çeviri modelleri ilk kullanımda internetten indirilir.' }) },
     ] },
@@ -253,6 +357,7 @@ async function launch() {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false, backgroundThrottling: false },
   });
   mainWindow.on('close', requestClose);
+  initializeUpdates();
   mainWindow.webContents.on('console-message', details => {
     if (details.level === 'error' || details.level === 'warning') { note(`Renderer ${details.level}: ${details.message}`); if (smoke) console.error(details.message); }
   });
@@ -268,8 +373,11 @@ async function launch() {
   });
   session.defaultSession.on('will-download', (event, item) => {
     if (!isLocalURL(item.getURL(), origin)) { event.preventDefault(); return; }
+    if (updateHandoff?.committed) { event.preventDefault(); return; }
+    updateHandoff?.interrupt();
+    activeDownloads++;
     item.setSaveDialogOptions({ title: 'Dışa aktarılan dosyayı kaydet', defaultPath: path.join(app.getPath('downloads'), path.basename(item.getFilename())) });
-    item.once('done', (_event, state) => { if (state === 'interrupted') dialog.showMessageBox(mainWindow, { type: 'error', message: 'Dosya kaydedilemedi. Yeniden dışa aktarın veya farklı bir klasör seçin.' }); });
+    item.once('done', (_event, state) => { activeDownloads--; if (state === 'interrupted') dialog.showMessageBox(mainWindow, { type: 'error', message: 'Dosya kaydedilemedi. Yeniden dışa aktarın veya farklı bir klasör seçin.' }); });
   });
   installMenu();
   await mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<html lang="tr"><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"></head><body style="background:#080d18;color:#e2e8f0;font:20px system-ui;display:grid;place-content:center;height:90vh"><h2>Otomatik Edit</h2><p>Düzenleme motoru hazırlanıyor…</p></body></html>`));
@@ -277,6 +385,11 @@ async function launch() {
   await prepareLibrary(dataDir, smoke ? null : stateDir);
   const health = await startBackend();
   await mainWindow.loadURL(origin);
+  if (!smoke) {
+    setTimeout(() => updates.check(), 10000).unref();
+    updateTimer = setInterval(() => updates.check(), 4 * 60 * 60 * 1000);
+    updateTimer.unref();
+  }
   if (smoke) {
     try {
       const result = await require('./smoke.cjs').run({ mainWindow, origin, token, dataDir, health });
@@ -298,8 +411,11 @@ else {
     event.preventDefault();
     if (!allowClose && mainWindow && !mainWindow.isDestroyed()) { mainWindow.close(); return; }
     exiting = true;
-    stopBackend().finally(() => { log.end(); app.exit(process.exitCode || 0); });
+    updates?.dispose();
+    clearInterval(updateTimer);
+    stopBackend().catch(error => note(error.message)).finally(() => { log.end(); app.exit(process.exitCode || 0); });
   });
+  app.on('will-quit', () => { updates?.dispose(); clearInterval(updateTimer); log.end(); });
   app.whenReady().then(launch).catch(async error => {
     note(error.stack);
     if (!smoke) await dialog.showMessageBox({ type: 'error', title: 'Otomatik Edit açılamadı', message: error.message, detail: `Yardım için bu kayıt dosyasını paylaşabilirsiniz:\n${logPath}` });

@@ -171,20 +171,12 @@ test('canceling a slow close resumes editing and ignores late completion from th
   assert.deepEqual(closed, [2]);
 });
 
-test('desktop update opens the installer release without invoking the source updater', async () => {
-  const requests = [], nodes = new Map();
-  let releaseOpened = false;
+test('desktop does not check or invoke the source updater', async () => {
+  const requests = [];
   const context = vm.createContext({
-    desktopBridge: { openRelease: async () => { releaseOpened = true; } },
-    document: { getElementById: id => {
-      if (!nodes.has(id)) nodes.set(id, { classList: { add() {}, remove() {} }, style: {} });
-      return nodes.get(id);
-    } },
+    desktopBridge: {},
     fetch: async url => { requests.push(url); return { json: async () => ({ mode: 'desktop', update_available: true, current: '1.0.0', latest: '1.1.0' }) }; },
   });
   await vm.runInContext(script.slice(script.indexOf('    (async function checkForUpdates')), context);
-  assert.equal(nodes.get('update-apply-btn').textContent, 'Yeni sürümü indir');
-  await nodes.get('update-apply-btn').onclick();
-  assert.equal(releaseOpened, true);
-  assert.deepEqual(requests, ['/api/check-update']);
+  assert.deepEqual(requests, []);
 });
