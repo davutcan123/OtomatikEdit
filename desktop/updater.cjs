@@ -43,7 +43,12 @@ class UpdateController {
   }
   async check(manual = false) {
     if (this.disposed) return this.getState();
-    if (this.checking || this.downloading || this.installing || this.downloaded) return this.set({ manualCheck: manual || this.state.manualCheck });
+    if (this.checking || this.downloading || this.installing || this.downloaded) {
+      // A second menu click must reopen a dismissed progress/waiting dialog,
+      // without making every subsequent progress event reopen it as well.
+      if (manual && this.state.manualCheck) this.set({ manualCheck: false });
+      return this.set({ manualCheck: manual || this.state.manualCheck });
+    }
     if (this.state.mode === 'disabled') return this.set({ status: 'current', manualCheck: manual, message: 'Otomatik güncelleme kurulu masaüstü sürümünde kullanılabilir.' });
     this.set({ status: 'checking', manualCheck: manual, message: 'Yeni sürüm kontrol ediliyor…' });
     this.checking = (async () => {

@@ -37,6 +37,14 @@ test('render busy postpones installation without re-downloading, retries when id
   assert.equal(h.calls.filter(call => call === 'download').length, 1);
   h.controller.dispose();
 });
+test('repeated manual checks reopen a dismissed waiting dialog without restarting download', async () => {
+  const h = harness({ prepareInstall: async () => ({ ready: false }) });
+  await h.controller.check(true); await h.controller.download();
+  await h.controller.check(true);
+  assert.deepEqual(h.states.slice(-2).map(state => state.manualCheck), [false, true]);
+  assert.equal(h.calls.filter(call => call === 'download').length, 1);
+  h.controller.dispose();
+});
 test('recovery failure keeps app open and requires retry consent', async () => {
   let failed = true, installed = 0;
   const h = harness({ prepareInstall: async () => { if (failed) throw new Error('Disk full'); return { ready: true }; }, install: async () => installed++ });
