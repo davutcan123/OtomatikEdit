@@ -1,6 +1,11 @@
 # Python / venv
 venv/
 .venv-windows/
+.venv-build/
+node_modules/
+build/
+dist/
+artifacts/
 __pycache__/
 *.pyc
 *.pyo

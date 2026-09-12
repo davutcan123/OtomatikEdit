@@ -1,0 +1,5 @@
+# Install with requirements.txt in an isolated Python 3.11 build environment.
+pyinstaller>=6.16,<7
+pyinstaller-hooks-contrib>=2025.9
+# FastAPI TestClient in the desktop regression checks.
+httpx>=0.28,<1

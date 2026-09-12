@@ -64,6 +64,11 @@ echo "📦  Release ZIP hazırlanıyor..."
 zip -r "$TEMP_ZIP" . \
   -x "venv/*" \
   -x ".venv-windows/*" \
+  -x ".venv-build/*" \
+  -x "node_modules/*" \
+  -x "build/*" \
+  -x "dist/*" \
+  -x "artifacts/*" \
   -x "uploads/*" \
   -x "outputs/*" \
   -x "projects/*" \

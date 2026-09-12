@@ -1,0 +1,42 @@
+{
+  "name": "otomatik-edit-desktop",
+  "version": "1.1.1",
+  "description": "Yerel video, ses ve altyazı düzenleyici",
+  "author": "Davut Can",
+  "private": true,
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "npm run build:css && electron .",
+    "build:css": "tailwindcss -c tailwind.config.cjs -i desktop/editor.css -o static/editor.css --minify",
+    "build:backend": "python scripts/build_backend.py",
+    "test": "node scripts/run_node_tests.cjs",
+    "dist": "npm run build:css && npm run build:backend && electron-builder --publish never",
+    "pack": "npm run build:css && npm run build:backend && electron-builder --dir --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.3.0",
+    "electron-builder": "26.15.3",
+    "tailwindcss": "3.4.19"
+  },
+  "build": {
+    "appId": "com.davutcan.otomatikedit",
+    "productName": "Otomatik Edit",
+    "artifactName": "OtomatikEdit-${version}-${os}-${arch}.${ext}",
+    "directories": { "output": "dist", "buildResources": "desktop/assets" },
+    "files": ["desktop/*.cjs", "!desktop/*.test.cjs", "package.json"],
+    "extraResources": [{ "from": "build/backend/OtomatikEditBackend", "to": "backend" }],
+    "asar": true,
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "executableName": "OtomatikEdit", "icon": "desktop/assets/icon.ico" },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "Otomatik Edit"
+    },
+    "mac": { "target": ["dmg"], "category": "public.app-category.video", "identity": null, "hardenedRuntime": false, "icon": "desktop/assets/icon.icns" },
+    "dmg": { "title": "Otomatik Edit ${version}" }
+  }
+}

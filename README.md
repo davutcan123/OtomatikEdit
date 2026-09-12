@@ -1,6 +1,19 @@
 # Akıllı Video Sessizlik ve Kelime Kesici (Smart Video Editor)
 
-Bu proje, manuel video kurguyu ve akıllı otomatik kırpmayı aynı arayüzde birleştiren web tabanlı bir video editörüdür. Otomatik kırpıcıda hazırlanan kesimler, video yeniden indirilip yüklenmeden tek tuşla manuel timeline'a aktarılabilir.
+Bu proje, manuel video kurguyu ve akıllı otomatik kırpmayı aynı arayüzde birleştiren yerel bir video editörüdür. **Masaüstü sürümü kendi uygulama penceresinde açılır; tarayıcı veya ayrıca Python/FFmpeg kurulumu gerekmez.** Kaynak koddan tarayıcıda çalıştırma seçeneği de korunur. Otomatik kırpıcıda hazırlanan kesimler, video yeniden indirilip yüklenmeden tek tuşla manuel timeline'a aktarılabilir.
+
+## Masaüstü sürümü
+
+Windows için `.exe` kurulum dosyası, Apple Silicon Mac için `.dmg` paketi hazırlanır. Kurulum, editörle birlikte Python işlem motorunu, FFmpeg/FFprobe'u ve konuşma/çeviri kitaplıklarını içerir. Mevcut timeline, katmanlar, efektler, maske, altyazı, çoklu timeline ve render aynı kodu kullanır.
+
+- Projeler ve yüklenen medya otomatik oluşturulan **Belgeler / Otomatik Edit** klasöründe saklanır. Kayıtlı projeler uygulamadan açılıp silinebilir; silinen kayıtlar çöp klasörüne taşınır, medya korunur. Otomatik kurtarma dosyası uygulama yeniden açıldığında geri yüklenir.
+- **Dosya → Eski projeleri içe aktar…** ile eski `SmartVideoEditor` klasöründeki kayıtlı projeler ve bağlı medya kopyalanabilir. Eski dosyalar silinmez; mevcut kayıtların üzerine yazılmaz.
+- Render bitince **Farklı kaydet** penceresi otomatik açılır. **Ekran görüntüsü al** ile mevcut kare, tüm düzenlemeler dahil, HD–4K PNG olarak kaydedilebilir. Devam eden render/analiz sırasında kapatma için uyarı gösterilir.
+- Kompakt masaüstü yerleşiminde oynatıcı ve timeline aynı anda görünür; seçili klip ayarları ve düzenleme araçları kendi içinde kayar.
+- Arayüz ve yerel düzenleme internet olmadan çalışır. Konuşma tanıma ve çeviri model dosyaları ilk kullanımda internetten indirilir; sonraki kullanımlarda önbellekten çalışır. Bu dönüşüm pasif gösterilen harici yapay zekâ özelliklerini kendiliğinden etkinleştirmez.
+- Masaüstü güncellemeleri kaynak ZIP yerine yeni kurulum dosyasıyla yapılır. Proje kayıtları korunur.
+
+Kurulum, yedekleme ve geliştirici derleme bilgileri: [MASAUSTU.md](MASAUSTU.md).
 
 ## Özellikler
 - **İki Çalışma Alanı:** Manuel Edit ve Otomatik Kırpıcı birbirinden ayrı, tek uygulama içinde çalışır.

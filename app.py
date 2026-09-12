@@ -11,18 +11,32 @@ import threading
 import shutil
 import multiprocessing
 import time
+import secrets
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+
 from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from runtime_paths import resolve_runtime_paths, import_legacy_projects, release_download_url
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+RUNTIME_PATHS = resolve_runtime_paths(__file__)
+BASE_DIR = str(RUNTIME_PATHS.source_dir)
+RESOURCE_DIR = str(RUNTIME_PATHS.resources_dir)
+DATA_DIR = str(RUNTIME_PATHS.data_dir)
+DESKTOP_MODE = RUNTIME_PATHS.desktop
+DESKTOP_TOKEN = os.environ.get("SMART_EDITOR_DESKTOP_TOKEN", "")
+if DESKTOP_MODE and not DESKTOP_TOKEN:
+    raise RuntimeError("Masaüstü uygulamasının güvenli bağlantı anahtarı eksik.")
+UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
+OUTPUT_DIR = os.path.join(DATA_DIR, "outputs")
 WAVEFORM_DIR = os.path.join(OUTPUT_DIR, "waveforms")
-PROJECT_DIR = os.path.join(BASE_DIR, "projects")
-TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
+PROJECT_DIR = os.path.join(DATA_DIR, "projects")
+TEMPLATE_DIR = os.path.join(RESOURCE_DIR, "templates")
 ALLOWED_FORMATS = {"mp4", "mkv", "webm", "mov", "gif", "mp3"}
 ALLOWED_QUALITIES = {"draft", "standard", "high", "ultra"}
 ALLOWED_TRANSITIONS = {
@@ -207,7 +221,7 @@ def resolve_media_binary(name: str) -> str:
     executable = f"{name}.exe" if os.name == "nt" else name
     candidates = [
         configured,
-        os.path.join(BASE_DIR, "tools", "ffmpeg", "bin", executable),
+        os.path.join(RESOURCE_DIR, "tools", "ffmpeg", "bin", executable),
         shutil.which(name) or "",
     ]
     for candidate in candidates:
@@ -391,17 +405,83 @@ async def collect_ffmpeg_stderr(proc, q: asyncio.Queue, total_duration: float) -
             unique_lines.append(line)
     return unique_lines
 
-app = FastAPI()
+_active_media_processes = set()
+_media_process_watchers = set()
+
+
+async def create_media_process(*args, **kwargs):
+    """Track long-running FFmpeg children so closing the app stops render work."""
+    process = await asyncio.create_subprocess_exec(*args, **kwargs)
+    _active_media_processes.add(process)
+
+    async def watch():
+        try:
+            await process.wait()
+        finally:
+            _active_media_processes.discard(process)
+
+    watcher = asyncio.create_task(watch())
+    _media_process_watchers.add(watcher)
+    watcher.add_done_callback(_media_process_watchers.discard)
+    return process
+
+
+async def stop_media_processes():
+    processes = [process for process in _active_media_processes if process.returncode is None]
+    for process in processes:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+    for process in processes:
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2)
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
+
+
+@asynccontextmanager
+async def app_lifespan(application):
+    try:
+        yield
+    finally:
+        await stop_media_processes()
+
+
+app = FastAPI(lifespan=app_lifespan)
+
+
+@app.middleware("http")
+async def desktop_authentication(request: Request, call_next):
+    if DESKTOP_MODE and not secrets.compare_digest(
+        request.headers.get("X-Desktop-Token", "").encode("utf-8"), DESKTOP_TOKEN.encode("utf-8")
+    ):
+        return Response(status_code=403)
+    return await call_next(request)
+
+
+app.mount("/static", StaticFiles(directory=os.path.join(RESOURCE_DIR, "static"), check_dir=False), name="static")
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(WAVEFORM_DIR, exist_ok=True)
 os.makedirs(PROJECT_DIR, exist_ok=True)
+if DESKTOP_MODE:
+    try:
+        legacy_import = import_legacy_projects(RUNTIME_PATHS, os.environ.get("SMART_EDITOR_LEGACY_DIR", ""))
+        if any(legacy_import.values()):
+            print(f"Eski proje aktarımı: {legacy_import}", flush=True)
+    except OSError as exc:
+        print(f"Eski projeler otomatik aktarılamadı; özgün dosyalar korundu: {exc}", flush=True)
 
 # ── Sürüm ve güncelleme sistemi ────────────────────────
-VERSION_FILE = os.path.join(BASE_DIR, "version.json")
-BACKUP_DIR = os.path.join(BASE_DIR, ".backup")
+VERSION_FILE = os.path.join(RESOURCE_DIR, "version.json")
+BACKUP_DIR = os.path.join(DATA_DIR, ".backup")
 GITHUB_REPO = os.environ.get("SMART_EDITOR_GITHUB_REPO", "").strip() or "davutcan123/OtomatikEdit"
 
 def _make_ssl_context():
@@ -431,10 +511,21 @@ APP_VERSION = _load_version()
 
 # Korunan dizinler — güncelleme sırasında bunlar asla silinmez/üzerine yazılmaz
 _PROTECTED_DIRS = {"venv", ".venv-windows", "uploads", "outputs", "projects",
-                   "tools", "__pycache__", ".backup", ".git"}
+                   "tools", "__pycache__", ".backup", ".git", "node_modules",
+                   "build", "dist", ".venv-build"}
 
 # In-memory storage for jobs
 jobs = {}
+
+
+def schedule_job(job_id, coroutine):
+    # Keep the Task, rather than infer activity from unread SSE messages: a
+    # completed render may still have progress/results waiting in its queue.
+    task = asyncio.create_task(coroutine)
+    jobs[job_id]["task"] = task
+    return task
+
+
 _whisper_model = None
 _whisper_model_init_lock = threading.Lock()
 _whisper_inference_lock = threading.Lock()
@@ -963,10 +1054,11 @@ def create_text_overlay(path: str, item: dict, width: int, height: int):
         value = color.lstrip("#")
         return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4)) + (alpha,)
 
-    font_size = max(12, int(height * item["size"] / 1080))
+    reference_height = item.get("_reference_height", 1080)
+    font_size = max(12, int(height * item["size"] / reference_height))
     font_path = FONT_BOLD if item.get("bold", True) else FONT_REGULAR
     font = ImageFont.truetype(font_path, font_size)
-    stroke_width = max(0, int(height * item["outlineWidth"] / 1080))
+    stroke_width = max(0, int(height * item["outlineWidth"] / reference_height))
     text = item["text"]
     measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     spacing = max(4, font_size // 8)
@@ -1125,7 +1217,7 @@ async def detect_silence(filepath: str, threshold: float, min_duration: float):
         "-af", f"silencedetect=noise={threshold}dB:d={min_duration}",
         "-f", "null", "-"
     ]
-    proc = await asyncio.create_subprocess_exec(
+    proc = await create_media_process(
         *cmd,
         stderr=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE
@@ -1562,6 +1654,85 @@ async def run_analysis_job(job_id: str):
     finally:
         await q.put(None)
 
+def snapshot_time_expression(expression, elapsed, fps):
+    return re.sub(
+        r"\b(t|it|T|on)\b",
+        lambda match: f"{elapsed * fps if match.group(0) == 'on' else elapsed:.8f}",
+        expression,
+    )
+
+
+def freeze_snapshot_expressions(filters, elapsed, fps):
+    # Only quoted FFmpeg expressions contain time variables. Bare t=in (fade)
+    # and format/option names must remain untouched.
+    return re.sub(r"'([^']*)'", lambda match: "'" + snapshot_time_expression(match.group(1), elapsed, fps) + "'", filters)
+
+
+def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
+    """Select at most two active video inputs and a short source window.
+
+    Snapshot time is the editor's original timeline (including gaps), not the
+    transition-shortened video export. The active transition occupies the final
+    `duration` seconds of the outgoing clip, matching preview playback.
+    """
+    fps = job["fps"]
+    segments = job["segments"]
+    duration = max(
+        job.get("snapshot_timeline_duration", 0),
+        max(seg["timelineStart"] + (seg["end"] - seg["start"]) / seg["speed"] for seg in segments),
+    )
+    time_at = min(max(0.0, timeline_time), max(0.0, math.ceil(duration * fps - 1e-7) / fps - 1 / fps))
+    sources = {source["fileId"]: source for source in job["video_inputs"]}
+    selected = []
+    transition_at = None
+    transition_elapsed = 0.0
+    for transition in job["transitions"]:
+        left = segments[transition["boundary"]]
+        boundary = left["timelineStart"] + (left["end"] - left["start"]) / left["speed"]
+        if boundary - transition["duration"] <= time_at < boundary:
+            transition_at = transition
+            transition_elapsed = time_at - (boundary - transition["duration"])
+            selected = [(left, time_at - left["timelineStart"]), (segments[transition["boundary"] + 1], transition_elapsed)]
+            break
+    if not selected:
+        for seg in segments:
+            if seg["timelineStart"] <= time_at < seg["timelineStart"] + (seg["end"] - seg["start"]) / seg["speed"]:
+                selected = [(seg, time_at - seg["timelineStart"])]
+                break
+    snapshot_segments = []
+    snapshot_sources = []
+    for index, (seg, elapsed) in enumerate(selected):
+        speed = seg["speed"]
+        source = sources[seg["fileId"]]
+        # Half a second of context preserves temporal denoise/motion filters;
+        # no preceding timeline clips or minutes of video are rendered.
+        if seg.get("reverse"):
+            source_end = min(seg["end"], seg["end"] - max(0, elapsed - .5) * speed)
+            source_start = max(seg["start"], seg["end"] - (elapsed + .25) * speed)
+            local_base = (seg["end"] - source_end) / speed
+        else:
+            source_start = seg["start"] + max(0, elapsed - .5) * speed
+            source_end = min(seg["end"], seg["start"] + (elapsed + .25) * speed)
+            local_base = (source_start - seg["start"]) / speed
+        identifier = f"snapshot-{index}"
+        snapshot_sources.append({**source, "fileId": identifier, "snapshot_seek": source_start,
+                                 "snapshot_duration": max(.01, source_end - source_start), "snapshot_base": local_base})
+        snapshot_segments.append({**seg, "fileId": identifier, "timelineStart": 0, "snapshot_elapsed": elapsed})
+    for kind in ("texts", "stickers", "images"):
+        job[kind] = [
+            {**item, "start": 0, "end": 1, "snapshot_elapsed": time_at - item["start"], "_reference_height": canvas_height}
+            for item in job[kind] if item["start"] <= time_at <= item["end"]
+        ]
+    job.update({"type": "snapshot", "format": "png", "segments": snapshot_segments,
+                "video_inputs": snapshot_sources, "audio_layers": [], "transitions": [],
+                "snapshot": {"timeline_time": time_at, "transition": transition_at, "transition_elapsed": transition_elapsed}})
+    width = job["width"] or job["source_width"] or 1920
+    height = job["height"] or job["source_height"] or 1080
+    ratio = min(1.0, 3840 / max(width, height))
+    job["width"] = max(2, int(width * ratio) // 2 * 2)
+    job["height"] = max(2, int(height * ratio) // 2 * 2)
+
+
 async def run_render_job(job_id: str):
     job = jobs[job_id]
     q = job["q"]
@@ -1570,8 +1741,9 @@ async def run_render_job(job_id: str):
         target_fps = job.get("fps", 30)
         quality = job.get("quality", "standard")
         await q.put({"type": "log", "message": f"Render başlatılıyor... Çıktı formatı: {job['format']}, {target_fps} FPS, kalite: {quality}{resolution_text}"})
+        snapshot = job.get("snapshot")
         segments = job["segments"]
-        if not segments:
+        if not segments and not snapshot:
             raise Exception("Geçerli video bölümü bulunamadı!")
             
         script_path = os.path.join(OUTPUT_DIR, f"script_{job_id}.txt")
@@ -1592,11 +1764,13 @@ async def run_render_job(job_id: str):
             duration + gap for duration, gap in zip(clip_durations, segment_gaps)
         ]
         total_duration = sum(segment_durations) - sum(item["duration"] for item in transitions)
+        if snapshot:
+            total_duration = 1 / target_fps
         text_items = job.get("texts", [])
         sticker_items = job.get("stickers", [])
         image_items = job.get("images", [])
         audio_items = job.get("audio_layers", [])
-        video_inputs = job.get("video_inputs") or [{"fileId": job["file_id"], "path": job["filepath"]}]
+        video_inputs = job["video_inputs"] if snapshot else job.get("video_inputs") or [{"fileId": job["file_id"], "path": job["filepath"]}]
         video_input_map = {
             item["fileId"]: {**item, "index": index}
             for index, item in enumerate(video_inputs)
@@ -1635,7 +1809,10 @@ async def run_render_job(job_id: str):
             gap_before = segment_gaps[i]
             source_info = video_input_map[seg["fileId"]]
             input_index = source_info["index"]
-            video_filters = f"trim=start={start}:end={end}"
+            video_filters = (
+                f"trim=start=0:end={source_info['snapshot_duration']:.8f}"
+                if snapshot else f"trim=start={start}:end={end}"
+            )
             if seg.get("reverse", False):
                 video_filters += ",reverse"
             stabilization = seg.get("stabilization", "none")
@@ -1653,6 +1830,8 @@ async def run_render_job(job_id: str):
                 blur_frames = 3 if motion_blur < 60 else 5
                 video_filters += f",tmix=frames={blur_frames}"
             video_filters += f",setpts=(PTS-STARTPTS)/{speed:.8f}"
+            if snapshot:
+                video_filters += f"+{source_info['snapshot_base']:.8f}/TB"
             fit = seg.get("fit", "cover")
             if fit == "contain":
                 video_filters += (
@@ -1875,6 +2054,13 @@ async def run_render_job(job_id: str):
                 or (seg.get("backgroundMode") == "brush" and bool(seg.get("brushStrokes")))
                 or mask in {"circle", "ellipse", "rounded"}
             )
+            if snapshot:
+                video_filters = freeze_snapshot_expressions(video_filters, seg["snapshot_elapsed"], target_fps)
+                video_filters = video_filters.replace(
+                    f":fps={target_fps}",
+                    f":fps={target_fps},setpts=PTS+{source_info['snapshot_base']:.8f}/TB",
+                )
+            snapshot_trim = f",trim=start={seg['snapshot_elapsed']:.8f}" if snapshot else ""
             if needs_canvas:
                 transform_scale_filter = "" if fixed_zoom_transform else (
                     f",scale=w='max(2,trunc(iw*({scale_expression})/2)*2)':"
@@ -1925,8 +2111,10 @@ async def run_render_job(job_id: str):
                         video_filters += f",gblur=sigma={seg['maskFeather'] / 3:.5f}:planes=8"
                 # MOV streams commonly use a finer source time base (for example
                 # 1/600). Normalize both inputs before overlay framesync.
+                if snapshot:
+                    video_filters = freeze_snapshot_expressions(video_filters, seg["snapshot_elapsed"], target_fps)
                 video_filters += (
-                    f",fps={target_fps},settb=AVTB,"
+                    f",fps={target_fps},settb=AVTB{snapshot_trim},"
                     f"setpts=N/({target_fps}*TB)"
                 )
                 foreground_label = f"[clipfg{i}]"
@@ -1990,6 +2178,9 @@ async def run_render_job(job_id: str):
                     y_expr = f"({base_y})+sin(t*2.4)*H*.018"
                 elif animation in {"wobble", "sway"}:
                     x_expr = f"({base_x})+sin(t*{10 if animation == 'wobble' else 3})*W*{'.018' if animation == 'wobble' else '.012'}"
+                if snapshot:
+                    x_expr = snapshot_time_expression(x_expr, seg["snapshot_elapsed"], target_fps)
+                    y_expr = snapshot_time_expression(y_expr, seg["snapshot_elapsed"], target_fps)
                 lines.append(
                     f"[clipbg{i}]{foreground_label}overlay=x='{x_expr}':y='{y_expr}':"
                     f"shortest=1:eval=frame{visible_filter},fps={target_fps},format=yuv420p,settb=AVTB"
@@ -1998,12 +2189,14 @@ async def run_render_job(job_id: str):
             else:
                 fast_path_segments += 1
                 video_filters += (
-                    f",setsar=1,fps={target_fps},settb=AVTB,"
+                    f",setsar=1,fps={target_fps},settb=AVTB{snapshot_trim},"
                     f"setpts=N/({target_fps}*TB),format=yuv420p"
                 )
                 lines.append(
                     f"[{input_index}:v]{video_filters}{visible_filter}{gap_video_filter}[v{i}]"
                 )
+            if snapshot:
+                continue
             audio_filters = f"atrim=start={start}:end={end}"
             if seg.get("reverse", False):
                 audio_filters += ",areverse"
@@ -2053,8 +2246,17 @@ async def run_render_job(job_id: str):
 
         current_video = "[v0]"
         current_audio = "[a0]"
-        combined_duration = segment_durations[0]
-        for index in range(n - 1):
+        combined_duration = segment_durations[0] if segment_durations else 0
+        if snapshot and not segments:
+            lines.append(f"color=c=black:s={render_width}x{render_height}:r={target_fps}:d=1,settb=AVTB[v0]")
+        elif snapshot and snapshot.get("transition"):
+            transition = snapshot["transition"]
+            lines.append(
+                f"[v0][v1]xfade=transition={transition['type']}:duration={transition['duration']:.8f}:"
+                f"offset={-snapshot['transition_elapsed']:.8f}[snapshotv]"
+            )
+            current_video = "[snapshotv]"
+        for index in range(0 if snapshot else n - 1):
             next_video = f"[joinv{index}]"
             next_audio = f"[joina{index}]"
             transition = transition_map.get(index)
@@ -2141,7 +2343,7 @@ async def run_render_job(job_id: str):
                 angle = image_item.get("rotation", 0) * math.pi / 180
                 lines.append(
                     f"[{input_index}:v]{background_prefix},scale={target_width}:-2,"
-                    f"rotate={angle:.8f}:ow=rotw(iw):oh=roth(ih):c=none,"
+                    f"rotate={angle:.8f}:ow=rotw({angle:.8f}):oh=roth({angle:.8f}):c=none,"
                     f"format=rgba{scaled_label}"
                 )
                 x_expr = f"max(0,min(W-w,W*{image_item['x'] / 100:.5f}-w/2))"
@@ -2173,6 +2375,12 @@ async def run_render_job(job_id: str):
                 relative_time = f"(t-{text_item['start']:.8f})"
                 text_x = re.sub(r"\bt\b", relative_time, text_x)
                 text_y = re.sub(r"\bt\b", relative_time, text_y)
+                if snapshot:
+                    elapsed = text_item["snapshot_elapsed"]
+                    text_scale = snapshot_time_expression(text_scale, elapsed, target_fps)
+                    text_opacity = snapshot_time_expression(text_opacity, elapsed, target_fps)
+                    text_x = snapshot_time_expression(text_x, elapsed, target_fps)
+                    text_y = snapshot_time_expression(text_y, elapsed, target_fps)
                 animated_label = f"[textasset{index}]"
                 lines.append(
                     f"{overlay_input}format=rgba,"
@@ -2223,7 +2431,7 @@ async def run_render_job(job_id: str):
                 f"{current_audio}{''.join(audio_labels)}amix=inputs={len(audio_labels) + 1}:"
                 f"duration=first:dropout_transition=0:normalize=0,alimiter=limit=.95[outa]"
             )
-        else:
+        elif not snapshot:
             lines.append(f"{current_audio}anull[outa]")
         
         with open(script_path, "w") as f:
@@ -2233,6 +2441,8 @@ async def run_render_job(job_id: str):
         if LOW_MEMORY_RENDER:
             cmd.extend(["-filter_complex_threads", "1"])
         for video_input in video_inputs:
+            if snapshot:
+                cmd.extend(["-ss", f"{video_input['snapshot_seek']:.8f}", "-t", f"{video_input['snapshot_duration']:.8f}"])
             cmd.extend(["-i", video_input["path"]])
         for overlay_path in text_overlay_paths + sticker_overlay_paths:
             cmd.extend(["-framerate", str(target_fps), "-loop", "1", "-i", overlay_path])
@@ -2241,7 +2451,9 @@ async def run_render_job(job_id: str):
         for audio_item in audio_items:
             cmd.extend(["-i", audio_item["path"]])
         cmd.extend(ffmpeg_filter_script_args(script_path))
-        cmd.extend(["-map", "[outv]", "-map", "[outa]"])
+        cmd.extend(["-map", "[outv]"])
+        if not snapshot:
+            cmd.extend(["-map", "[outa]"])
         
         fmt = job['format'].lower()
         crf = {"draft": 30, "standard": 23, "high": 18, "ultra": 14}[quality]
@@ -2250,7 +2462,9 @@ async def run_render_job(job_id: str):
             preset_map = {"draft": "ultrafast", "standard": "veryfast", "high": "faster", "ultra": "medium"}
         preset = preset_map[quality]
         render_fmt = "mp4" if fmt in {"gif", "mp3"} else fmt
-        if render_fmt == "mp4":
+        if snapshot:
+            cmd.extend(["-an", "-c:v", "png", "-pix_fmt", "rgb24", "-compression_level", "3", "-frames:v", "1", "-update", "1"])
+        elif render_fmt == "mp4":
             h264_profile, h264_level = h264_compatibility_settings(
                 render_width, render_height, target_fps
             )
@@ -2272,7 +2486,7 @@ async def run_render_job(job_id: str):
             cmd.extend(["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"])
         if LOW_MEMORY_RENDER:
             cmd.extend(["-threads:v", str(RENDER_THREAD_LIMIT), "-threads:a", "1"])
-            if render_fmt != "webm":
+            if render_fmt != "webm" and not snapshot:
                 cmd.extend([
                     "-x264-params",
                     f"threads={RENDER_THREAD_LIMIT}:lookahead_threads=1:sync-lookahead=0:rc-lookahead=10",
@@ -2302,7 +2516,7 @@ async def run_render_job(job_id: str):
                 "message": f"Windows uyumlu MP4: H.264 {h264_profile.title()} / Level {h264_level}, AAC-LC stereo.",
             })
         
-        proc = await asyncio.create_subprocess_exec(
+        proc = await create_media_process(
             *cmd,
             stderr=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE
@@ -2325,7 +2539,7 @@ async def run_render_job(job_id: str):
                     f"{128 if quality == 'draft' else 256}[p];[s1][p]paletteuse=dither=bayer"
                 )
                 convert_cmd = [FFMPEG_BIN, "-y", "-i", render_path, "-vf", gif_filter, "-loop", "0", out_path]
-            convert_proc = await asyncio.create_subprocess_exec(
+            convert_proc = await create_media_process(
                 *convert_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             _, convert_error = await convert_proc.communicate()
@@ -2340,8 +2554,10 @@ async def run_render_job(job_id: str):
                 pass
 
         if final_returncode == 0:
+            if snapshot and (not os.path.isfile(out_path) or os.path.getsize(out_path) == 0):
+                raise RuntimeError("Seçilen zamanda görüntü karesi oluşturulamadı")
             await q.put({"type": "progress", "percent": 100})
-            await q.put({"type": "log", "message": "Render başarıyla tamamlandı!"})
+            await q.put({"type": "log", "message": "Ekran görüntüsü PNG olarak hazır!" if snapshot else "Render başarıyla tamamlandı!"})
             await q.put({"type": "result", "download_url": f"/download/{job_id}/{fmt}"})
         else:
             await q.put({
@@ -2356,7 +2572,27 @@ async def run_render_job(job_id: str):
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
+    response = templates.TemplateResponse(request=request, name="index.html")
+    if DESKTOP_MODE:
+        import base64
+        import hashlib
+        # Hash the rendered bytes so trusted scripts work without unsafe-inline
+        # or eval, including when the template changes in a later release.
+        scripts = re.findall(rb"<script\b[^>]*>(.*?)</script\s*>", response.body, flags=re.I | re.S)
+        hashes = dict.fromkeys(
+            "'sha256-" + base64.b64encode(hashlib.sha256(script).digest()).decode("ascii") + "'"
+            for script in scripts
+        )
+        script_sources = " ".join(hashes) or "'none'"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            f"script-src {script_sources}; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' blob: data:; media-src 'self' blob: data:; "
+            "connect-src 'self'; object-src 'none'; frame-src 'none'; "
+            "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        )
+    return response
 
 
 # ══════════════════════════════════════════════════════════
@@ -2365,7 +2601,40 @@ async def index(request: Request):
 
 @app.get("/api/version")
 async def api_version():
-    return {"version": APP_VERSION}
+    return {"version": APP_VERSION, "desktop": DESKTOP_MODE}
+
+
+@app.get("/api/health")
+async def api_health():
+    active_jobs = sum(
+        1 for job in jobs.values()
+        if job.get("task") is not None and not job["task"].done()
+    )
+    return {"status": "ok", "version": APP_VERSION, "desktop": DESKTOP_MODE, "active_jobs": active_jobs}
+
+
+@app.post("/api/desktop/import-projects")
+async def api_import_legacy_projects(request: Request):
+    if not DESKTOP_MODE:
+        raise HTTPException(404)
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(400, "Geçersiz klasör bilgisi") from exc
+    directory = payload.get("directory", "") if isinstance(payload, dict) else ""
+    if not isinstance(directory, str) or not directory.strip():
+        raise HTTPException(400, "Eski uygulama klasörünü seçin")
+    legacy_dir = os.path.abspath(os.path.expanduser(directory))
+    if not os.path.isdir(os.path.join(legacy_dir, "projects")):
+        nested = os.path.join(legacy_dir, "SmartVideoEditor")
+        if os.path.isdir(os.path.join(nested, "projects")):
+            legacy_dir = nested
+        else:
+            raise HTTPException(400, "Seçilen klasörde kayıtlı projeler bulunamadı")
+    try:
+        return await asyncio.to_thread(import_legacy_projects, RUNTIME_PATHS, legacy_dir)
+    except OSError as exc:
+        raise HTTPException(500, "Aktarım tamamlanamadı. Disk alanını ve klasör izinlerini kontrol edin; eski dosyalarınız korunuyor.") from exc
 
 
 @app.get("/api/check-update")
@@ -2402,18 +2671,16 @@ async def api_check_update():
     if ver_tuple(remote_tag) <= ver_tuple(APP_VERSION):
         return {"update_available": False, "current": APP_VERSION, "latest": remote_tag}
 
-    # İlk ZIP asset'ini bul
-    download_url = ""
-    for asset in data.get("assets", []):
-        if asset.get("name", "").endswith(".zip"):
-            download_url = asset.get("browser_download_url", "")
-            break
+    download_url = release_download_url(data.get("assets", []), desktop=DESKTOP_MODE)
 
     return {
         "update_available": True,
         "current": APP_VERSION,
         "latest": remote_tag,
         "download_url": download_url,
+        "release_url": data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases/latest"),
+        "desktop": DESKTOP_MODE,
+        "update_method": "installer" if DESKTOP_MODE else "source",
         "release_notes": data.get("body", ""),
         "published_at": data.get("published_at", ""),
     }
@@ -2422,6 +2689,8 @@ async def api_check_update():
 @app.post("/api/apply-update")
 async def api_apply_update(request: Request):
     """Güncelleme ZIP'ini indirir, dosyaları güvenli şekilde günceller."""
+    if DESKTOP_MODE:
+        raise HTTPException(409, "Masaüstü sürümü kurulum dosyasıyla güncellenir. Güncellemeler menüsünden yeni sürümü indirin; projeleriniz korunur.")
     body = await request.json()
     download_url = body.get("download_url", "").strip()
     if not download_url:
@@ -2566,7 +2835,7 @@ async def api_apply_update(request: Request):
         finally:
             await q.put(None)
 
-    asyncio.create_task(_apply())
+    schedule_job(job_id, _apply())
     return {"job_id": job_id}
 
 
@@ -2646,8 +2915,10 @@ async def delete_project(project_id: str):
     path = _project_file(project_id)
     if not os.path.isfile(path):
         raise HTTPException(404, "Proje bulunamadı")
-    os.remove(path)
-    return {"deleted": True}
+    trash = os.path.join(PROJECT_DIR, ".trash")
+    os.makedirs(trash, exist_ok=True)
+    os.replace(path, os.path.join(trash, f"{project_id}-{uuid.uuid4().hex}.json"))
+    return {"deleted": True, "recoverable": True}
 
 
 @app.post("/upload")
@@ -2693,7 +2964,7 @@ async def start_analysis(
         "keywords": keywords,
         "q": asyncio.Queue()
     }
-    asyncio.create_task(run_analysis_job(job_id))
+    schedule_job(job_id, run_analysis_job(job_id))
     return {"job_id": job_id}
 
 @app.post("/start-subtitles")
@@ -2730,11 +3001,13 @@ async def start_subtitles(
         "target_language": target_language,
         "q": asyncio.Queue(),
     }
-    asyncio.create_task(run_subtitle_job(job_id))
+    schedule_job(job_id, run_subtitle_job(job_id))
     return {"job_id": job_id}
 
 @app.post("/start-render")
+@app.post("/start-snapshot")
 async def start_render(
+    request: Request,
     file_id: str = Form(...),
     fmt: str = Form("mp4"),
     fps: int = Form(30),
@@ -2748,8 +3021,18 @@ async def start_render(
     video_visible: bool = Form(True),
     mute_video_audio: bool = Form(False),
     width: int = Form(0),
-    height: int = Form(0)
+    height: int = Form(0),
+    timeline_time: float = Form(0),
+    canvas_width: int = Form(0),
+    canvas_height: int = Form(0),
 ):
+    snapshot = request.url.path == "/start-snapshot"
+    if snapshot:
+        if not math.isfinite(timeline_time):
+            raise HTTPException(400, "Geçersiz ekran görüntüsü zamanı")
+        if canvas_width or canvas_height:
+            if min(canvas_width, canvas_height) < 64 or max(canvas_width, canvas_height) > 7680:
+                raise HTTPException(400, "Geçersiz proje tuvali boyutu")
     filepath = os.path.join(UPLOAD_DIR, os.path.basename(file_id))
     if not os.path.exists(filepath):
         raise HTTPException(404, "Dosya bulunamadı")
@@ -2811,7 +3094,7 @@ async def start_render(
                 "fileId": segment_file_id,
                 "path": segment_path,
                 "duration": await asyncio.to_thread(get_video_duration, segment_path),
-                "hasAudio": await asyncio.to_thread(video_has_audio, segment_path),
+                "hasAudio": False if snapshot else await asyncio.to_thread(video_has_audio, segment_path),
             }
         video_duration = video_sources[segment_file_id]["duration"]
         try:
@@ -3014,23 +3297,35 @@ async def start_render(
         segment["timelineStart"] + (segment["end"] - segment["start"]) / segment["speed"]
         for segment in normalized_segments
     )
+    layer_duration = hard_cut_duration
+    if snapshot:
+        # The editor can keep showing image/text/sticker layers, or an empty
+        # frame under music, after the final video clip. Do not clamp that frame
+        # back into the video. Normal movie export keeps its existing bounds.
+        for items, default_duration in ((parsed_texts, 3), (parsed_stickers, 3),
+                                        (parsed_images, 5), (parsed_audio_layers, 5)):
+            for item in items if isinstance(items, list) else []:
+                if not isinstance(item, dict):
+                    continue  # The layer normalizer supplies its usual error.
+                try:
+                    layer_end = float(item.get("end", float(item.get("start", 0)) + default_duration))
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(layer_end):
+                    layer_duration = max(layer_duration, layer_end)
     normalized_transitions = normalize_transition_items(parsed_transitions, normalized_segments)
-    normalized_texts = normalize_text_items(parsed_texts, hard_cut_duration)
-    normalized_texts = adjust_texts_for_transitions(
-        normalized_texts, normalized_transitions, normalized_segments
-    )
-    normalized_stickers = normalize_sticker_items(parsed_stickers, hard_cut_duration)
-    normalized_stickers = adjust_texts_for_transitions(
-        normalized_stickers, normalized_transitions, normalized_segments
-    )
-    normalized_images = normalize_image_layers(parsed_images, hard_cut_duration)
-    normalized_images = adjust_texts_for_transitions(
-        normalized_images, normalized_transitions, normalized_segments
-    )
-    normalized_audio_layers = normalize_audio_layers(parsed_audio_layers, hard_cut_duration)
-    normalized_audio_layers = adjust_texts_for_transitions(
-        normalized_audio_layers, normalized_transitions, normalized_segments
-    )
+    normalized_texts = normalize_text_items(parsed_texts, layer_duration)
+    if not snapshot:
+        normalized_texts = adjust_texts_for_transitions(normalized_texts, normalized_transitions, normalized_segments)
+    normalized_stickers = normalize_sticker_items(parsed_stickers, layer_duration)
+    if not snapshot:
+        normalized_stickers = adjust_texts_for_transitions(normalized_stickers, normalized_transitions, normalized_segments)
+    normalized_images = normalize_image_layers(parsed_images, layer_duration)
+    if not snapshot:
+        normalized_images = adjust_texts_for_transitions(normalized_images, normalized_transitions, normalized_segments)
+    normalized_audio_layers = [] if snapshot else normalize_audio_layers(parsed_audio_layers, hard_cut_duration)
+    if not snapshot:
+        normalized_audio_layers = adjust_texts_for_transitions(normalized_audio_layers, normalized_transitions, normalized_segments)
     source_width, source_height = await asyncio.to_thread(get_video_dimensions, filepath)
         
     jobs[job_id] = {
@@ -3055,7 +3350,10 @@ async def start_render(
         "video_inputs": list(video_sources.values()),
         "q": asyncio.Queue()
     }
-    asyncio.create_task(run_render_job(job_id))
+    if snapshot:
+        jobs[job_id]["snapshot_timeline_duration"] = layer_duration
+        prepare_snapshot_job(jobs[job_id], timeline_time, canvas_height or 1080)
+    schedule_job(job_id, run_render_job(job_id))
     return {"job_id": job_id}
 
 @app.get("/stream-events/{job_id}")
@@ -3181,6 +3479,16 @@ async def get_video(file_id: str, request: Request):
         status_code=status_code,
     )
 
+@app.get("/download/{job_id}/png")
+async def download_snapshot(job_id: str):
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", job_id):
+        raise HTTPException(400, "Geçersiz ekran görüntüsü kimliği")
+    path = os.path.join(OUTPUT_DIR, f"out_{job_id}.png")
+    if not os.path.isfile(path):
+        raise HTTPException(404, "Ekran görüntüsü bulunamadı")
+    return FileResponse(path, media_type="image/png", filename="ekran-goruntusu.png")
+
+
 @app.get("/download/{job_id}/{fmt}")
 async def download_file(job_id: str, fmt: str):
     if fmt not in ALLOWED_FORMATS:
@@ -3193,13 +3501,12 @@ async def download_file(job_id: str, fmt: str):
 
 if __name__ == "__main__":
     import uvicorn
-    multiprocessing.freeze_support()
-    host = os.environ.get("SMART_EDITOR_HOST", "0.0.0.0")
+    host = "127.0.0.1" if DESKTOP_MODE else os.environ.get("SMART_EDITOR_HOST", "0.0.0.0")
     try:
         port = int(os.environ.get("SMART_EDITOR_PORT", "4242"))
     except ValueError:
         port = 4242
-    if os.environ.get("SMART_EDITOR_OPEN_BROWSER") == "1":
+    if not DESKTOP_MODE and os.environ.get("SMART_EDITOR_OPEN_BROWSER") == "1":
         import webbrowser
         browser_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
         threading.Timer(1.5, lambda: webbrowser.open(f"http://{browser_host}:{port}")).start()
