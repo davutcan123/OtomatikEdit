@@ -19,6 +19,52 @@ function previousVersion(version) {
   return `${major - 1}.0.0`;
 }
 
+function configForBuild(config, version, output) {
+  // electron-builder normalizes nested files arrays in place. Each version
+  // must receive its own complete copy, not a shared array via object spread.
+  return { ...structuredClone(config), extraMetadata: { version }, directories: { output } };
+}
+
+function proofFileForEnvironment(env = process.env) {
+  assert.equal(env.GITHUB_ACTIONS, 'true');
+  assert.ok(env.RUNNER_TEMP && path.isAbsolute(env.RUNNER_TEMP));
+  assert.match(env.GITHUB_RUN_ID || '', /^\d+$/);
+  assert.match(env.GITHUB_RUN_ATTEMPT || '', /^\d+$/);
+  return path.join(env.RUNNER_TEMP, `windows-update-${env.GITHUB_RUN_ID}-${env.GITHUB_RUN_ATTEMPT}.json`);
+}
+
+function validateProof(proof, version) {
+  assert.equal(proof.ok, true, proof.message);
+  assert.equal(proof.previousVersion, previousVersion(version));
+  assert.equal(proof.version, version);
+  assert.equal(proof.autoRelaunched, true);
+  assert.equal(proof.recoveryPreserved, true);
+  assert.equal(proof.mediaPreserved, true);
+  assert.ok(Array.isArray(proof.requests));
+  assert.ok(proof.requests.includes('latest.yml'));
+  assert.ok(proof.requests.includes(`UpdateFixture-${version}-win-x64.exe`));
+  return proof;
+}
+
+async function verifyProof() {
+  // This entry runs in a fresh process that never imports electron-builder.
+  // CI cannot pass on a swallowed exit code without the successful proof.
+  const file = proofFileForEnvironment();
+  const proof = validateProof(JSON.parse(await fsp.readFile(file, 'utf8')), require('../package.json').version);
+  assert.equal(path.dirname(proof.fixtureRoot).toLowerCase(), path.resolve(process.env.RUNNER_TEMP).toLowerCase());
+  assert.ok(path.basename(proof.fixtureRoot).startsWith('otomatik-update-'));
+  assert.equal(path.dirname(proof.installPath).toLowerCase(), path.join(proof.fixtureRoot, 'installed').toLowerCase());
+  console.log(`Verified independent installed-update proof: ${JSON.stringify(proof)}`);
+}
+
+function reportFailure(error) {
+  console.error(error);
+  process.exitCode = 1;
+  // Builder cleanup hooks can replace a previously assigned exitCode.
+  // Its own CLI pins failure in an exit listener for this same reason.
+  process.on('exit', () => { process.exitCode = 1; });
+}
+
 async function execute(file, args, options = {}) {
   await new Promise((resolve, reject) => {
     const child = spawn(file, args, { stdio: 'inherit', windowsHide: true, ...options });
@@ -42,6 +88,8 @@ async function main() {
   if (process.platform !== 'win32') { console.log('Real NSIS update smoke runs on Windows CI only.'); return; }
   assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Do not install test applications outside a disposable CI runner');
   assert.ok(process.env.RUNNER_TEMP && path.isAbsolute(process.env.RUNNER_TEMP));
+  const proofFile = proofFileForEnvironment();
+  assert.equal(fs.existsSync(proofFile), false, 'A stale proof must never validate this test run');
   const repository = path.resolve(__dirname, '..');
   const metadata = require(path.join(repository, 'package.json'));
   const nextVersion = metadata.version;
@@ -107,7 +155,7 @@ async function main() {
     };
     for (const [version, folder] of [[oldVersion, 'old'], [nextVersion, 'new']]) {
       await build({ projectDir: sourceDir, publish: 'never', targets: Platform.WINDOWS.createTarget(['nsis'], Arch.x64),
-        config: { ...config, extraMetadata: { version }, directories: { output: path.join(root, folder) } } });
+        config: configForBuild(config, version, path.join(root, folder)) });
     }
     const oldInstaller = path.join(root, 'old', `UpdateFixture-${oldVersion}-win-x64.exe`);
     await execute(oldInstaller, ['/S', '/currentuser', `/D=${installDir}`]);
@@ -116,15 +164,10 @@ async function main() {
     oldProcess = spawn(installed, [], { stdio: 'ignore', windowsHide: true });
     oldProcess.once('error', error => console.error(error));
     const result = JSON.parse(await waitForFile(path.join(root, 'result.json'), 240000));
-    assert.equal(result.ok, true, result.message);
-    assert.equal(result.previousVersion, oldVersion);
-    assert.equal(result.version, nextVersion);
-    assert.equal(result.autoRelaunched, true);
-    assert.equal(result.recoveryPreserved, true);
-    assert.equal(result.mediaPreserved, true);
-    assert.ok(requests.includes('latest.yml'));
-    assert.ok(requests.includes(`UpdateFixture-${nextVersion}-win-x64.exe`));
-    console.log(JSON.stringify({ ...result, fixtureRoot: root, requests }));
+    const proof = validateProof({ ...result, fixtureRoot: root, requests }, nextVersion);
+    // Exclusive creation prevents a different/stale invocation replacing proof.
+    await fsp.writeFile(proofFile, JSON.stringify(proof), { flag: 'wx' });
+    console.log(JSON.stringify(proof));
   } catch (error) {
     console.error(`Windows update fixture retained for diagnostics: ${root}`);
     console.error(await fsp.readFile(path.join(root, 'events.jsonl'), 'utf8').catch(() => 'No fixture events yet.'));
@@ -144,5 +187,5 @@ async function main() {
   }
 }
 
-if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = { previousVersion };
+if (require.main === module) (process.argv.includes('--verify-proof') ? verifyProof() : main()).catch(reportFailure);
+module.exports = { previousVersion, configForBuild, proofFileForEnvironment, validateProof, reportFailure };

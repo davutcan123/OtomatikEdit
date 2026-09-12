@@ -1,0 +1,30 @@
+name: Validate installed Windows auto-update
+
+# Lightweight real NSIS check; no production backend or release mutations.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-update:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked desktop dependencies
+        run: npm ci
+      - name: Check desktop update regression tests
+        run: npm test
+      - name: Install older fixture and exercise a real NSIS update
+        timeout-minutes: 20
+        run: node scripts/windows_update_smoke.cjs
+      - name: Require independent installed-update proof
+        run: node scripts/windows_update_smoke.cjs --verify-proof
