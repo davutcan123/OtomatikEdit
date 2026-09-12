@@ -95,8 +95,10 @@ async function main() {
     const config = {
       appId: `com.davutcan.otomatikedit.updatefixture.${nonce}`, productName: 'Otomatik Edit Update Test',
       artifactName: 'UpdateFixture-${version}-${os}-${arch}.${ext}',
+      // Use the same package-locked runtime as the production build. Let the
+      // builder resolve/download it: modern Electron packages need not contain
+      // node_modules/electron/dist, even after a successful production build.
       electronVersion: require('electron/package.json').version,
-      electronDist: path.join(repository, 'node_modules', 'electron', 'dist'),
       files: ['*.cjs', 'fixture-config.json', 'package.json'], asar: true, npmRebuild: false,
       publish: { provider: 'generic', url: feedURL },
       win: { target: [{ target: 'nsis', arch: ['x64'] }], executableName: 'OtomatikEditUpdateTest', icon: path.join(repository, 'desktop', 'assets', 'icon.ico') },
