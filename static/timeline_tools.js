@@ -79,19 +79,19 @@ function timelinePasteClipboard() {
     log('manual-log', 'Hedef kanal kilitli. Önce kilidi açın.', 'error');
     return false;
   }
+  if (type === 'video' && !S.timelineRipple && S.clips.some(clip =>
+      (Number(clip.videoTrack)||1) === targetTrack.id &&
+      clipTimelineStart(clip) < time + clipOutputDuration(item) - .000001 &&
+      clipTimelineEnd(clip) > time + .000001)) {
+    log('manual-log','Bu aralık dolu. Boş bir aralık seçin veya Video kanalı düğmesiyle kanal ekleyin.','error');
+    return false;
+  }
   remember();
   pausePreview();
   S.selectedText = S.selectedSticker = S.selectedLayer = null;
   S.selectedVideoClipIds = [];
   S.selectedTextKeyframe = S.selectedImageKeyframe = S.selectedZoomKeyframe = null;
   if (type === 'video') {
-    const duration = clipOutputDuration(item);
-    const occupied = S.clips.some(clip => (Number(clip.videoTrack) || 1) === targetTrack.id &&
-      clipTimelineStart(clip) < time + duration - .000001 && clipTimelineEnd(clip) > time + .000001);
-    if (occupied && !S.timelineRipple) {
-      targetTrack = addVideoTrack({remember:false, redraw:false});
-      log('manual-log', 'Bu aralık dolu olduğu için kopya ' + targetTrack.name + ' kanalına eklendi.', 'info');
-    }
     item.timelineStart = time;
     item.videoTrack = targetTrack.id;
     S.activeVideoTrack = targetTrack.id;
@@ -212,10 +212,11 @@ function pasteTimelineVideoGroup() {
     const lane=destinations[sourceTracks.indexOf(original.videoTrack||1)];
     return lane&&S.clips.some(other=>(other.videoTrack||1)===lane.id&&start<clipTimelineEnd(other)-.00001&&start+clipOutputDuration(item)>clipTimelineStart(other)+.00001);
   });
+  if (collides || destinations.some(track=>!track)) {
+    log('manual-log','Yapıştırmak için yeterli boş video kanalı yok. Önce kanal ekleyin veya boş bir aralık seçin.','error');
+    return false;
+  }
   remember(); pausePreview();
-  const destinationBase = collides ? tracks.length : activeIndex;
-  for (const offset of offsets) while (S.videoTracks.length <= destinationBase+offset) addVideoTrack({remember:false,redraw:false});
-  destinations=offsets.map(offset=>S.videoTracks[destinationBase+offset]);
   const ids=new Map();
   for(const {original,item,start} of pending){item.timelineStart=start;item.videoTrack=destinations[sourceTracks.indexOf(original.videoTrack||1)].id;ids.set(original.clipId,item.clipId);S.clips.push(hydrateClip(item));}
   S.transitions.push(...timelineClipboard.transitions.map(item=>({...item,leftClipId:ids.get(item.leftClipId),rightClipId:ids.get(item.rightClipId)})));
@@ -261,9 +262,11 @@ function beginTimelineVideoGroupDrag(event, anchor, button) {
     for(const entry of originals){const index=tracks.findIndex(track=>track.id===entry.track)+shift;mapping.set(entry.track,tracks[index]||null);}
     if([...mapping.values()].some(track=>track?.locked)){for(const entry of originals){entry.item.timelineStart=entry.start;entry.item.videoTrack=entry.track;}S.history=previousHistory;drawClips();log('manual-log','Hedef kanal kilitli; grup yerinde kaldı.','error');return;}
     const own=new Set(items),collides=!S.timelineRipple&&originals.some(entry=>{const track=mapping.get(entry.track);return track&&S.clips.some(other=>!own.has(other)&&(other.videoTrack||1)===track.id&&clipTimelineStart(entry.item)<clipTimelineEnd(other)-.00001&&clipTimelineEnd(entry.item)>clipTimelineStart(other)+.00001);});
-    const minimumLane=Math.min(...sourceIndices),newBase=tracks.length;
-    for(const [key,track]of mapping){const sourceIndex=tracks.findIndex(value=>value.id===key),index=collides?newBase+sourceIndex-minimumLane:sourceIndex+shift;
-      if(collides||!track){while(S.videoTracks.length<=index)addVideoTrack({remember:false,redraw:false});mapping.set(key,S.videoTracks[index]);}}
+    if(collides||[...mapping.values()].some(track=>!track)){
+      for(const entry of originals){entry.item.timelineStart=entry.start;entry.item.videoTrack=entry.track;}
+      S.history=previousHistory;drawClips();setTimelineVideoSelection(items,anchor);
+      log('manual-log','Hedef aralık dolu veya kanal yok; klipler eski yerinde kaldı. Önce boş bir kanal ekleyebilirsiniz.','error');return;
+    }
     for(const entry of originals)entry.item.videoTrack=mapping.get(entry.track).id;
     S.clips.sort((a,b)=>clipTimelineStart(a)-clipTimelineStart(b));clampClipTransitions();setTimelineVideoSelection(items,anchor);drawClips();seekOutputTime(clipTimelineStart(anchor));setTimelineVideoSelection(items,anchor);scheduleAutosave();
   };

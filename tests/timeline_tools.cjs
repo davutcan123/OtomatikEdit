@@ -51,11 +51,13 @@ test('video clipboard preserves independent nested settings/source offsets and f
   assert.equal(remembers(),1);assert.equal(saves(),1);
 });
 
-test('copy spans project timelines at exact cursor and adds a free video channel instead of moving existing clips',()=>{
+test('occupied paste never creates a channel; explicit empty channel allows cross-timeline paste',()=>{
   const {context:c,remembers}=fixture();
   c.S.clips=[{clipId:'A',start:1,end:6,timelineStart:0,videoTrack:1,fileId:'sourceA'}];c.S.selected=0;c.timelineCopySelection();
   const existing={clipId:'B',start:0,end:20,timelineStart:0,videoTrack:1,fileId:'sourceB'};
   c.S.activeTimelineId='TL2';c.S.manualId='sourceB';c.S.clips=[existing];c.time=3.25;
+  assert.equal(c.timelinePasteClipboard(),false);assert.equal(remembers(),0);assert.equal(c.S.videoTracks.length,1);
+  c.S.videoTracks.push({id:2,name:'Video 2',locked:false,visible:true,muted:false});c.S.activeVideoTrack=2;
   const item=c.timelinePasteClipboard();
   assert.equal(item.timelineStart,3.25);assert.equal(item.fileId,'sourceA');assert.equal(item.videoTrack,2);
   assert.equal(existing.timelineStart,0);assert.equal(existing.end,20);assert.equal(remembers(),1);assert.equal(c.S.activeVideoTrack,2);

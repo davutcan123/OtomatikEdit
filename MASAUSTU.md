@@ -2,9 +2,9 @@
 
 ## Kullanım
 
-Windows 10/11 64-bit için `OtomatikEdit-1.1.9-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
+Windows 10/11 64-bit için `OtomatikEdit-1.1.10-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
 
-Apple Silicon Mac için `OtomatikEdit-1.1.9-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
+Apple Silicon Mac için `OtomatikEdit-1.1.10-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
 
 Kurulum paketleri şu aşamada yayıncı sertifikasıyla imzalı/noter onaylı değildir. İşletim sistemi yayıncı doğrulama uyarısı gösterebilir. Genel dağıtım için Windows kod imzası ve Apple Developer imzalama/noter onayı ayrıca yapılandırılmalıdır.
 
@@ -55,6 +55,10 @@ Timeline odaktayken **Ctrl/Cmd+A**, yalnız açık timeline’daki video klipler
 Boş metin, altyazı, görsel, ses ve sticker satırları yer kaplamaz. İlk öğeyi sürüklerken uygun hedef satırı geçici olarak açılır; bırakınca kalır, iptal edilince kapanır. Gizlenmiş boş bir kanal kilitliyse **Kilitli boş kanallar** menüsünden açıkça kilidi kaldırabilirsiniz; sürükleme kilidi kendiliğinden açmaz.
 
 **＋ Video kanalı**, mevcut video kanallarının üstüne yeni boş kanal ekler ve görünümü o kanala kaydırır. Önceki klip seçimi temizlenir; kliplerin yerleri, oynatma kafasının zamanı, yatay kaydırma ve timeline yakınlığı değişmez. Yeni kanal ekleme geri alınabilir. Timeline içinde aşağı-yukarı kaydırırken saniye cetveli ve kırmızı oynatma kafasının tutamacı üstte görünür kalır; yatay kaydırırken doğru saniyeleri izler.
+
+Klip taşıma ve yapıştırma kendiliğinden video kanalı oluşturmaz. **Boşlukları kapat** kapalıyken dolu bir aralığa bırakılan klip/grup eski yerine döner; dolu hedefe yapıştırma yapılmaz. Başka kanala yerleştirmek için önce **＋ Video kanalı** ile boş kanal ekleyin. Grup yapıştırırken göreli kanal boşlukları için de yeterli kanal bulunmalıdır.
+
+Video 2 ve sonraki kanal başlıklarındaki **×** o kanalı siler. Dolu kanallarda kliplerin de timeline’dan silineceği onaylanır; kaynak dosyalar ve Projelerim kütüphanesi korunur. Kilitli kanalı önce açmak gerekir. Kanal ve klipleri **Ctrl/Cmd+Z** ile geri alabilirsiniz. Temel Video 1 kanalı silinmez.
 
 ## İnternet gereksinimi
 

@@ -125,10 +125,12 @@ test('group paste preserves relative time and empty lane slots using source ordi
   assert.equal(c.S.videoTracks.length, 5); assert.ok(!c.S.clips.some(item => item.videoTrack === 20));
 });
 
-test('collision moves the complete pasted layout to fresh lanes while keeping its empty slot', () => {
+test('collision rejects paste until the user provides enough empty channels', () => {
   const {c} = fixture(); setTracks(c, [1, 2, 3]); const a = clip('A', 0), b = clip('B', 4, 3);
   c.S.clips = [a, b]; c.setTimelineVideoSelection([a, b], a); c.timelineCopySelection();
   const existing = clip('occupied', 0, 1, 30); c.S.clips = [existing]; c.cursor = 8;
+  assert.equal(c.timelinePasteClipboard(),false);assert.equal(c.S.history.length,0);assert.equal(c.S.videoTracks.length,3);
+  setTracks(c,[1,2,3,4,5,6]);c.S.activeVideoTrack=4;
   const pasted = c.timelinePasteClipboard();
   assert.deepEqual(plain(pasted.map(item => item.videoTrack)), [4, 6]); assert.equal(c.S.videoTracks.length, 6);
   assert.ok(!c.S.clips.some(item => item.videoTrack === 5)); assert.equal(existing.timelineStart, 0); assert.equal(existing.end, 34);
@@ -177,14 +179,14 @@ test('a plain click collapses a locked group but dragging any locked member rema
   }
 });
 
-test('colliding group drag relocates the complete lane layout without collapsing its unused lane', () => {
+test('colliding group drag restores the layout without creating channels or history', () => {
   const {c, syncNodes, pointer, windowEvents} = fixture(); setTracks(c, [1, 5, 7]);
   const a = clip('A', 2, 1), b = clip('B', 6, 7), blocker = clip('BLOCK', 12, 1, 20);
   c.S.clips = [a, b, blocker]; c.setTimelineVideoSelection([a, b], a); const buttons = syncNodes();
   c.beginTimelineVideoGroupDrag(pointer(100), a, buttons[0]); windowEvents.get('pointermove')(pointer(300)); windowEvents.get('pointerup')(pointer(300));
-  assert.deepEqual([a.timelineStart, b.timelineStart, a.videoTrack, b.videoTrack], [12, 16, 8, 10]);
-  assert.equal(c.S.videoTracks.length, 6); assert.ok(!c.S.clips.some(item => item.videoTrack === 9));
-  assert.equal(blocker.timelineStart, 12); assert.equal(blocker.videoTrack, 1); assert.equal(c.S.history.length, 1);
+  assert.deepEqual([a.timelineStart, b.timelineStart, a.videoTrack, b.videoTrack], [2, 6, 1, 7]);
+  assert.equal(c.S.videoTracks.length, 3);
+  assert.equal(blocker.timelineStart, 12); assert.equal(blocker.videoTrack, 1); assert.equal(c.S.history.length, 0);
 });
 
 test('cancelled or locked-target group drag restores all clip positions and leaves no undo entry', () => {

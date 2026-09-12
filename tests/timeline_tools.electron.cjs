@@ -49,9 +49,12 @@ async function checkClipboard(){
   assert.deepEqual(first.crop,{x:0,y:0,width:1,height:1});
   assert.equal(await evaluate('S.videoTracks.length'),1);
   await seek(3.25);await evaluate('el("timeline").focus()');await shortcut('V');
+  assert.equal(await evaluate('S.clips.length'),1);assert.equal(await evaluate('S.videoTracks.length'),1);
+  await click('#video-track-add');await evaluate('el("timeline").focus()');await shortcut('V');
   const stacked=await evaluate('S.clips.map(item=>({id:item.clipId,track:item.videoTrack,start:item.timelineStart}))');
   assert.equal(stacked.length,2);assert.equal(stacked[1].track,2);assert.equal(stacked[1].start,3.25);assert.equal(stacked[0].start,2.5);
-  await shortcut('Z');assert.equal(await evaluate('S.videoTracks.length'),1);assert.equal(await evaluate('S.clips.length'),1);
+  await shortcut('Z');assert.equal(await evaluate('S.videoTracks.length'),2);assert.equal(await evaluate('S.clips.length'),1);
+  await shortcut('Z');assert.equal(await evaluate('S.videoTracks.length'),1);
   await evaluate('S.videoTracks[0].locked=true;drawClips();el("timeline").focus()');await shortcut('V');assert.equal(await evaluate('S.clips.length'),1);
   await evaluate('S.videoTracks[0].locked=false;drawClips()');
   // A real focused text field keeps its native editing behavior; timeline length is unchanged.

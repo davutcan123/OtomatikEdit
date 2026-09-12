@@ -40,7 +40,8 @@ function fixture(){
 
 test('clicking a video channel label clears stale selection and targets its clip for the cut shortcut',()=>{
   const{c}=fixture(),labels=new Map();
-  for(const id of [1,2]){const title={};labels.set(id,{querySelector:()=>title,querySelectorAll:()=>[],classList:{toggle(){}}})}
+  for(const id of [1,2]){const title={append(node){this.close=node}};labels.set(id,{querySelector:()=>title,querySelectorAll:()=>[],classList:{toggle(){}}})}
+  c.document.createElement=()=>({setAttribute(){}});
   c.el=()=>labels.get(1);c.document.querySelector=()=>labels.get(2);
   c.S.clips=[{clipId:'a',videoTrack:1,start:0,end:4,timelineStart:0},{clipId:'b',videoTrack:2,start:0,end:4,timelineStart:0}];
   c.S.selected=0;c.S.selectedText='stale-text';c.outputTime=2;
@@ -48,6 +49,22 @@ test('clicking a video channel label clears stale selection and targets its clip
   labels.get(2).querySelector().onclick();
   assert.equal(c.S.activeVideoTrack,2);assert.equal(c.S.selected,1);assert.equal(c.S.selectedText,null);assert.equal(c.splitVideoTarget(2).clip.clipId,'b');
   c.outputTime=8;labels.get(1).querySelector().onclick();assert.equal(c.S.selected,-1);assert.equal(c.S.activeVideoTrack,1);
+});
+
+test('channel deletion protects the base/locked lanes, confirms content and supports undo without removing media',()=>{
+  const{c}=fixture();c.hideContextMenu=()=>{};c.confirm=()=>false;
+  c.S.videoTracks.push({id:2,name:'Video 2',locked:false,visible:true,muted:false},{id:4,name:'Video 4',locked:false,visible:true,muted:false});
+  c.S.clips=[{clipId:'a',videoTrack:1,start:0,end:4,timelineStart:0},{clipId:'b',videoTrack:2,start:0,end:4,timelineStart:0}];
+  c.S.transitions=[{leftClipId:'b',rightClipId:'b',type:'fade'}];c.S.mediaAssets=[{id:'source'}];
+  c.S.selectedVideoClipIds=['b'];c.S.selected=1;c.S.activeVideoTrack=2;
+  c.ensureVideoTracks();
+  const before=plain(c.S);assert.equal(c.removeVideoTrack(1),false);assert.equal(c.removeVideoTrack(2),false);assert.deepEqual(plain(c.S),before);
+  c.S.videoTracks[1].locked=true;c.confirm=()=>{throw Error('Locked deletion must not prompt')};assert.equal(c.removeVideoTrack(2),false);c.S.videoTracks[1].locked=false;
+  c.confirm=()=>true;assert.equal(c.removeVideoTrack(2),true);
+  assert.deepEqual(plain(c.S.videoTracks.map(t=>t.id)),[1,4]);assert.deepEqual(plain(c.S.clips.map(t=>t.clipId)),['a']);assert.equal(c.S.transitions.length,0);
+  assert.equal(c.S.mediaAssets.length,1);assert.equal(c.S.history.length,1);assert.equal(c.S.selected,-1);
+  c.undoEdit();assert.deepEqual(plain(c.S.videoTracks.map(t=>t.id)),[1,2,4]);assert.equal(c.S.clips.length,2);assert.equal(c.S.transitions.length,1);
+  c.confirm=()=>{throw Error('Empty lane needs no confirmation')};assert.equal(c.removeVideoTrack(4),true);assert.deepEqual(plain(c.S.videoTracks.map(t=>t.id)),[1,2]);
 });
 
 test('legacy migration maintains a separate sequential cursor per video track and honors explicit gaps',()=>{

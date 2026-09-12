@@ -125,6 +125,25 @@ async function checkTransitionPreroll(){
   proof.transitionPreroll={midpoint,frames:samples.length,prerollFrames:preroll.length,first:preroll[0],lastPreroll:preroll.at(-1),afterCut:playing.at(-1)};
 }
 
+async function checkChannelRemoval(){
+  await seek(0);await evaluate(`S.timelineMagnet=false;S.timelineRipple=false;S.selectedVideoClipIds=[];drawClips()`);
+  const before=await evaluate('JSON.stringify(S.clips)'),history=await evaluate('S.history.length');
+  await evaluate(`document.querySelector('[data-extra-video-label="2"]').scrollIntoView({block:'nearest'})`);await frames();
+  const points=await evaluate(`(()=>{const r=document.querySelector('#track [data-index="1"]').getBoundingClientRect();return{from:{x:r.left+25,y:r.top+75},to:{x:r.left+25+S.zoom,y:r.top+75}}})()`);
+  for(const[type,p]of [['mouseDown',points.from],['mouseMove',points.to]]){window.webContents.sendInputEvent({type,button:'left',clickCount:1,x:Math.round(p.x),y:Math.round(p.y)});await frames()}
+  assert.ok(await evaluate('S.clips.find(c=>c.clipId==="red-out").timelineStart>.5'),'The real drag must move the clip before rejecting its drop');
+  window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:Math.round(points.to.x),y:Math.round(points.to.y)});await frames();
+  assert.equal(await evaluate('JSON.stringify(S.clips)'),before,'Overlapping single drag restores source placement');assert.equal(await evaluate('S.videoTracks.length'),2);assert.equal(await evaluate('S.history.length'),history);
+  assert.equal(await evaluate(`document.querySelector('#video-label .video-track-remove')!==null`),false);
+  await evaluate(`window.confirm=()=>false;S.selectedVideoClipIds=['red-out'];S.selected=1;drawClips()`);
+  await click('[data-extra-video-label="2"] .video-track-remove');assert.equal(await evaluate('S.clips.length'),3);assert.deepEqual(await evaluate('S.selectedVideoClipIds'),['red-out']);
+  await evaluate('window.confirm=()=>true;void 0');await click('[data-extra-video-label="2"] .video-track-remove');
+  assert.equal(await evaluate('S.videoTracks.length'),1);assert.equal(await evaluate('S.clips.length'),1);assert.equal(await evaluate('S.transitions.length'),0);assert.equal(await evaluate('S.mediaAssets.length'),3);
+  await evaluate('undoEdit()');await frames();assert.equal(await evaluate('S.videoTracks.length'),2);assert.equal(await evaluate('S.transitions.length'),1);
+  await click('#video-track-add');await evaluate(`window.confirm=()=>{throw Error('Empty channel must not prompt')};void 0`);await click('[data-extra-video-label="3"] .video-track-remove');assert.equal(await evaluate('S.videoTracks.length'),2);
+  await screenshot('channel-remove-controls');proof.channelRemoval={collisionRestored:true,noAutomaticChannels:true,cancelPreservesSelection:true,undoRestoresTransition:true,mediaPreserved:true,emptyChannelRemoved:true};
+}
+
 app.whenReady().then(async()=>{
   const ffmpeg=process.env.SMART_EDITOR_FFMPEG||(process.platform==='win32'&&fs.existsSync(path.join(root,'tools/ffmpeg/bin/ffmpeg.exe'))?path.join(root,'tools/ffmpeg/bin/ffmpeg.exe'):'ffmpeg');
   for(const[name,color,frequency]of [['red','red',440],['blue','blue',660],['green','green',880]]){
@@ -152,7 +171,7 @@ app.whenReady().then(async()=>{
   window.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');window.setContentSize(1366,768);window.showInactive();await frames();
   await evaluate(`restoreProject({name:'Video channels fixture',mediaAssets:['red','blue','green'].map((name,index)=>({id:'asset'+index,fileId:name+'.mp4',name:name+'.mp4',kind:'video',duration:12})),activeTimelineId:'TL1',timelines:[{id:'TL1',name:'Three channels',state:{...emptyTimelineState(),manualId:'red.mp4',manualName:'Red source',duration:12,selected:0,preview:0,videoTracks:[1,2,3].map(id=>({id,name:'Video '+id,locked:false,visible:true,muted:false})),activeVideoTrack:1,clips:[{clipId:'red-a',fileId:'red.mp4',start:0,end:4,timelineStart:0,videoTrack:1,sourceDuration:12},{clipId:'blue',fileId:'blue.mp4',start:1,end:5,speed:2,timelineStart:1,videoTrack:2,sourceDuration:12,scale:65,crop:{x:.5,y:0,width:.5,height:1}},{clipId:'green',fileId:'green.mp4',start:2,end:3,speed:.5,timelineStart:1.5,videoTrack:3,sourceDuration:12,scale:35},{clipId:'red-b',fileId:'red.mp4',start:4,end:6,timelineStart:6,videoTrack:1,sourceDuration:12}],zoom:45}}]})`);
-  await checkLayers();await checkGapAndPlayback();await checkChannelsAndPersistence();await checkTransitionPreroll();
+  await checkLayers();await checkGapAndPlayback();await checkChannelsAndPersistence();await checkTransitionPreroll();await checkChannelRemoval();
   for(const item of media.values())assert.equal(crypto.createHash('sha256').update(fs.readFileSync(item.file)).digest('hex'),item.hash,'Imported source bytes unchanged');
   assert.deepEqual(errors,[]);console.log(j({ok:true,proof,artifacts}));
 }).catch(async error=>{console.error(error);proof.failureState=await states().catch(()=>null);await screenshot('failure').catch(()=>{});console.error(j({proof,errors,artifacts}));process.exitCode=1}).finally(()=>{window?.destroy();server?.closeAllConnections();server?.close();app.exit(process.exitCode||0)});

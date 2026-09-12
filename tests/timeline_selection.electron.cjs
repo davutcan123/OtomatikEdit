@@ -133,7 +133,7 @@ async function checkCopyAcrossTimelines() {
   assert.deepEqual([alpha.start,alpha.end,charlie.start,charlie.end],[0,2,6,8]);
   assert.equal(await evaluate('S.history.length'),history+1);await assertSelection(pasted.map(c=>c.clipId),'Pasted group stays selected');
   await timelineFocus();await shortcut('Z');assert.deepEqual(await snapshot(),before,'One undo removes the complete pasted group');
-  await shortcut('V');const repasted=await snapshot(),repastedAlpha=repasted.find(c=>c.name==='Alpha');
+  await evaluate('S.activeVideoTrack=1;seekOutputTime(4);el("timeline").focus()');await shortcut('V');const repasted=await snapshot(),repastedAlpha=repasted.find(c=>c.name==='Alpha');
   assert.ok(repastedAlpha);await evaluate(`S.clips.find(c=>c.clipId===${j(repastedAlpha.clipId)}).zoomKeyframes[0].scale=222`);
   await evaluate('switchTimeline("TL1")');assert.deepEqual(await snapshot(),original,'Pasted keyframes are independent of source clips');
   proof.copy = {pasted:pasted.map(c=>({id:c.clipId,name:c.name,time:c.timelineStart,track:c.videoTrack})), sourceUnchanged:true, lockedDestinationRejected:true, freshKeyframes:true, singleUndo:true};
@@ -171,12 +171,14 @@ async function checkCopiedLaneGaps() {
   await evaluate(`S.videoTracks=[1,2,3].map(id=>({id,name:'Video '+id,locked:false,visible:true,muted:false}));S.clips.filter(c=>c.videoTrack===2).forEach(c=>c.videoTrack=3);ensureVideoTracks();drawClips()`);
   await clickClip('A');await clickClip('C',true);await timelineFocus();await shortcut('C');
   await evaluate(`switchTimeline('TL2');S.videoTracks=[1,2,3].map(id=>({id,name:'Video '+id,locked:id===3,visible:true,muted:false}));S.activeVideoTrack=2;ensureVideoTracks();seekOutputTime(4);pausePreview();drawClips();el('timeline').focus()`);await frames();
-  const before=await snapshot(),history=await evaluate('S.history.length');await shortcut('V');
+  const before=await snapshot();let history=await evaluate('S.history.length');await shortcut('V');
+  assert.deepEqual(await snapshot(),before);assert.equal(await evaluate('S.videoTracks.length'),3);assert.equal(await evaluate('S.history.length'),history);
+  await evaluate('addVideoTrack();S.activeVideoTrack=2;drawClips();el("timeline").focus()');history=await evaluate('S.history.length');await shortcut('V');
   const pasted=(await snapshot()).filter(c=>c.clipId!=='E'),alpha=pasted.find(c=>c.name==='Alpha'),charlie=pasted.find(c=>c.name==='Charlie');
   assert.equal(pasted.length,2,'An unselected locked gap lane must not reject paste');assert.equal(alpha.videoTrack,2);assert.equal(charlie.videoTrack,4,'Original lane 1+3 spacing must paste into lane 2+4, not adjacent lanes');
   assert.equal(alpha.timelineStart,4);assert.equal(charlie.timelineStart,5);assert.equal(await evaluate('videoTrackState(3).locked'),true);
   assert.equal(await evaluate('S.videoTracks.length'),4);assert.equal(await evaluate('S.history.length'),history+1);
-  await timelineFocus();await shortcut('Z');assert.deepEqual(await snapshot(),before);assert.equal(await evaluate('S.videoTracks.length'),3,'Undo removes only the newly created destination lane');
+  await timelineFocus();await shortcut('Z');assert.deepEqual(await snapshot(),before);assert.equal(await evaluate('S.videoTracks.length'),4,'Undo preserves the explicitly created destination lane');
   proof.laneGaps={source:[1,3],destination:[2,4],lockedGapUnaffected:true,singleUndo:true};
 }
 
