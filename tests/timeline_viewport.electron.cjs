@@ -10,6 +10,13 @@ const root=path.resolve(__dirname,'..'),artifacts=fs.mkdtempSync(path.join(os.tm
 app.setPath('userData',path.join(artifacts,'profile'));
 let win,server;const errors=[],proof={};
 const evaluate=code=>win.webContents.executeJavaScript(code),frames=()=>evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+async function setViewport(width,height){
+  // Windows may fit BrowserWindow's constructor bounds to its work area.
+  // Explicit content sizing is required before testing the desktop layout.
+  win.setContentSize(width,height);
+  const actual=await evaluate(`new Promise((resolve,reject)=>{const started=performance.now();let stable=0;const check=()=>{if(innerWidth===${width}&&innerHeight===${height}){if(++stable>=2)return resolve({width:innerWidth,height:innerHeight})}else stable=0;if(performance.now()-started>4000)return reject(new Error('Viewport did not settle at ${width}x${height}; actual '+innerWidth+'x'+innerHeight));requestAnimationFrame(check)};check()})`);
+  assert.deepEqual(actual,{width,height});await frames();return actual;
+}
 const rect=id=>`(()=>{const r=el(${JSON.stringify(id)}).getBoundingClientRect();return{left:r.left,top:r.top,width:r.width,height:r.height,right:r.right,bottom:r.bottom}})()`;
 const send=(type,x,y)=>win.webContents.sendInputEvent({type,button:'left',clickCount:1,x:Math.round(x),y:Math.round(y)});
 async function screenshot(name){fs.writeFileSync(path.join(artifacts,name+'.png'),(await win.webContents.capturePage()).toPNG())}
@@ -25,7 +32,7 @@ async function verify(){
   assert.equal(g.scroll[0],before.scroll[0]);assert.ok(Math.abs(g.cursor-before.cursor)<.001);assert.equal(await evaluate('JSON.stringify(S.clips.map(c=>({id:c.clipId,track:c.videoTrack,start:c.start,end:c.end,timelineStart:c.timelineStart})))'),sources);
   proof.addedAbove=g;await screenshot('new-channel-above');
   for(const viewport of [{width:1366,height:740},{width:1100,height:700}]){
-    win.setContentSize(viewport.width,viewport.height);await frames();await evaluate('el("timeline").scrollLeft=160;seekOutputTime(8)');await frames();
+    await setViewport(viewport.width,viewport.height);await evaluate('el("timeline").scrollLeft=160;seekOutputTime(8)');await frames();
     const baseline=await geometry();
     for(const scroll of [0,130,300,10000]){
       await evaluate(`el('timeline').scrollTop=${scroll}`);await frames();g=await geometry();
@@ -64,5 +71,7 @@ app.whenReady().then(async()=>{
   });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   win=new BrowserWindow({show:true,frame:false,width:1366,height:740,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
   win.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});
-  await win.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');win.showInactive();await frames();await verify();assert.deepEqual(errors,[]);console.log(JSON.stringify({ok:true,proof,artifacts}));
+  await win.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');
+  proof.initialViewport=await evaluate('({width:innerWidth,height:innerHeight})');win.showInactive();proof.settledViewport=await setViewport(1366,740);
+  await verify();assert.deepEqual(errors,[]);console.log(JSON.stringify({ok:true,proof,artifacts}));
 }).catch(async error=>{console.error(error);if(win){await screenshot('failure').catch(()=>{});console.error(JSON.stringify({geometry:await geometry().catch(()=>null),errors,artifacts}))}process.exitCode=1}).finally(()=>{win?.destroy();server?.closeAllConnections();server?.close();app.exit(process.exitCode||0)});
