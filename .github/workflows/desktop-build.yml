@@ -72,6 +72,10 @@ jobs:
         run: npx --no-install electron tests/sticker_timing.electron.cjs
       - name: Verify imported image motion, effects, project removal and recovery in Electron
         run: npx --no-install electron tests/image_editing.electron.cjs
+      - name: Verify hidden empty channels, first-item drops and safe drag cancellation in Electron
+        run: npx --no-install electron tests/empty_tracks.electron.cjs
+      - name: Verify native multi-clip selection, grouped editing and ripple recovery in Electron
+        run: npx --no-install electron tests/timeline_selection.electron.cjs
       - name: Verify magnetic snapping, cut navigation and exact timeline trimming in Electron
         run: npx --no-install electron tests/timeline_snapping.electron.cjs
       - name: Verify timeline copy/paste shortcuts and source crop controls in Electron

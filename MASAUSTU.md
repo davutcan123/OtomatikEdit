@@ -2,9 +2,9 @@
 
 ## Kullanım
 
-Windows 10/11 64-bit için `OtomatikEdit-1.1.2-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
+Windows 10/11 64-bit için `OtomatikEdit-1.1.8-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
 
-Apple Silicon Mac için `OtomatikEdit-1.1.2-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
+Apple Silicon Mac için `OtomatikEdit-1.1.8-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
 
 Kurulum paketleri şu aşamada yayıncı sertifikasıyla imzalı/noter onaylı değildir. İşletim sistemi yayıncı doğrulama uyarısı gösterebilir. Genel dağıtım için Windows kod imzası ve Apple Developer imzalama/noter onayı ayrıca yapılandırılmalıdır.
 
@@ -41,6 +41,14 @@ Kaydedilmiş projeyi listeden seçip **Projeyi sil** kullanabilirsiniz. Onaydan 
 **Ekran görüntüsü al** oynatma kafasının bulunduğu anı, metinler, stickerlar, katmanlar ve efektlerle birlikte PNG olarak kaydeder. HD–4K çözünürlük seçimi proje en-boy oranını korur; editör tutamaçları ve oynatıcı düğmeleri görüntüye katılmaz.
 
 Geniş masaüstü ekranında oynatıcı ve timeline aynı ekranda kalır; sağdaki küçük ayar/araç panelleri ve timeline kendi içinde kayar. Daha küçük pencerelerde tüm kontrollere erişim için sayfa kaydırma korunur.
+
+## Timeline seçimi ve boşluklar
+
+Timeline odaktayken **Ctrl/Cmd+A**, yalnız açık timeline’daki video kliplerinin tamamını seçer. **Ctrl/Cmd+tıklama** tek tek klip ekler veya seçimden çıkarır; normal tıklama seçimi tek klibe indirir. Yazı giriş alanlarında kısayol normal metin seçimi olarak kalır. Seçili video grubunu birlikte taşıyabilir, silebilir veya başka timeline’a kopyalayabilirsiniz. Kopyalar kaynak görüntüyü paylaşır ancak düzenleme ve keyframe ayarları bağımsızdır; göreli zamanlar, kanal boşlukları ve grup içindeki geçişler korunur. Kilitli klip içeren grup taşınmaz/silinmez. Toplu işlem tek adımda geri alınabilir.
+
+**Mıknatıs** yalnız yakın kenarları hizalar. Ayrı **Boşlukları kapat** düğmesi açıldığında kilitli olmayan video kanalları başlangıçtan itibaren boşluksuz sıralanır; silme, kırpma ve taşıma sonrasında aralıklar yeniden kapanır. Metin, görsel, ses ve sticker zamanları değişmez. Mod timeline’a özel kaydedilir; kapatmak mevcut konumları koruyup yeniden boşluk bırakmaya izin verir. Düğmeyi açma işlemi de geri alınabilir.
+
+Boş metin, altyazı, görsel, ses ve sticker satırları yer kaplamaz. İlk öğeyi sürüklerken uygun hedef satırı geçici olarak açılır; bırakınca kalır, iptal edilince kapanır. Gizlenmiş boş bir kanal kilitliyse **Kilitli boş kanallar** menüsünden açıkça kilidi kaldırabilirsiniz; sürükleme kilidi kendiliğinden açmaz.
 
 ## İnternet gereksinimi
 

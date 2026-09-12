@@ -25,3 +25,6 @@
 #timeline-crop-size{font-size:11px;color:#67e8f9}
 .timeline-crop-footer{justify-content:flex-end;border-top:1px solid #334155;padding-top:12px}
 @media(max-width:520px){.timeline-crop-numbers{grid-template-columns:repeat(2,minmax(0,1fr))}#timeline-crop-dialog{padding:12px}}
+#track .clip.multi-selected {box-shadow:inset 0 0 0 2px #38bdf8;background-color:#082f4980}
+.timeline-selection-count{font-size:10px;color:#7dd3fc;background:#082f49;padding:5px 8px;border-radius:6px;white-space:nowrap}
+.timeline-selection-count[hidden]{display:none}

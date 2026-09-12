@@ -34,9 +34,11 @@ async function dragToTrack(selector,time,targetId=null){
   await evaluate(`el('timeline').scrollTop=Math.max(0,el('image-track').offsetTop-60);el('timeline').scrollLeft=0;document.querySelector(${json(selector)}).scrollIntoView({block:'nearest',inline:'nearest'})`);await twoFrames();
   const points=await evaluate(`(()=>{const source=document.querySelector(${json(selector)}),a=source.getBoundingClientRect(),target=${targetId?`document.querySelector(${json(imageSelector(targetId))})`:`el('image-track')`},b=target.getBoundingClientRect(),track=el('image-track').getBoundingClientRect();return{from:{x:a.left+a.width/2,y:a.top+a.height/2},to:{x:track.left+${time}*S.zoom,y:b.top+b.height/2},viewport:{width:innerWidth,height:innerHeight},ready:source.contains(document.elementFromPoint(a.left+a.width/2,a.top+a.height/2))}})()`);
   assert.ok(points.ready,`Drag source must be visible: ${selector}`);
-  assert.ok(points.to.x>=0&&points.to.x<points.viewport.width&&points.to.y>=0&&points.to.y<points.viewport.height,`Drag target must be inside the actual viewport: ${JSON.stringify(points)}`);
   const send=(type,p)=>window.webContents.sendInputEvent({type,button:'left',clickCount:1,x:Math.round(p.x),y:Math.round(p.y)});
   send('mouseDown',points.from);send('mouseMove',{x:points.from.x+12,y:points.from.y+12});await twoFrames();
+  // The first image lane is intentionally absent until the drag starts.
+  points.to=await evaluate(`(()=>{const target=${targetId?`document.querySelector(${json(imageSelector(targetId))})`:`el('image-track')`},b=target.getBoundingClientRect(),track=el('image-track').getBoundingClientRect();return{x:track.left+${time}*S.zoom,y:b.top+b.height/2}})()`);
+  assert.ok(points.to.x>=0&&points.to.x<points.viewport.width&&points.to.y>=0&&points.to.y<points.viewport.height,`Drag target must be inside the actual viewport: ${JSON.stringify(points)}`);
   assert.ok(await evaluate(`!el('drag-ghost').classList.contains('hidden')`),'Dragging must show a static drag preview');
   send('mouseMove',points.to);await twoFrames();send('mouseUp',points.to);await twoFrames();await waitForVideo();
   (proof.drags??=[]).push({selector,time,targetId,points,result:await evaluate(`({images:S.imageLayers.map(x=>({id:x.id,start:x.start,end:x.end})),log:el('manual-log').textContent.slice(-900)})`)});
@@ -249,15 +251,15 @@ app.whenReady().then(async()=>{
     }catch(error){errors.push(error.stack);response.writeHead(500).end()}
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  window=new BrowserWindow({show:false,width:1366,height:768,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
+  window=new BrowserWindow({show:false,width:1366,height:740,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
   window.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');
   proof.initialViewport=await evaluate(`({width:innerWidth,height:innerHeight})`);
   // Windows may clamp constructor dimensions to the runner's display. Explicitly
   // set the content size after creation, as the other real Electron fixtures do.
-  window.setContentSize(1366,768);await twoFrames();
+  window.setContentSize(1366,740);await twoFrames();
   proof.settledViewport=await evaluate(`({width:innerWidth,height:innerHeight})`);
-  assert.deepEqual(proof.settledViewport,{width:1366,height:768},'Image interactions require the requested desktop viewport');
+  assert.deepEqual(proof.settledViewport,{width:1366,height:740},'Image interactions require the requested desktop viewport');
   await evaluate(`restoreProject({name:'Image editing fixture',mediaAssets:[{id:'MV',fileId:'source.mp4',name:'Source video',kind:'video',duration:12}],nextAssetId:1,activeTimelineId:'TL1',timelines:[{id:'TL1',name:'Image timeline',state:{manualId:'source.mp4',manualName:'Source video',duration:12,selected:0,preview:0,clips:[{start:0,end:12,fileId:'source.mp4',sourceDuration:12,timelineStart:0}],canvas:{width:1920,height:1080},zoom:40}}]})`);await waitForVideo();
   await evaluate(`(async()=>{const files=[];for(const name of ['red.png','blue.png','unused.png'])files.push(new File([await(await fetch('/video/'+name)).blob()],name,{type:'image/png'}));await importProjectFiles(files)})()`);await twoFrames();
   const assets=await evaluate('S.mediaAssets.map(x=>({id:x.id,fileId:x.fileId}))'),red=assets.find(x=>x.fileId==='red.png'),blue=assets.find(x=>x.fileId==='blue.png');

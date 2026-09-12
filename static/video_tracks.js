@@ -162,3 +162,109 @@
   window.addEventListener('resize',()=>{if(enabled())paint(true)});
   if(enabled())paint();
 })();
+
+/* Automatic video ripple is independent of the ten-pixel magnet alignment. */
+function rippleSelectionSnapshot() {
+  return {selected: S.clips[S.selected] || null, preview: S.clips[S.preview] || null};
+}
+
+function restoreRippleSelection(selection) {
+  for (const key of ['selected', 'preview']) {
+    const item = selection[key];
+    S[key] = item ? S.clips.findIndex(clip => item.clipId ? clip.clipId === item.clipId : clip === item) : -1;
+  }
+}
+
+function compactRippleOrder(clips) {
+  // Invalid restored data must not partially compact a channel.
+  const durations = clips.map(clipOutputDuration);
+  if (durations.some(value => !Number.isFinite(value) || value <= 0)) return false;
+  let cursor = 0, changed = false;
+  clips.forEach((clip, index) => {
+    if (clip.timelineStart !== cursor) {clip.timelineStart = cursor; changed = true;}
+    cursor += durations[index];
+  });
+  return changed;
+}
+
+function normalizeVideoRipple() {
+  if (S.timelineRipple !== true) return false;
+  const selection = rippleSelectionSnapshot(), channels = new Map();
+  for (const clip of S.clips) {
+    const id = clip.videoTrack || 1;
+    if (!channels.has(id)) channels.set(id, []);
+    channels.get(id).push(clip);
+  }
+  let changed = false;
+  for (const [id, clips] of channels) {
+    if (isVideoTrackLocked(id)) continue;
+    clips.sort((a, b) => clipTimelineStart(a) - clipTimelineStart(b));
+    changed = compactRippleOrder(clips) || changed;
+  }
+  const ordered = [...S.clips].sort((a, b) => clipTimelineStart(a) - clipTimelineStart(b));
+  if (ordered.some((clip, index) => clip !== S.clips[index])) {S.clips.splice(0, S.clips.length, ...ordered); changed = true;}
+  restoreRippleSelection(selection);
+  clampClipTransitions();
+  return changed;
+}
+
+function commitRippleMove(item, trackId, wantedStart) {
+  const targetId = Number(trackId), target = (S.videoTracks || []).find(track => track.id === targetId);
+  if (S.timelineRipple !== true || !S.clips.includes(item) || !target || target.locked
+      || isVideoTrackLocked(item) || !Number.isFinite(Number(wantedStart))) return false;
+  const selection = rippleSelectionSnapshot(), wanted = Math.max(0, Number(wantedStart));
+  const ordered = S.clips.filter(clip => clip !== item && (clip.videoTrack || 1) === targetId)
+    .sort((a, b) => clipTimelineStart(a) - clipTimelineStart(b));
+  if ([item, ...ordered].some(clip => !Number.isFinite(clipOutputDuration(clip)) || clipOutputDuration(clip) <= 0)) return false;
+  let cursor = 0, distance = Math.abs(wanted), insertion = 0;
+  ordered.forEach((clip, index) => {
+    cursor += clipOutputDuration(clip);
+    const nextDistance = Math.abs(cursor - wanted);
+    if (nextDistance < distance) {distance = nextDistance; insertion = index + 1;}
+  });
+  ordered.splice(insertion, 0, item);
+  item.videoTrack = targetId;
+  compactRippleOrder(ordered);
+  normalizeVideoRipple();
+  restoreRippleSelection(selection);
+  return item.timelineStart;
+}
+
+function drawRippleButton() {
+  const button = el('timeline-ripple');
+  if (!button) return;
+  const enabled = S.timelineRipple === true;
+  button.classList.toggle('active', enabled);
+  button.setAttribute('aria-pressed', String(enabled));
+  button.textContent = '↤↦ Boşlukları kapat: ' + (enabled ? 'açık' : 'kapalı');
+  button.title = (enabled ? 'Video kanallarındaki boşluklar otomatik kapanır.' : 'Video klipleri arasında boşluk bırakabilirsiniz.')
+    + ' Kilitli kanallar, metinler, görseller ve ses katmanları değişmez. Mıknatıs hizalamasından bağımsızdır.';
+}
+
+function toggleVideoRipple() {
+  if ((typeof desktopUpdateFrozen !== 'undefined' && desktopUpdateFrozen)
+      || (typeof desktopClosing !== 'undefined' && desktopClosing)) return false;
+  const cursor = currentOutputTime(), preview = S.clips[S.preview];
+  const offset = preview && cursor >= clipTimelineStart(preview) && cursor < clipTimelineEnd(preview)
+    ? cursor - clipTimelineStart(preview) : null;
+  pausePreview(); remember();
+  S.timelineRipple = S.timelineRipple !== true;
+  normalizeVideoRipple(); drawRippleButton(); drawClips();
+  const restoredTime = offset === null ? cursor : clipTimelineStart(preview) + offset;
+  seekOutputTime(Math.max(0, Math.min(outDuration(), restoredTime)));
+  scheduleAutosave();
+  log('manual-log', S.timelineRipple
+    ? 'Boşlukları kapat açıldı; kilitli olmayan video kanalları otomatik birleşir.'
+    : 'Boşlukları kapat kapatıldı; mevcut konumlar korunur, klipler serbestçe taşınabilir.', 'info');
+  return true;
+}
+
+(() => {
+  const magnet = el('timeline-magnet');
+  if (!magnet || el('timeline-ripple')) return;
+  const button = document.createElement('button');
+  button.id = 'timeline-ripple'; button.type = 'button'; button.className = 'timeline-magnet';
+  button.onclick = toggleVideoRipple;
+  magnet.after(button);
+  drawRippleButton();
+})();
