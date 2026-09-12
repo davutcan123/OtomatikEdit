@@ -24,6 +24,11 @@ test('ordered eraser strokes subtract the selection and later paint restores it 
     assert.deepEqual(values,invert?[0,1,0,1]:[1,0,1,0]);assert.deepEqual(operations,invert?['destination-out','source-over','destination-out']:['source-over','destination-out','source-over']);
   }
 });
+test('eraser clears translucent guide coverage completely rather than leaving a half-opacity brush mark',()=>{
+  const{c}=fixture(),calls=[],ctx={globalCompositeOperation:'source-over',save(){},restore(){}};c.drawBrushStroke=(context,stroke,width,height,color)=>calls.push({operation:context.globalCompositeOperation,color});
+  c.paintBrushSelection(ctx,{brushStrokes:[{points:[{x:.5,y:.5}]},{operation:'erase',points:[{x:.5,y:.5}]}]},640,360,'rgba(52,211,153,.52)');
+  assert.deepEqual(calls,[{operation:'source-over',color:'rgba(52,211,153,.52)'},{operation:'destination-out',color:'white'}]);
+});
 test('brush capacity refuses extra strokes or points before adding a silently truncated edit',()=>{
   const{c}=fixture();assert.equal(c.brushStrokeCapacity({brushStrokes:[]}),true);assert.equal(c.brushStrokeCapacity({brushStrokes:Array.from({length:39},()=>({points:[{}]}))}),true);assert.equal(c.brushStrokeCapacity({brushStrokes:Array.from({length:40},()=>({points:[{}]}))}),false);assert.equal(c.brushStrokeCapacity({brushStrokes:[{points:Array(180).fill({})}]}),false);
 });
