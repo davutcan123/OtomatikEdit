@@ -144,6 +144,12 @@ async function checkTrimAndPlayback(first){
   const item=(await imageSnapshot()).find(x=>x.id===first),after=(await previewSnapshot()).find(x=>x.id===first);
   assert.equal(item.start,2);assert.equal(item.end,6);assert.ok(item.transformKeyframes.some(x=>x.time===0));
   for(const key of ['left','top','width','opacity'])assert.ok(Math.abs(parseFloat(before[key])-parseFloat(after[key]))<.03,`Left trim must preserve absolute-time ${key}`);
+  // Windows' native compositor gave this never-shown fixture exactly one RAF
+  // per second despite backgroundThrottling:false. Exercise visible playback,
+  // as a user does, without focusing the disposable window or changing runtime.
+  window.showInactive();await twoFrames();
+  proof.playbackWindow={visible:window.isVisible(),minimized:window.isMinimized(),viewport:await evaluate('({width:innerWidth,height:innerHeight,visibility:document.visibilityState})')};
+  assert.ok(proof.playbackWindow.visible&&!proof.playbackWindow.minimized,'Playback cadence must be tested in a real visible window');
   proof.trim={item,before,after};proof.playback=[];
   // A slow play() startup used to consume the whole 850ms observation budget.
   // Reproduce that exact old failure, then exercise the real sampler with and
