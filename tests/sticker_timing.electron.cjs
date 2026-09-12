@@ -22,6 +22,42 @@ async function seek(time) { await evaluate(`seekOutputTime(${time})`);await wait
 const geometry = () => evaluate(`S.stickers.map(item=>{const node=document.querySelector('#sticker-track [data-sticker-id="'+item.id+'"]'),rect=node.getBoundingClientRect(),style=getComputedStyle(node);return{id:item.id,start:item.start,end:item.end,zoom:S.zoom,scale:item.scale,left:parseFloat(node.style.left),inlineWidth:parseFloat(node.style.width),width:rect.width,expectedWidth:(item.end-item.start)*S.zoom,visualEnd:item.start+rect.width/S.zoom,padding:style.padding,border:style.borderWidth}})`);
 const trimStar = delta => evaluate(`(()=>{const node=document.querySelector('#sticker-track [data-sticker-id="S1"]'),handle=node.querySelector('.trim-handle.right'),box=handle.getBoundingClientRect(),x=box.left+box.width/2,y=box.top+box.height/2;handle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:x,clientY:y}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:x+(${delta}),clientY:y}));window.dispatchEvent(new PointerEvent('pointerup'))})()`);
 
+async function checkEditorStatus() {
+  const checks=[];
+  await evaluate(`S.selectedSticker=null;S.selectedText=null;S.selectedLayer=null;S.selected=0;S.zoom=40;drawClips();el('timeline').scrollTop=Math.max(0,el('track').offsetTop-50)`);await twoFrames();
+  for (const [width,height] of [[1366,768],[1100,700]]) {
+    window.setContentSize(width,height);await twoFrames();await seek(2.5);
+    await evaluate(`updateRenderProgress('manual-progress-top',43,'Video işleniyor');log('manual-log','Render denetimi: <img src=x onerror="window.unsafeLog=true">','info')`);
+    const layout=await evaluate(`(()=>{const bounds=id=>{const node=el(id),r=node.getBoundingClientRect();return{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height,reachable:node.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))}};return{width:innerWidth,height:innerHeight,scrollHeight:document.documentElement.scrollHeight,scrollWidth:document.documentElement.scrollWidth,preview:bounds('preview-shell'),stage:bounds('preview-stage'),timeline:bounds('timeline'),snapshot:bounds('snapshot-open'),render:bounds('manual-render-top'),dock:bounds('manual-status-dock'),terminal:bounds('manual-log-open'),progress:bounds('manual-progress-top'),barHeight:el('manual-progress-top').querySelector('.render-progress-track').getBoundingClientRect().height,percentageFont:parseFloat(getComputedStyle(el('manual-progress-top').querySelector('p')).fontSize),progressValue:el('manual-progress-top').getAttribute('aria-valuenow'),exportClosed:el('export-modal').classList.contains('hidden')}})()`);
+    assert.ok(layout.scrollHeight<=height+1&&layout.scrollWidth<=width+1,'Editor and status must fit the window');
+    assert.ok(layout.preview.height>=220&&layout.timeline.height>=200,'Preview and timeline must remain usable during render');
+    assert.ok(Math.abs(layout.stage.width/layout.stage.height-16/9)<.01,'Video aspect ratio must remain intact');
+    assert.ok(layout.snapshot.reachable&&layout.render.reachable&&layout.terminal.reachable,'Top actions and terminal must be directly clickable');
+    assert.ok(layout.snapshot.right<=layout.render.left&&Math.abs(layout.snapshot.top-layout.render.top)<2,'Snapshot must sit beside render, not in its dialog');
+    assert.ok(layout.snapshot.bottom<layout.preview.top&&layout.render.bottom<layout.preview.top,'Actions must not cover the video');
+    assert.ok(layout.barHeight>=16&&layout.percentageFont>=14&&layout.progressValue==='43','Render progress must be readable and accessible');
+    assert.ok(layout.dock.bottom<=height&&layout.timeline.bottom<=layout.dock.top,'Status must not obscure the timeline');
+    assert.ok(layout.exportClosed);
+    await fs.promises.writeFile(path.join(artifacts,`editor-progress-${width}x${height}.png`),(await window.webContents.capturePage()).toPNG());
+    await clickButton('snapshot-open');
+    const snapshot=await evaluate(`({open:el('snapshot-modal').open,exportClosed:el('export-modal').classList.contains('hidden'),time:S.snapshotTime,paused:mv.paused})`);
+    assert.ok(snapshot.open&&snapshot.exportClosed&&snapshot.paused);assert.ok(Math.abs(snapshot.time-2.5)<.03);
+    await clickButton('snapshot-cancel');await clickButton('manual-log-open');
+    assert.ok(await evaluate(`el('logs-modal').open&&!el('logs-content').querySelector('img')&&!window.unsafeLog`));
+    await evaluate(`el('logs-search').value='Render denetimi';el('logs-search').dispatchEvent(new Event('input'));el('logs-content').dispatchEvent(new KeyboardEvent('keydown',{key:'b',bubbles:true}))`);
+    assert.equal(await evaluate('S.clips.length'),1,'Typing in the log window must not edit the timeline');
+    assert.ok(await evaluate(`el('logs-content').textContent.includes('<img src=x')`),'Log text must remain escaped and searchable');
+    await fs.promises.writeFile(path.join(artifacts,`editor-logs-${width}x${height}.png`),(await window.webContents.capturePage()).toPNG());
+    await clickButton('logs-close');checks.push(layout);
+  }
+  const snapshotRequest=await evaluate(`(async()=>{const originalFetch=window.fetch,originalEvents=events,originalSave=saveCompletedOutput;let submitted,saved;try{window.fetch=async(url,options)=>{if(url!=='/start-snapshot')return originalFetch(url,options);submitted=Object.fromEntries(options.body.entries());return{ok:true,json:async()=>({job_id:'snapshot-fixture'})}};events=async(id,handle)=>{handle({type:'progress',percent:70});return{download_url:'/download/frame.png'}};saveCompletedOutput=async url=>{saved=url;return{saved:true}};openSnapshotModal();el('snapshot-quality').value='2560';await startSnapshot();return{submitted,saved,status:el('snapshot-status').textContent,enabled:!el('snapshot-open').disabled&&!el('snapshot-save').disabled}}finally{window.fetch=originalFetch;events=originalEvents;saveCompletedOutput=originalSave}})()`);
+  assert.equal(snapshotRequest.submitted.width,'2560');assert.equal(snapshotRequest.submitted.height,'1440');
+  assert.equal(snapshotRequest.submitted.canvas_width,'1920');assert.equal(snapshotRequest.submitted.canvas_height,'1080');
+  assert.ok(Math.abs(+snapshotRequest.submitted.timeline_time-2.5)<.03);assert.equal(snapshotRequest.saved,'/download/frame.png');assert.ok(snapshotRequest.enabled);
+  await evaluate(`el('manual-progress-top').classList.add('hidden');el('snapshot-status').textContent=''`);
+  return{checks,snapshotRequest};
+}
+
 async function clickButton(id) {
   const point = await evaluate(`(()=>{const node=el(${JSON.stringify(id)});node.scrollIntoView({block:'nearest',inline:'nearest'});const rect=node.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;return{x,y,enabled:!node.disabled,reachable:node.contains(document.elementFromPoint(x,y))}})()`);
   assert.ok(point.enabled && point.reachable, `${id} must be enabled and reachable`);
@@ -122,8 +158,9 @@ app.whenReady().then(async () => {
   await evaluate('S.zoom=.02;drawClips();el("timeline").scrollTop=0');await twoFrames();
   const deepZoom = await geometry();
   await fs.promises.writeFile(path.join(artifacts, 'sticker-low-zoom.png'), (await window.webContents.capturePage()).toPNG());
+  const editorStatus = process.argv.includes('--baseline') ? null : await checkEditorStatus();
   const exportModal = process.argv.includes('--baseline') ? null : await checkExportModal();
-  const report = { baseline: process.argv.includes('--baseline'), initial, visibility, scaled, afterResize, afterTrim, extended, shortened, lowZoom, deepZoom, exportModal, pageErrors, artifacts };
+  const report = { baseline: process.argv.includes('--baseline'), initial, visibility, scaled, afterResize, afterTrim, extended, shortened, lowZoom, deepZoom, editorStatus, exportModal, pageErrors, artifacts };
   console.log(JSON.stringify(report));
   assert.deepEqual(pageErrors, [], 'The production editor must not raise script or resource errors');
   if (!process.argv.includes('--diagnose')) {

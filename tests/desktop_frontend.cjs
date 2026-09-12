@@ -37,6 +37,8 @@ test('editor script parses and styles do not depend on a CDN', () => {
 
 test('saved media, including inactive timelines and masks, is independent of the server port', () => {
   const context = vm.createContext({
+    copy: clips => structuredClone(clips), copyTransitions: transitions => structuredClone(transitions),
+    resolveClipTransitions: (_, transitions) => transitions || [],
     S: { mediaAssets: [{ id: 'mask', fileId: 'maske resim.png' }] },
     state: {
       manualId: 'source.mov',

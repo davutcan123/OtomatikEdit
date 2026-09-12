@@ -25,6 +25,7 @@ test('render and snapshot use a single form containing visible layers and clip t
     trackState: { subtitle: { visible: false }, text: { visible: true }, sticker: { visible: true }, image: { visible: true }, audio: { muted: false }, video: { visible: true, muted: true } },
   }, el: id => ({ value: id === 'export-fps' ? '30' : id === 'export-hardware' ? 'auto' : 'standard' }),
   exportableClips: () => [{ start: 0, end: 4, scale: 130, zoomKeyframes: [{ time: 1 }] }],
+  exportableTransitions: () => [{ boundary: 0, type: 'fade', duration: .6 }],
   exportableImageLayers: () => [{ fileId: 'image', rotation: 20 }], buildMaskImageLayers: () => [{ fileId: 'mask' }] });
   vm.runInContext(between('    function buildRenderForm', '    async function saveCompletedOutput') + between('    function manualExportData', '    async function startManualRender'), c);
   const form = c.buildRenderForm(c.manualExportData());
@@ -32,6 +33,7 @@ test('render and snapshot use a single form containing visible layers and clip t
   assert.equal(JSON.parse(form.get('images')).length, 2);
   assert.equal(JSON.parse(form.get('segments'))[0].scale, 130);
   assert.equal(JSON.parse(form.get('stickers'))[0].preset, 'star');
+  assert.deepEqual(JSON.parse(form.get('transitions')), [{ boundary: 0, type: 'fade', duration: .6 }]);
   assert.equal(form.get('mute_video_audio'), 'true');
   assert.equal(form.get('hardware'), 'auto');
 });
@@ -59,6 +61,7 @@ function splitContext() {
   mv: { paused: false }, currentOutputTime: () => 13, isTrackLocked: () => false,
   clipTimelineStart: clip => clip.timelineStart, clipTimelineEnd: clip => clip.timelineStart + (clip.end - clip.start) / clip.speed,
   normalizedZoomKeyframes: clip => clip.zoomKeyframes || [], zoomStateAtRelativeTime: () => ({ scale: 120, x: 50, y: 50, opacity: 75 }),
+  newClipId: () => 'new-cut-piece', clampClipTransitions() {},
   remember() {}, resetLiveTransition() {}, drawClips() {}, setPreviewSource() {}, log() {}, ft: String,
   });
   vm.runInContext(between('    function splitVideoTarget', '    function splitSelected'), c);

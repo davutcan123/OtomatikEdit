@@ -51,7 +51,7 @@ app.whenReady().then(async () => {
     const presets = document.getElementById('text-presets');
     for (let i=0;i<50;i++) presets.append(presets.firstElementChild.cloneNode(true));
   })()`);
-  for (const [width, height] of [[1366,768], [1920,1080], [1366,700], [1366,650], [1440,900]]) {
+  for (const [width, height] of [[1366,768], [1920,1080], [1366,740], [1100,700], [1440,900]]) {
     window.setContentSize(width, height);
     await window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     const view = await inspect();

@@ -1703,6 +1703,45 @@ async def run_analysis_job(job_id: str):
     finally:
         await q.put(None)
 
+def manual_color_adjustment_filter(clip):
+    """Match setVideoEffect's ordered sRGB brightness/contrast/saturation.
+
+    FFmpeg eq brightness is an additive YUV offset, not the multiplicative
+    CSS brightness used by the editor.  Applying +.5 for the UI's 150% value
+    washed ordinary midtones to white.  A component LUT implements the RGB
+    operations without an expensive per-pixel expression on every frame.
+    """
+    brightness = max(.05, (
+        clip.get("brightness", 100) + clip.get("exposure", 0) * .55
+        + clip.get("lightness", 0) * .35 + clip.get("relight", 0) * .35
+    ) / 100)
+    contrast = max(.05, (
+        clip.get("contrast", 100) - clip.get("fade", 0) * .35
+        + clip.get("highlights", 0) * .18 - clip.get("shadows", 0) * .12
+    ) / 100)
+    saturation = max(0, clip.get("saturation", 100) / 100)
+    if all(abs(value - 1) < .00001 for value in (brightness, contrast, saturation)):
+        return ""
+    filters = ["format=gbrp"]
+    if abs(brightness - 1) >= .00001 or abs(contrast - 1) >= .00001:
+        expression = (
+            f"clip(clip(val*{brightness:.8f},0,maxval)*{contrast:.8f}"
+            f"+maxval*.5*(1-{contrast:.8f}),0,maxval)"
+        )
+        filters.append("lutrgb=" + ":".join(f"{channel}='{expression}'" for channel in "rgb"))
+    if abs(saturation - 1) >= .00001:
+        weights = (.213, .715, .072)
+        coefficients = []
+        for output_index, output_channel in enumerate("rgb"):
+            for input_index, input_channel in enumerate("rgb"):
+                value = weights[input_index] * (1 - saturation)
+                if output_index == input_index:
+                    value += saturation
+                coefficients.append(f"{output_channel}{input_channel}={value:.8f}")
+        filters.append("colorchannelmixer=" + ":".join(coefficients))
+    return ",".join(filters)
+
+
 def snapshot_time_expression(expression, elapsed, fps):
     return re.sub(
         r"\b(t|it|T|on)\b",
@@ -1919,28 +1958,9 @@ async def run_render_job(job_id: str):
             curve_filter = CURVE_FILTERS.get(seg.get("curvePreset", "none"), "")
             if curve_filter:
                 video_filters += f",{curve_filter}"
-            brightness = (
-                seg.get("brightness", 100) - 100
-                + seg.get("exposure", 0) * .55
-                + seg.get("lightness", 0) * .35
-                + seg.get("relight", 0) * .35
-                + seg.get("fade", 0) * .15
-            ) / 100
-            brightness = max(-1.0, min(1.0, brightness))
-            contrast = (
-                seg.get("contrast", 100) - seg.get("fade", 0) * .35
-                + seg.get("highlights", 0) * .18 - seg.get("shadows", 0) * .12
-            ) / 100
-            contrast = max(.05, min(3.0, contrast))
-            saturation = seg.get("saturation", 100) / 100
-            gamma = max(.25, min(4.0, 1 + seg.get("shadows", 0) * .003 - seg.get("highlights", 0) * .002))
-            if (
-                abs(brightness) > .00001
-                or abs(contrast - 1) > .00001
-                or abs(saturation - 1) > .00001
-                or abs(gamma - 1) > .00001
-            ):
-                video_filters += f",eq=brightness={brightness:.5f}:contrast={contrast:.5f}:saturation={saturation:.5f}:gamma={gamma:.5f}"
+            adjustment_filter = manual_color_adjustment_filter(seg)
+            if adjustment_filter:
+                video_filters += f",{adjustment_filter}"
             temperature = seg.get("temperature", 0) / 1000
             tint = seg.get("tint", 0) / 1000
             if abs(temperature) > 0.0001 or abs(tint) > 0.0001:

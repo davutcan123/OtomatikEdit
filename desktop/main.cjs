@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, autoUpdater: nativeUpdater } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, clipboard, autoUpdater: nativeUpdater } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -11,6 +11,7 @@ const { isLocalURL, validateRecovery } = require('./security.cjs');
 const { outputFile, requireOutput, copyOutput, prepareLibrary } = require('./storage.cjs');
 const { UpdateController } = require('./updater.cjs');
 const { UpdateHandoff } = require('./update-handoff.cjs');
+const { LogWindow } = require('./log-window.cjs');
 
 const RELEASE_URL = 'https://github.com/davutcan123/OtomatikEdit/releases/latest';
 const root = path.resolve(__dirname, '..');
@@ -28,7 +29,8 @@ if (fs.existsSync(logPath) && fs.statSync(logPath).size > 5 * 1024 * 1024) {
   fs.renameSync(logPath, logPath + '.previous');
 }
 const log = fs.createWriteStream(logPath, { flags: 'a' });
-const note = value => log.write(`[${new Date().toISOString()}] ${value}\n`);
+let logWindow;
+const note = value => { log.write(`[${new Date().toISOString()}] ${value}\n`); logWindow?.append({ source: 'app', message: String(value) }); };
 const token = crypto.randomBytes(32).toString('hex');
 let backend, mainWindow, origin = '', exiting = false, allowClose = false, closePending = false;
 let backendFailed = false, recoveryQueue = Promise.resolve();
@@ -41,6 +43,7 @@ function trusted(event) {
   return mainWindow && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame && isLocalURL(event.senderFrame.url, origin);
 }
 function requireTrusted(event) { if (!trusted(event)) throw new Error('Yetkisiz uygulama isteği.'); }
+logWindow = new LogWindow({ BrowserWindow, ipcMain, clipboard, parent: () => mainWindow, trustedEditor: trusted });
 function cancelPendingClose() {
   if (!closePending) return;
   const attempt = closeAttempt;
@@ -169,13 +172,14 @@ async function startBackend() {
     cwd: app.isPackaged ? dataDir : root, env, windowsHide: true,
     detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
   });
-  backend.stdout.on('data', data => log.write(data));
-  backend.stderr.on('data', data => log.write(data));
+  backend.stdout.on('data', data => { log.write(data); logWindow.appendChunk(data, 'stdout'); });
+  backend.stderr.on('data', data => { log.write(data); logWindow.appendChunk(data, 'stderr'); });
   const child = backend;
   backend.on('error', error => { if (backend === child) backendFailed = true; note(error.stack); });
   backend.on('exit', (code, signal) => {
     if (backend !== child) return;
     backendFailed = true;
+    logWindow.flushChunks();
     note(`Backend exit: ${code} ${signal || ''}`);
     if (!exiting && !backendStopping && mainWindow && isLocalURL(mainWindow.webContents.getURL(), origin)) {
       dialog.showMessageBox(mainWindow, { type: 'error', title: 'Düzenleme motoru kapandı', message: 'Çalışmanızın son kurtarma kaydı korunuyor.', detail: `Uygulamayı yeniden açın. Tanılama kaydı: ${logPath}` });
@@ -344,6 +348,7 @@ function installMenu() {
     { label: 'Görünüm', submenu: [{ role: 'resetZoom', label: 'Normal boyut' }, { role: 'zoomIn', label: 'Arayüzü büyüt' }, { role: 'zoomOut', label: 'Arayüzü küçült' }, { role: 'togglefullscreen', label: 'Tam ekran' }] },
     { label: 'Yardım', submenu: [
       { label: 'Güncellemeleri kontrol et', click: () => updates?.check(true) },
+      { label: 'Terminal ayrıntıları', click: () => logWindow.open().catch(error => note(error.message)) },
       { label: 'Tanılama kayıtlarını aç', click: () => shell.openPath(logDir) },
       { label: 'Hakkında', click: () => dialog.showMessageBox(mainWindow, { message: `Otomatik Edit ${app.getVersion()}`, detail: 'Video editörü · Yerel masaüstü sürümü\nKonuşma/çeviri modelleri ilk kullanımda internetten indirilir.' }) },
     ] },
@@ -357,6 +362,7 @@ async function launch() {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false, backgroundThrottling: false },
   });
   mainWindow.on('close', requestClose);
+  mainWindow.on('closed', () => logWindow.close());
   initializeUpdates();
   mainWindow.webContents.on('console-message', details => {
     if (details.level === 'error' || details.level === 'warning') { note(`Renderer ${details.level}: ${details.message}`); if (smoke) console.error(details.message); }

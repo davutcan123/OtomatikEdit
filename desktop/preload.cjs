@@ -2,6 +2,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktopApp', {
   isDesktop: true,
+  appendLog: entry => ipcRenderer.send('desktop:append-log', entry),
+  openLogs: () => ipcRenderer.invoke('desktop:open-logs'),
   saveRecovery: snapshot => ipcRenderer.invoke('desktop:save-recovery', snapshot),
   loadRecovery: () => ipcRenderer.invoke('desktop:load-recovery'),
   openRelease: () => ipcRenderer.invoke('desktop:open-release'),

@@ -8,8 +8,11 @@ Windows için `.exe` kurulum dosyası, Apple Silicon Mac için `.dmg` paketi haz
 
 - Projeler ve yüklenen medya otomatik oluşturulan **Belgeler / Otomatik Edit** klasöründe saklanır. Kayıtlı projeler uygulamadan açılıp silinebilir; silinen kayıtlar çöp klasörüne taşınır, medya korunur. Otomatik kurtarma dosyası uygulama yeniden açıldığında geri yüklenir.
 - **Dosya → Eski projeleri içe aktar…** ile eski `SmartVideoEditor` klasöründeki kayıtlı projeler ve bağlı medya kopyalanabilir. Eski dosyalar silinmez; mevcut kayıtların üzerine yazılmaz.
-- Render bitince **Farklı kaydet** penceresi otomatik açılır. **Ekran görüntüsü al** ile mevcut kare, tüm düzenlemeler dahil, HD–4K PNG olarak kaydedilebilir. Devam eden render/analiz sırasında kapatma için uyarı gösterilir.
+- Render bitince **Farklı kaydet** penceresi otomatik açılır. Render düğmesinin yanındaki **Ekran görüntüsü al** ile mevcut kare, düzenlemeler dahil, HD–4K PNG olarak kaydedilebilir. Devam eden render/analiz sırasında kapatma için uyarı gösterilir.
 - Kompakt masaüstü yerleşiminde oynatıcı ve timeline aynı anda görünür; seçili klip ayarları ve düzenleme araçları kendi içinde kayar.
+- Kısayollar küçük bir açılır menüde tutulur; oynatıcı görüntüsünün üstüne binmez. Render ilerlemesi geniş bir durum çubuğunda gösterilir. **Terminal ayrıntıları** ayrı bir pencerede açılır; bu oturumun son kayıtları aranıp filtrelenebilir ve kopyalanabilir.
+- Geçişler klip çiftine bağlı saklanır; klip ayarları değişince kaybolmaz. İki klip ayrılırsa geçiş korunarak beklemeye alınır, aynı uçlar yeniden birleşince etkinleşir. Proje kaydı, otomatik kurtarma ve yeniden açma bu bağlantıları korur.
+- Parlaklık, kontrast ve doygunluk ayarlarının PNG/render hesabı önizlemedeki sırayla uygulanır; parlaklık artırıldığında oluşan aşırı beyazlama giderilmiştir.
 - Arayüz ve yerel düzenleme internet olmadan çalışır. Konuşma tanıma ve çeviri model dosyaları ilk kullanımda internetten indirilir; sonraki kullanımlarda önbellekten çalışır. Bu dönüşüm pasif gösterilen harici yapay zekâ özelliklerini kendiliğinden etkinleştirmez.
 - Masaüstü güncellemeleri kaynak ZIP yerine yeni kurulum dosyasıyla yapılır. Proje kayıtları korunur.
 

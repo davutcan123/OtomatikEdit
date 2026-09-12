@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
-const { app, ipcMain } = require('electron');
+const { app, ipcMain, BrowserWindow } = require('electron');
 const { waitForMedia } = require('./media-ready.cjs');
 
 exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
@@ -83,6 +83,21 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   assert.equal((await fs.stat(nativeSaveResult.path)).size, (await fs.stat(renderPath)).size);
   await mainWindow.webContents.executeJavaScript(`saveCompletedOutput(${JSON.stringify(result.download_url)},'manual-download','manual-log')`);
   assert.equal(await mainWindow.webContents.executeJavaScript('document.getElementById("manual-download-top").classList.contains("hidden")'), true);
+  // The actual packaged log HTML/preload must open independently, without
+  // editor mutation privileges or interpreting untrusted diagnostic text.
+  await mainWindow.webContents.executeJavaScript(`desktopApp.appendLog({source:'manual',message:'Packaged log <img src=x onerror=alert(1)>',level:'info'});desktopApp.openLogs()`);
+  const terminal = BrowserWindow.getAllWindows().find(window => window !== mainWindow && window.webContents.getURL().endsWith('/log-viewer.html'));
+  assert.ok(terminal, 'Native terminal window did not open');
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if (await terminal.webContents.executeJavaScript(`document.getElementById('records').textContent.includes('Packaged log <img')`)) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  const terminalProof = await terminal.webContents.executeJavaScript(`({text:document.getElementById('records').textContent,node:typeof require,editor:typeof desktopApp,images:document.querySelectorAll('img').length})`);
+  assert.match(terminalProof.text, /Packaged log <img src=x onerror=alert\(1\)>/);
+  assert.equal(terminalProof.node, 'undefined'); assert.equal(terminalProof.editor, 'undefined'); assert.equal(terminalProof.images, 0);
+  const terminalScreenshot = path.join(dataDir, 'terminal-window.png');
+  await fs.writeFile(terminalScreenshot, (await terminal.webContents.capturePage()).toPNG());
+  terminal.close();
   // Verify recovery works without relying on the temporary browser origin's storage.
   await mainWindow.webContents.executeJavaScript('localStorage.clear()');
   const loaded = new Promise(resolve => mainWindow.webContents.once('did-finish-load', resolve));
@@ -121,6 +136,29 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   const split = await mainWindow.webContents.executeJavaScript('S.clips.map(c=>({start:c.start,end:c.end}))');
   assert.equal(split.length, 2, JSON.stringify(split));
   assert.ok(split[0].end > .6 && split[0].end < 1.3, JSON.stringify(split));
+  // A transition must survive unrelated adjustments and a real disk recovery,
+  // even with all origin-local browser data removed (as during an upgrade).
+  const transitionBefore = await mainWindow.webContents.executeJavaScript(`(async()=>{
+    applyTransition('fade',0);S.clips[0].brightness=125;clampClipTransitions();drawClips();
+    await persistProjectRecovery();
+    return {pair:{...S.transitions[0]},exported:exportableTransitions(),project:projectPayload()};
+  })()`);
+  assert.equal(transitionBefore.exported.length, 1);
+  assert.equal(transitionBefore.pair.type, 'fade');
+  assert.ok(transitionBefore.pair.leftClipId && transitionBefore.pair.rightClipId);
+  const projectWithTransition = { ...transitionBefore.project, id: saved.id };
+  assert.equal((await request('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(projectWithTransition) })).status, 200);
+  const persistedProject = await (await request('/projects/' + saved.id)).json();
+  assert.deepEqual(persistedProject.timelines[0].state.transitions, transitionBefore.project.timelines[0].state.transitions);
+  await mainWindow.webContents.executeJavaScript('localStorage.clear()');
+  const transitionLoaded = new Promise(resolve => mainWindow.webContents.once('did-finish-load', resolve));
+  mainWindow.webContents.reload();await transitionLoaded;
+  await mainWindow.webContents.executeJavaScript('projectWorkspaceInitialization');await waitForVideo();
+  const transitionAfter = await mainWindow.webContents.executeJavaScript('({pair:S.transitions[0],exported:exportableTransitions(),clips:S.clips.length,brightness:S.clips[0].brightness})');
+  assert.equal(transitionAfter.clips, 2);assert.equal(transitionAfter.brightness, 125);
+  assert.equal(transitionAfter.pair.leftClipId, transitionBefore.pair.leftClipId);
+  assert.equal(transitionAfter.pair.rightClipId, transitionBefore.pair.rightClipId);
+  assert.deepEqual(transitionAfter.exported, transitionBefore.exported);
   const beforeSnapshots = new Set(await fs.readdir(path.join(dataDir, 'outputs')));
   await mainWindow.webContents.executeJavaScript(`seekOutputTime(.6);openSnapshotModal();document.getElementById('snapshot-quality').value='1280';updateSnapshotSize();startSnapshot()`);
   const captures = (await fs.readdir(path.join(dataDir, 'outputs'))).filter(name => name.endsWith('.png') && !beforeSnapshots.has(name));
@@ -163,5 +201,5 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   mainWindow.webContents.send('desktop:update-state', updaterState);
   assert.equal((await request('/api/apply-update', { method: 'POST' })).status, 409);
   assert.deepEqual(errors, []);
-  return { ok: true, packaged: app.isPackaged, health, ui, storage, played, recoveredVideo, layouts, split, snapshot: captures[0], savedProject: saved.id, screenshot, renderPath, nativeSaved, nativeSaveResult, updaterState, updatePopup, updateScreenshot, frozenUpdate, updateCancelled, errors };
+  return { ok: true, packaged: app.isPackaged, health, ui, storage, played, recoveredVideo, layouts, split, transitionRecovery: transitionAfter, snapshot: captures[0], savedProject: saved.id, screenshot, terminal: { isolated: terminalProof.editor === 'undefined' && terminalProof.node === 'undefined', screenshot: terminalScreenshot }, renderPath, nativeSaved, nativeSaveResult, updaterState, updatePopup, updateScreenshot, frozenUpdate, updateCancelled, errors };
 };

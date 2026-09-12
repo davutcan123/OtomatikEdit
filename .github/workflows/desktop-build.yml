@@ -69,7 +69,11 @@ jobs:
         run: >-
           python -m unittest test_runtime_paths test_desktop_backend test_desktop_update
           test_snapshot test_sticker_timing test_render_encoder test_render_resources
-          test_render_overlays test_render_execution test_render_graph_optimizations
+          test_render_overlays test_render_execution test_render_graph_optimizations test_render_color
+      - name: Verify preview color math and workspace geometry in Electron
+        run: |
+          npx --no-install electron tests/color_preview.electron.cjs
+          npx --no-install electron tests/workspace_layout.electron.cjs
       - name: Verify sticker timeline geometry and preview timing in Electron
         run: npx --no-install electron tests/sticker_timing.electron.cjs
       - name: Build and validate desktop installer
