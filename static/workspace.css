@@ -1,4 +1,9 @@
 /* A bounded desktop workspace. Short and narrow windows retain page scrolling. */
+@media (max-width: 1099px), (max-height: 649px) {
+  /* Native focus and scrollIntoView must not place inspector controls behind
+     the 64px sticky application header in the natural-page layout. */
+  html:has(#manual.active) { scroll-padding-top: 72px; }
+}
 @media (min-width: 1100px) and (min-height: 650px) {
   body:has(#manual.active) {
     height: 100vh;

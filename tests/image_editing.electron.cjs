@@ -23,15 +23,18 @@ const waitForVideo=()=>evaluate(`new Promise((resolve,reject)=>{const video=el('
 async function seek(time){await evaluate(`seekOutputTime(${time})`);await waitForVideo();await twoFrames()}
 async function screenshot(name){await fs.promises.writeFile(path.join(artifacts,name+'.png'),(await window.webContents.capturePage()).toPNG())}
 async function click(selector){
-  const point=await evaluate(`(()=>{const node=document.querySelector(${json(selector)});if(!node)throw new Error('Missing control '+${json(selector)});node.scrollIntoView({block:'nearest',inline:'nearest'});const r=node.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;return{x,y,ready:!node.disabled&&node.contains(document.elementFromPoint(x,y))}})()`);
-  assert.ok(point.ready,`Control must be reachable: ${selector}`);
+  await evaluate(`(()=>{const node=document.querySelector(${json(selector)});if(!node)throw new Error('Missing control '+${json(selector)});node.scrollIntoView({block:'nearest',inline:'nearest'})})()`);await twoFrames();
+  const point=await evaluate(`(()=>{const node=document.querySelector(${json(selector)}),r=node.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return{x,y,ready:!node.disabled&&node.contains(hit),disabled:node.disabled,width:r.width,height:r.height,viewport:{width:innerWidth,height:innerHeight},hit:hit?{id:hit.id,className:hit.className}:null}})()`);
+  if(!point.ready)proof.unreachableControl={selector,...point};
+  assert.ok(point.ready,`Control must be reachable: ${selector} ${JSON.stringify(point)}`);
   for(const type of ['mouseDown','mouseUp'])window.webContents.sendInputEvent({type,button:'left',clickCount:1,x:Math.round(point.x),y:Math.round(point.y)});
   await twoFrames();
 }
 async function dragToTrack(selector,time,targetId=null){
   await evaluate(`el('timeline').scrollTop=Math.max(0,el('image-track').offsetTop-60);el('timeline').scrollLeft=0;document.querySelector(${json(selector)}).scrollIntoView({block:'nearest',inline:'nearest'})`);await twoFrames();
-  const points=await evaluate(`(()=>{const source=document.querySelector(${json(selector)}),a=source.getBoundingClientRect(),target=${targetId?`document.querySelector(${json(imageSelector(targetId))})`:`el('image-track')`},b=target.getBoundingClientRect(),track=el('image-track').getBoundingClientRect();return{from:{x:a.left+a.width/2,y:a.top+a.height/2},to:{x:track.left+${time}*S.zoom,y:b.top+b.height/2},ready:source.contains(document.elementFromPoint(a.left+a.width/2,a.top+a.height/2))}})()`);
+  const points=await evaluate(`(()=>{const source=document.querySelector(${json(selector)}),a=source.getBoundingClientRect(),target=${targetId?`document.querySelector(${json(imageSelector(targetId))})`:`el('image-track')`},b=target.getBoundingClientRect(),track=el('image-track').getBoundingClientRect();return{from:{x:a.left+a.width/2,y:a.top+a.height/2},to:{x:track.left+${time}*S.zoom,y:b.top+b.height/2},viewport:{width:innerWidth,height:innerHeight},ready:source.contains(document.elementFromPoint(a.left+a.width/2,a.top+a.height/2))}})()`);
   assert.ok(points.ready,`Drag source must be visible: ${selector}`);
+  assert.ok(points.to.x>=0&&points.to.x<points.viewport.width&&points.to.y>=0&&points.to.y<points.viewport.height,`Drag target must be inside the actual viewport: ${JSON.stringify(points)}`);
   const send=(type,p)=>window.webContents.sendInputEvent({type,button:'left',clickCount:1,x:Math.round(p.x),y:Math.round(p.y)});
   send('mouseDown',points.from);send('mouseMove',{x:points.from.x+12,y:points.from.y+12});await twoFrames();
   assert.ok(await evaluate(`!el('drag-ghost').classList.contains('hidden')`),'Dragging must show a static drag preview');
@@ -166,6 +169,18 @@ async function checkLibraryRemoval(){
   proof.removal={unusedRemoved:unusedRemoved.mediaAssets.map(x=>x.fileId),libraryOnlyRetainedUses:libraryOnly.timelines.map(x=>x.state.imageLayers.length),allRemoved:allRemoved.timelines.map(x=>x.state.imageLayers.map(y=>y.fileId)),restoredTimelines:restored.timelines.length};
 }
 
+async function checkShortViewportControls(first){
+  for(const [width,height] of [[1024,600],[1366,600],[900,620],[900,580],[1366,580]]){
+    window.setContentSize(width,height);await twoFrames();
+    await evaluate(`selectImageLayer(${json(first)},false);S.selectedImageKeyframe=null;drawClips()`);await seek(3);
+    const before=await imageSnapshot();await click('#image-kf-add');
+    assert.equal((await imageSnapshot()).find(item=>item.id===first).transformKeyframes.length,before.find(item=>item.id===first).transformKeyframes.length+1,'Short viewport must allow adding a real keyframe');
+    (proof.shortViewports??=[]).push(await evaluate(`({width:innerWidth,height:innerHeight,pageScroll:document.documentElement.scrollTop,frameCount:selectedImageLayer().transformKeyframes.length})`));
+    await screenshot(`image-short-${width}x${height}`);await evaluate('undoEdit()');await waitForVideo();await twoFrames();
+    assert.deepEqual(await imageSnapshot(),before,'Short viewport gesture undo must restore original keyframes');
+  }
+}
+
 app.whenReady().then(async()=>{
   const ffmpeg=process.env.SMART_EDITOR_FFMPEG||(process.platform==='win32'&&fs.existsSync(path.join(repository,'tools/ffmpeg/bin/ffmpeg.exe'))?path.join(repository,'tools/ffmpeg/bin/ffmpeg.exe'):'ffmpeg');
   const make=(name,args,type)=>{const file=path.join(artifacts,name);execFileSync(ffmpeg,['-v','error','-y',...args,file],{timeout:60000});const bytes=fs.readFileSync(file);media.set(name,{bytes,type,file,hash:digest(bytes)})};
@@ -190,6 +205,12 @@ app.whenReady().then(async()=>{
   window=new BrowserWindow({show:false,width:1366,height:768,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
   window.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');
+  proof.initialViewport=await evaluate(`({width:innerWidth,height:innerHeight})`);
+  // Windows may clamp constructor dimensions to the runner's display. Explicitly
+  // set the content size after creation, as the other real Electron fixtures do.
+  window.setContentSize(1366,768);await twoFrames();
+  proof.settledViewport=await evaluate(`({width:innerWidth,height:innerHeight})`);
+  assert.deepEqual(proof.settledViewport,{width:1366,height:768},'Image interactions require the requested desktop viewport');
   await evaluate(`restoreProject({name:'Image editing fixture',mediaAssets:[{id:'MV',fileId:'source.mp4',name:'Source video',kind:'video',duration:12}],nextAssetId:1,activeTimelineId:'TL1',timelines:[{id:'TL1',name:'Image timeline',state:{manualId:'source.mp4',manualName:'Source video',duration:12,selected:0,preview:0,clips:[{start:0,end:12,fileId:'source.mp4',sourceDuration:12,timelineStart:0}],canvas:{width:1920,height:1080},zoom:40}}]})`);await waitForVideo();
   await evaluate(`(async()=>{const files=[];for(const name of ['red.png','blue.png','unused.png'])files.push(new File([await(await fetch('/video/'+name)).blob()],name,{type:'image/png'}));await importProjectFiles(files)})()`);await twoFrames();
   const assets=await evaluate('S.mediaAssets.map(x=>({id:x.id,fileId:x.fileId}))'),red=assets.find(x=>x.fileId==='red.png'),blue=assets.find(x=>x.fileId==='blue.png');
@@ -210,8 +231,9 @@ app.whenReady().then(async()=>{
     (proof.geometry??=[]).push({width,height,...geometry});await screenshot(`image-keyframes-${width}x${height}`);
   }
   await checkLibraryRemoval();
+  await checkShortViewportControls(first);
   for(const item of media.values())assert.equal(digest(fs.readFileSync(item.file)),item.hash,'Editing must never modify imported originals');
   proof.originalFilesUnchanged=Object.fromEntries([...media].map(([name,item])=>[name,item.hash]));
   assert.deepEqual(requests.filter(x=>x.method==='DELETE'),[],'No fixture source file may be deleted');assert.deepEqual(errors,[]);
   console.log(JSON.stringify({ok:true,...proof,errors,artifacts}));
-}).catch(async error=>{console.error(error);console.error(JSON.stringify({proof,errors}));if(window)await screenshot('failure').catch(()=>{});console.error('Image fixture retained at '+artifacts);process.exitCode=1}).finally(()=>{window?.destroy();server?.closeAllConnections();server?.close();app.exit(process.exitCode||0)});
+}).catch(async error=>{console.error(error);if(window){proof.failureGeometry=await evaluate(`(()=>{const bounds=id=>{const node=el(id);if(!node)return null;const r=node.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,scrollTop:node.scrollTop,scrollHeight:node.scrollHeight}};return{viewport:{width:innerWidth,height:innerHeight},pageScroll:document.documentElement.scrollTop,panels:Object.fromEntries(['image-inspector','image-inspector-content','image-kf-add','preview-stage','timeline','image-track'].map(id=>[id,bounds(id)]))}})()`).catch(()=>null);await screenshot('failure').catch(()=>{})}console.error(JSON.stringify({proof,errors}));console.error('Image fixture retained at '+artifacts);process.exitCode=1}).finally(()=>{window?.destroy();server?.closeAllConnections();server?.close();app.exit(process.exitCode||0)});
