@@ -45,6 +45,32 @@ async function changeInput(id,value){await evaluate(`(()=>{const input=el(${json
 async function imageSnapshot(){return evaluate(`S.imageLayers.map(item=>JSON.parse(JSON.stringify(item)))`)}
 async function previewSnapshot(){return evaluate(`S.imageLayers.map(item=>{const node=document.querySelector('#media-overlay [data-layer-id="'+item.id+'"]');return{id:item.id,visible:!!node,left:node?.style.left,top:node?.style.top,width:node?.style.width,opacity:node?.querySelector('img')?.style.opacity,filter:node?.querySelector('img')?.style.filter,src:node?.querySelector('img')?.getAttribute('src')}})`)}
 
+async function sampleImagePlayback(first,{delayPlayMs=0,legacyWallBudget=false}={}){
+  await seek(2.1);
+  return evaluate(`new Promise(async resolve=>{
+    const video=el('manual-video'),selector=${json(overlaySelector(first))},node=document.querySelector(selector),item=S.imageLayers.find(value=>value.id===${json(first)}),samples=[],originalPlay=video.play,requestedAt=performance.now();
+    let timer,raf,finished=false,playResolvedAt=null,startMediaTime=null;
+    const block=event=>event.stopImmediatePropagation(),state=()=>({currentTime:video.currentTime,outputTime:currentOutputTime(),paused:video.paused,seeking:video.seeking,readyState:video.readyState,visibility:document.visibilityState,previewFrame:S.previewFrame}),done=reason=>{
+      if(finished)return;finished=true;cancelAnimationFrame(raf);clearTimeout(timer);const finalState=state();video.pause();video.play=originalPlay;video.removeEventListener('timeupdate',block,true);
+      resolve({reason,samples,state:finalState,playStartupMs:playResolvedAt===null?null:playResolvedAt-requestedAt,elapsedAfterPlayMs:playResolvedAt===null?null:performance.now()-playResolvedAt,startMediaTime});
+    };
+    video.addEventListener('timeupdate',block,true);
+    if(${delayPlayMs}>0)video.play=async function(){await new Promise(ready=>setTimeout(ready,${delayPlayMs}));return originalPlay.call(this)};
+    timer=setTimeout(()=>done('play-start-timeout'),10000);
+    try{
+      await video.play();if(finished){video.pause();return}playResolvedAt=performance.now();startMediaTime=currentOutputTime();clearTimeout(timer);timer=setTimeout(()=>done('sampling-timeout'),10000);
+      const tick=()=>{
+        const current=document.querySelector(selector),time=currentOutputTime(),expectedWidth=item.scale*imageTransformAtTime(item,time).scale/100;
+        samples.push({time,mediaTime:video.currentTime,width:current?.style.width,expectedWidth,sameNode:current===node,elapsed:performance.now()-playResolvedAt});
+        const distinct=new Set(samples.map(value=>value.width));
+        if(${legacyWallBudget}&&performance.now()-requestedAt>850)return done('legacy-wall-budget');
+        if(!${legacyWallBudget}&&distinct.size>=6&&time-startMediaTime>=.5)return done('observed-motion');
+        raf=requestAnimationFrame(tick);
+      };raf=requestAnimationFrame(tick);
+    }catch(error){done('play-error: '+error.message)}
+  })`);
+}
+
 async function checkImageKeyframes(first,second){
   await evaluate(`selectImageLayer(${json(first)},false)`);await seek(1);
   for(const [time,values] of [[1,{scale:100,x:35,y:40,opacity:100}],[5,{scale:200,x:65,y:60,opacity:30}]]){
@@ -118,11 +144,26 @@ async function checkTrimAndPlayback(first){
   const item=(await imageSnapshot()).find(x=>x.id===first),after=(await previewSnapshot()).find(x=>x.id===first);
   assert.equal(item.start,2);assert.equal(item.end,6);assert.ok(item.transformKeyframes.some(x=>x.time===0));
   for(const key of ['left','top','width','opacity'])assert.ok(Math.abs(parseFloat(before[key])-parseFloat(after[key]))<.03,`Left trim must preserve absolute-time ${key}`);
-  await seek(2.1);
-  const samples=await evaluate(`new Promise(async(resolve,reject)=>{const video=el('manual-video'),selector=${json(overlaySelector(first))},node=document.querySelector(selector),samples=[];let timer,raf;const block=event=>event.stopImmediatePropagation(),done=error=>{cancelAnimationFrame(raf);clearTimeout(timer);video.pause();video.removeEventListener('timeupdate',block,true);error?reject(error):resolve(samples)};video.addEventListener('timeupdate',block,true);const start=performance.now(),tick=()=>{const current=document.querySelector(selector);samples.push({time:currentOutputTime(),width:current?.style.width,sameNode:current===node});if(performance.now()-start>850)return done();raf=requestAnimationFrame(tick)};timer=setTimeout(()=>done(new Error('Image playback sampling timeout')),4000);try{await video.play();raf=requestAnimationFrame(tick)}catch(error){done(error)}})`);
-  assert.ok(samples.every(x=>x.sameNode),'The same image DOM node should be retained across frames');
-  assert.ok(new Set(samples.map(x=>x.width)).size>=6,'Image keyframes must update on animation frames even when timeupdate is suppressed');
-  proof.trim={item,before,after};proof.playback={frames:samples.length,distinctWidths:new Set(samples.map(x=>x.width)).size,first:samples[0],last:samples.at(-1)};
+  proof.trim={item,before,after};proof.playback=[];
+  // A slow play() startup used to consume the whole 850ms observation budget.
+  // Reproduce that exact old failure, then exercise the real sampler with and
+  // without the same injected startup delay. Production playback is not changed.
+  const legacy=await sampleImagePlayback(first,{delayPlayMs:1100,legacyWallBudget:true});
+  proof.legacyPlaybackBudget={...legacy,distinctWidths:new Set(legacy.samples.map(sample=>sample.width)).size};
+  assert.ok(legacy.playStartupMs>=1000&&legacy.samples.length===1,'Delayed playback must reproduce the previous one-sample timing flaw');
+  for(const delayPlayMs of [0,1100]){
+    const result=await sampleImagePlayback(first,{delayPlayMs}),samples=result.samples;
+    proof.playback.push({...result,delayPlayMs,frames:samples.length,distinctWidths:new Set(samples.map(sample=>sample.width)).size});
+    const diagnostic=JSON.stringify(proof.playback.at(-1));
+    assert.equal(result.reason,'observed-motion','Real playback must start and advance: '+diagnostic);
+    assert.ok(samples.every(sample=>sample.sameNode),'The same image DOM node should be retained across frames: '+diagnostic);
+    assert.ok(new Set(samples.map(sample=>sample.width)).size>=6,'Image keyframes must update on animation frames even when timeupdate is suppressed: '+diagnostic);
+    assert.ok(samples.at(-1).time-result.startMediaTime>=.5,'The real media clock must advance at least half a second: '+diagnostic);
+    samples.forEach((sample,index)=>{
+      const previous=samples[Math.max(0,index-1)].expectedWidth,low=Math.min(previous,sample.expectedWidth)-.6,high=Math.max(previous,sample.expectedWidth)+.6;
+      assert.ok(parseFloat(sample.width)>=low&&parseFloat(sample.width)<=high,'Preview width must match its interpolated keyframe (at most one animation-frame lag): '+JSON.stringify({sample,previous}));
+    });
+  }
 }
 
 async function checkPersistence(){
