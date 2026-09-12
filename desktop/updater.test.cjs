@@ -138,7 +138,7 @@ test('disposal while preparation is pending releases an acquired gate', async ()
 // itself are mocked: no installer, backend, real timers or app exit is started.
 function nativeQuitHarness(synchronousFailure = false) {
   const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
-  const source = fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8').replace(/\r\n/g, '\n');
   const callbacks = [], calls = [], nativeUpdater = new EventEmitter(), app = new EventEmitter();
   const exports = {};
   vm.runInNewContext(fs.readFileSync(require.resolve('electron-updater/out/BaseUpdater'), 'utf8'), {
