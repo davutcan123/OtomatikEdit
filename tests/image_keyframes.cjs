@@ -12,7 +12,7 @@ function fixture() {
   const nodes = new Map();let saves = 0;
   const c = vm.createContext({ S: { nextZoomKeyframeId: 1, imageLayers: [], selectedLayer: null, selectedImageKeyframe: null },
     currentOutputTime: () => 3, isTrackLocked: () => false, remember() {}, drawClips() {}, drawMediaOverlay() {}, drawImageInspector() {}, drawTimelineMediaLayers() {},
-    scheduleAutosave: () => saves++, seekOutputTime: value => { c.seeked = value; }, mv: { pause() {} }, log() {},
+    scheduleAutosave: () => saves++, seekOutputTime: value => { c.seeked = value; }, pausePreview(){},mv: { pause() {} }, log() {},
     layerSelected: (type, id) => c.S.selectedLayer?.type === type && c.S.selectedLayer.id === id,
     el: id => { if (!nodes.has(id)) nodes.set(id, { value: '' });return nodes.get(id); },
     CLIP_ANIMATIONS: { none: 'Yok', fadein: 'Fade In' }, VIDEO_EFFECTS: { none: { name: 'Yok' }, noir: { name: 'Noir' } }, CLIP_FILTERS: { none: { name: 'Yok' }, warm: { name: 'Warm' } },

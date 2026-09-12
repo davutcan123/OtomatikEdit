@@ -113,7 +113,7 @@ app.whenReady().then(async () => {
     const route = request.url.split('?')[0];
     if (route === '/favicon.ico') { response.writeHead(204).end();return; }
     if (route === '/') { response.setHeader('Content-Type', 'text/html');response.end(template);return; }
-    if (['/static/editor.css', '/static/workspace.css'].includes(route)) { response.setHeader('Content-Type', 'text/css');response.end(fs.readFileSync(path.join(root, route)));return; }
+    if (route.startsWith('/static/')) { const file=path.resolve(root,'.'+route);if(!file.startsWith(path.join(root,'static')+path.sep)||!fs.existsSync(file)){response.writeHead(404).end();return}response.setHeader('Content-Type',file.endsWith('.css')?'text/css':'text/javascript');response.end(fs.readFileSync(file));return; }
     if (route === '/projects' || route === '/api/check-update' || route === '/api/version') { response.setHeader('Content-Type', 'application/json');response.end(JSON.stringify(route === '/projects' ? { projects: [] } : route === '/api/version' ? { version: 'test' } : { update_available: false }));return; }
     if (route.startsWith('/waveform/')) { response.setHeader('Content-Type', 'image/png');response.end(tinyPng);return; }
     if (route === '/video/sticker-fixture.mp4') {
@@ -144,6 +144,9 @@ app.whenReady().then(async () => {
   window.setContentSize(1100, 700);await twoFrames();
   assert.deepEqual((await seek(3.2)).visible, ['S1', 'S2']);
   const afterResize = await geometry();
+  // These assertions measure exact free-trim lifetime; magnetic behavior is
+  // covered separately against real pointer input in timeline_snapping.electron.
+  await evaluate('S.timelineMagnet=false;drawMagnetButton()');
   await trimStar(21);
   const afterTrim = await geometry();assert.ok(Math.abs(afterTrim[0].end - 5.5) < .001);
   assert.deepEqual((await seek(5.4)).visible, ['S1', 'S2']);assert.deepEqual((await seek(5.6)).visible, ['S2']);

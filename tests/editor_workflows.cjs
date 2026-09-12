@@ -18,23 +18,26 @@ test('snapshot resolution keeps landscape, portrait and ultrawide aspect up to 4
 });
 
 test('render and snapshot use a single form containing visible layers and clip transforms', () => {
-  const c = vm.createContext({ FormData, S: {
+  const c = vm.createContext({ FormData, window:{}, S: {
     manualId: 'video', canvas: { width: 1920, height: 1080 },
+    clips: [{start:0,end:4,scale:130,zoomKeyframes:[{time:1}],videoTrack:1},{start:0,end:4,videoTrack:2}],
     texts: [{ text: 'Visible' }, { text: 'Hidden subtitle', kind: 'subtitle' }],
     stickers: [{ preset: 'star' }], audioLayers: [{ fileId: 'music' }], transitions: [{ boundary: 0 }],
     trackState: { subtitle: { visible: false }, text: { visible: true }, sticker: { visible: true }, image: { visible: true }, audio: { muted: false }, video: { visible: true, muted: true } },
   }, el: id => ({ value: id === 'export-fps' ? '30' : id === 'export-hardware' ? 'auto' : 'standard' }),
-  exportableClips: () => [{ start: 0, end: 4, scale: 130, zoomKeyframes: [{ time: 1 }] }],
+  ensureClipTimelinePositions(){},clipTimelineStart:()=>0,videoTrackState:id=>({visible:true,muted:id===1}),
   exportableTransitions: () => [{ boundary: 0, type: 'fade', duration: .6 }],
   exportableImageLayers: () => [{ fileId: 'image', rotation: 20 }], buildMaskImageLayers: () => [{ fileId: 'mask' }] });
-  vm.runInContext(between('    function buildRenderForm', '    async function saveCompletedOutput') + between('    function manualExportData', '    async function startManualRender'), c);
+  vm.runInContext(script.split('\n').find(line=>line.includes('function exportableClips()')) + between('    function buildRenderForm', '    async function saveCompletedOutput') + between('    function manualExportData', '    async function startManualRender'), c);
   const form = c.buildRenderForm(c.manualExportData());
   assert.equal(JSON.parse(form.get('texts')).length, 1);
   assert.equal(JSON.parse(form.get('images')).length, 2);
   assert.equal(JSON.parse(form.get('segments'))[0].scale, 130);
   assert.equal(JSON.parse(form.get('stickers'))[0].preset, 'star');
   assert.deepEqual(JSON.parse(form.get('transitions')), [{ boundary: 0, type: 'fade', duration: .6 }]);
-  assert.equal(form.get('mute_video_audio'), 'true');
+  assert.equal(form.get('mute_video_audio'), 'false');
+  assert.equal(JSON.parse(form.get('segments'))[0].trackMuted,true);
+  assert.equal(JSON.parse(form.get('segments'))[1].trackMuted,false);
   assert.equal(form.get('hardware'), 'auto');
 });
 
@@ -58,7 +61,7 @@ function splitContext() {
     { start: 0, end: 4, timelineStart: 0, speed: 1 },
     { start: 30, end: 50, timelineStart: 8, speed: 2, effect: 'neon', opacity: 75, zoomKeyframes: [{ time: 1 }, { time: 8 }] },
   ], transitions: [], nextZoomKeyframeId: 1, audioLayers: [], nextLayerId: 1 },
-  mv: { paused: false }, currentOutputTime: () => 13, isTrackLocked: () => false,
+  mv: { paused: false }, isPreviewPlaying:()=>true,pausePreview(){},currentOutputTime: () => 13, isTrackLocked: () => false,isVideoTrackLocked:()=>c.isTrackLocked('video'),
   clipTimelineStart: clip => clip.timelineStart, clipTimelineEnd: clip => clip.timelineStart + (clip.end - clip.start) / clip.speed,
   normalizedZoomKeyframes: clip => clip.zoomKeyframes || [], zoomStateAtRelativeTime: () => ({ scale: 120, x: 50, y: 50, opacity: 75 }),
   newClipId: () => 'new-cut-piece', clampClipTransitions() {},
@@ -98,7 +101,7 @@ test('B preserves locks and cuts selected audio using output time with a valid s
 test('keyboard splitting does not intercept text edits, and timeline pointer releases old input focus', () => {
   let keydown, pointerdown, splits = 0;
   const timeline = { focus() { c.document.activeElement = { tagName: 'DIV' }; }, addEventListener(_, callback) { pointerdown = callback; } };
-  const c = vm.createContext({ desktopUpdateFrozen: false, document: { activeElement: { tagName: 'INPUT' }, addEventListener(_, callback) { keydown = callback; } },
+  const c = vm.createContext({ desktopUpdateFrozen: false, document: { activeElement: { tagName: 'INPUT' }, querySelector:()=>null,addEventListener(_, callback) { keydown = callback; } },
     el: id => id === 'timeline' ? timeline : { open: false, classList: { contains: () => true } }, splitSelected: () => splits++,
   });
   vm.runInContext(between("    el('timeline').tabIndex=0", '    function fitTimeline') + between("    document.addEventListener('keydown',e=>{const focused", '    // PROJECT MEDIA LIBRARY'), c);

@@ -13,7 +13,7 @@ function between(first, next) {
 }
 function context() {
   function element() {
-    return { style: {}, dataset: {}, children: [], classList: { add() {} },
+    return { style: {}, dataset: {}, children: [], classList: { add() {} }, scrollLeft: 0, scrollWidth: 1000, clientWidth: 1000, getBoundingClientRect: () => ({ left: 0, right: 1000 }),
       set innerHTML(value) { this.markup = value; this.children = []; },
       appendChild(node) { this.children.push(node); }, querySelector() { return null; } };
   }
@@ -23,12 +23,12 @@ function context() {
     outDuration: () => 30, currentOutputTime: () => c.time, STICKER_PRESETS: { star: { symbol: '★' } },
     ft: value => Number(value).toFixed(2), escapeHtml: String, appendTrimHandles() {}, isTrackLocked: () => false,
     appendTransformHandles() {}, stickerMarkup: item => item.preset, remember() {}, drawClips() {}, showTextProperties() {}, log() {},
-    window: { addEventListener: (name, cb) => listeners.set(name, cb), removeEventListener: name => listeners.delete(name) }, setTimeout() {},
+    window: { addEventListener: (name, cb) => listeners.set(name, cb), removeEventListener: name => listeners.delete(name) }, setTimeout() {}, requestAnimationFrame: () => 1, cancelAnimationFrame() {},
   });
   // Include the shared sticker geometry helper when present, as well as the
   // production drawing/trim functions, rather than duplicating their logic.
   const start = script.includes('    function paintStickerClipTiming') ? '    function paintStickerClipTiming' : '    function drawStickerTimeline';
-  vm.runInContext(between(start, '    function beginStickerClipDrag') + between('    function drawStickerOverlay', '    function beginStickerPresetDrag') + between('    function beginTimedTrim', '    function setPreviewSource'), c);
+  vm.runInContext(between(start, '    function beginStickerClipDrag') + between('    function drawStickerOverlay', '    function beginStickerPresetDrag') + between('    function timelineBoundaries', '    function fitClipPosition') + between('    function beginTimedTrim', '    function setPreviewSource'), c);
   return { c, nodes, listeners };
 }
 

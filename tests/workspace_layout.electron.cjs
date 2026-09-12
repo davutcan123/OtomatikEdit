@@ -36,8 +36,9 @@ async function inspect() {
 app.whenReady().then(async () => {
   server = http.createServer((request, response) => {
     if (request.url === '/') { response.setHeader('Content-Type', 'text/html'); response.end(fixture); return; }
-    if (['/static/editor.css', '/static/workspace.css'].includes(request.url)) {
-      response.setHeader('Content-Type', 'text/css'); response.end(fs.readFileSync(path.join(root, request.url))); return;
+    if (request.url.startsWith('/static/')) {
+      const file=path.resolve(root,'.'+request.url.split('?')[0]);if(!file.startsWith(path.join(root,'static')+path.sep)||!fs.existsSync(file)){response.writeHead(404).end();return}
+      response.setHeader('Content-Type',file.endsWith('.css')?'text/css':'text/javascript'); response.end(fs.readFileSync(file)); return;
     }
     response.writeHead(404).end();
   });

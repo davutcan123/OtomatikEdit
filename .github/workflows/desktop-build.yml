@@ -63,6 +63,7 @@ jobs:
           python -m unittest test_runtime_paths test_desktop_backend test_desktop_update
           test_snapshot test_sticker_timing test_render_encoder test_render_resources
           test_render_overlays test_render_execution test_render_graph_optimizations test_render_color test_image_layer_effects
+          test_multitrack_crop
       - name: Verify preview color math and workspace geometry in Electron
         run: |
           npx --no-install electron tests/color_preview.electron.cjs
@@ -71,6 +72,12 @@ jobs:
         run: npx --no-install electron tests/sticker_timing.electron.cjs
       - name: Verify imported image motion, effects, project removal and recovery in Electron
         run: npx --no-install electron tests/image_editing.electron.cjs
+      - name: Verify magnetic snapping, cut navigation and exact timeline trimming in Electron
+        run: npx --no-install electron tests/timeline_snapping.electron.cjs
+      - name: Verify timeline copy/paste shortcuts and source crop controls in Electron
+        run: npx --no-install electron tests/timeline_tools.electron.cjs
+      - name: Verify parallel video channels, crop composition and shared playback in Electron
+        run: npx --no-install electron tests/video_tracks.electron.cjs
       - name: Verify a real installed Windows update and automatic relaunch
         if: runner.os == 'Windows'
         timeout-minutes: 20

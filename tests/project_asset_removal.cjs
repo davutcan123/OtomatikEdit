@@ -37,7 +37,7 @@ function fixture() {
     projectPayload: () => ({ ...copy(project), mediaAssets: copy(state.mediaAssets), timelines: state.timelines.map((t, i) => i ? copy(t) : { ...copy(t), state: { ...copy(t.state), clips: copy(state.clips), imageLayers: copy(state.imageLayers) } }) }),
     restoreProject: next => { restored++;state.mediaAssets = copy(next.mediaAssets);state.timelines = copy(next.timelines);Object.assign(state, copy(next.timelines[0].state));state.history = []; },
   });
-  vm.runInContext(between('    function newClipId()', '    function clampClipTransitions()') +
+  vm.runInContext(script.split('\n').find(line=>line.includes('function nextClipOnTrack('))+between('    function newClipId()', '    function clampClipTransitions()') +
     between('    const assetById=', "    el('asset-remove-cancel').onclick="), c);
   return { c, state, asset, video, project, persisted: () => persisted, restored: () => restored };
 }

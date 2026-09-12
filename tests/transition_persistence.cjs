@@ -20,7 +20,7 @@ function fixture() {
   function node(id) {
     if (!nodes.has(id)) nodes.set(id, { id, value: '', style: {}, children: [], offsetHeight: 104, scrollLeft: 0, scrollWidth: 2000, clientWidth: 1000,
       classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {}, removeAttribute() {}, pause() {}, load() {},
-      getBoundingClientRect: () => ({ left: 0, right: 1000 }), appendChild(child) { this.children.push(child); },
+      getBoundingClientRect: () => ({ left: 0, right: 1000, top: 0, bottom: 800 }), appendChild(child) { this.children.push(child); }, querySelector: () => null, querySelectorAll: () => [],
       set innerHTML(_) { this.children = []; }, get innerHTML() { return ''; } });
     return nodes.get(id);
   }
@@ -34,7 +34,7 @@ function fixture() {
     window: { addEventListener: (name, callback) => listeners.set(name, callback), removeEventListener: name => listeners.delete(name) },
     requestAnimationFrame: callback => { const id = nextFrame++;frames.set(id, callback);return id; }, cancelAnimationFrame: id => frames.delete(id),
     setTimeout: () => 1, normalizeZoomEasing: value => value || 'smoother',
-    isTrackLocked: () => false, resetLiveTransition() {}, stopProjectAudio() {}, restoreAutoCutterState() {}, captureAutoCutterState: () => null,
+    isTrackLocked: type => type==='video'?context.isVideoTrackLocked(state.clips[state.selected]||state.activeVideoTrack||1):!!state.trackState?.[type]?.locked, resetLiveTransition() {}, stopProjectAudio() {}, restoreAutoCutterState() {}, captureAutoCutterState: () => null,
     setupThumbnailSource() {}, setPreviewSource() {}, updateCanvas() {}, updateZoomLabel() {}, drawMagnetButton() {},
     showTextProperties() {}, drawProjectLibrary() {}, drawTimelineTabs() {}, applyVideoEffectPreview() {}, drawClipInspector() {}, invalidateBrush() {},
     scheduleAutosave: () => scheduled++, log() {}, ft: String, currentOutputTime: () => context.outputTime || 0,
@@ -51,7 +51,7 @@ function fixture() {
     line('function remember(){'), line('const selectedClip='), line('function updateClipSetting('),
     between('    function drawTransitions(){', '    function beginTransitionDrag'),
     between('    function splitVideoTarget', '    function splitSelected'), line('function removeClip(){'), line('function move(n){'),
-    line('function snapClipPosition('), line('function fitClipPosition('),
+    between('    function timelineBoundaries', '    function fitClipPosition'), line('function fitClipPosition('),
     between('    function beginClipDrag(', '    function setPreviewSource('),
     between('    function addProjectAssetAt(', '    function layerSelected('),
     line('function emptyTimelineState('), line('function captureTimelineState('), line('function syncActiveTimeline('),
@@ -88,9 +88,9 @@ test('moving an unrelated clip preserves the transition and rebinds its boundary
 
 test('free drag does not erase unrelated or temporarily separated transitions', () => {
   const f = fixture();f.c.applyTransition('fade', 0);
-  const event = { button: 0, clientX: 350, preventDefault() {} }, button = { style: {}, classList: { add() {}, remove() {} } };
+  const event = { button: 0, clientX: 350, clientY: 400, preventDefault() {} }, button = { style: {}, classList: { add() {}, remove() {} } };
   f.c.beginClipDrag(event, 2, button);
-  f.listeners.get('pointermove')({ clientX: 490, preventDefault() {} });f.tick();f.listeners.get('pointerup')();
+  f.listeners.get('pointermove')({ clientX: 490, clientY: 400, preventDefault() {} });f.tick();f.listeners.get('pointerup')();
   assert.equal(f.state.transitions.length, 1);assert.equal(f.state.transitions[0].suspended, false);
   assert.equal(f.state.clips[2].timelineStart, 30);
 });
@@ -102,8 +102,8 @@ test('speed and trim suspend rather than delete a pair; restoring duration resto
   assert.deepEqual(plain(f.c.exportableTransitions()), []);
   f.c.updateClipSetting('speed', 1, false);
   assert.equal(f.state.transitions[0].suspended, false);assert.equal(f.state.transitions[0].duration, original);
-  f.c.beginTimedTrim({ button: 0, clientX: 0, preventDefault() {}, stopPropagation() {} }, 'video', 0, 'right', { style: {} });
-  f.listeners.get('pointermove')({ clientX: -28, preventDefault() {} });f.listeners.get('pointerup')();
+  f.c.beginTimedTrim({ button: 0, clientX: 400, preventDefault() {}, stopPropagation() {} }, 'video', 0, 'right', { style: {}, querySelector: () => null });
+  f.listeners.get('pointermove')({ clientX: 372, preventDefault() {} });f.listeners.get('pointerup')();
   assert.equal(f.state.transitions.length, 1);assert.equal(f.state.transitions[0].suspended, true);
   f.state.clips[0].end = 10;f.c.clampClipTransitions();assert.equal(f.state.transitions[0].suspended, false);
 });
@@ -162,6 +162,13 @@ test('legacy missing/null positions migrate sequentially and copied clip IDs sta
 });
 
 test('locked video track rejects transition and clip edits', () => {
-  const { c, state } = fixture();c.isTrackLocked = () => true;c.applyTransition('fade', 0);c.move(1);
+  const { c, state } = fixture();state.trackState.video.locked=true;c.ensureVideoTracks();c.videoTrackState(1).locked=true;c.applyTransition('fade', 0);c.move(1);
   assert.equal(state.transitions.length, 0);assert.equal(state.clips[0].start, 0);
+});
+
+test('transition locks follow the actual target lane, not the selected video track', () => {
+  const {c,state}=fixture();state.videoTracks=[{id:1,name:'Locked',locked:true,visible:true,muted:false},{id:2,name:'Editable',locked:false,visible:true,muted:false}];state.activeVideoTrack=1;
+  state.clips=[{start:0,end:5,timelineStart:0,videoTrack:1,fileId:'fixture.mp4',sourceDuration:30},{start:5,end:10,timelineStart:5,videoTrack:1,fileId:'fixture.mp4',sourceDuration:30},{start:0,end:5,timelineStart:0,videoTrack:2,fileId:'fixture.mp4',sourceDuration:30},{start:5,end:10,timelineStart:5,videoTrack:2,fileId:'fixture.mp4',sourceDuration:30}];
+  c.clampClipTransitions();c.applyTransition('fade',0);assert.equal(state.transitions.length,0);
+  c.applyTransition('fade',2);assert.equal(state.transitions.length,1);assert.equal(state.transitions[0].leftClipId,state.clips[2].clipId);assert.equal(state.transitions[0].rightClipId,state.clips[3].clipId);
 });

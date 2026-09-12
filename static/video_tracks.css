@@ -1,0 +1,20 @@
+.video-lane{position:absolute;left:0;min-width:0;border-radius:5px;background:rgba(30,41,59,.15);border-bottom:1px solid #1e293b}
+#track .clip{min-width:0!important;padding:0!important;border:0!important;box-shadow:inset 0 0 0 1px #334155;border-radius:4px}
+#track .clip.selected{box-shadow:inset 0 0 0 2px #facc15}
+#track .clip.dragging{opacity:.75;z-index:40}
+.track-label.active-video-track{color:#93c5fd;background:#172b45;box-shadow:inset 3px 0 #38bdf8}
+.track-label>b{cursor:pointer;overflow:hidden;text-overflow:ellipsis}
+.video-composite{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:2}
+.video-composite[hidden],.composite-layer[hidden],.composite-mask[hidden]{display:none}
+.composite-layer,.composite-frame,.composite-mask{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.composite-track{position:absolute;inset:0;isolation:isolate;pointer-events:none}
+.composite-source{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.composite-frame{mask-repeat:no-repeat;-webkit-mask-repeat:no-repeat}
+.composite-mask{object-fit:cover}
+.composite-controls{display:flex;align-items:center;gap:9px;padding:6px 8px;margin-top:4px;border-radius:8px;background:#080e1b;font-size:10px;color:#cbd5e1;min-width:0;flex-shrink:0}
+.composite-controls[hidden]{display:none}
+.composite-controls button{border:1px solid #475569;background:#1e293b;border-radius:6px;padding:3px 9px;min-width:33px}
+.composite-controls .composite-seek{min-width:30px;flex:1;accent-color:#38bdf8}
+.composite-controls label{display:flex;gap:5px;align-items:center}.composite-volume{width:65px;accent-color:#38bdf8}
+#media-overlay,#sticker-overlay,#text-overlay{z-index:3}
+.transition-slot.applied {min-width:0;padding:0;border:0;box-shadow:inset 0 0 0 2px #a78bfa;overflow:hidden}
