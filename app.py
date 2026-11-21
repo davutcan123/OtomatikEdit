@@ -21,7 +21,7 @@ from urllib.parse import quote
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
-from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Header, Request, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -557,6 +557,7 @@ APP_VERSION = _load_version()
 # Keep recent terminal events available to subscribers that attach or reconnect
 # after a job completes. The download files have an independent lifetime.
 _JOB_EVENT_LIMIT = 256
+_JOB_HEARTBEAT_SECONDS = 10
 _COMPLETED_JOB_LIMIT = 64
 _COMPLETED_JOB_TTL = 15 * 60
 
@@ -568,19 +569,23 @@ class JobEvents:
         self._events = deque(maxlen=_JOB_EVENT_LIMIT)
         self._next = 0
         self._finished = False
+        self._terminal = False
         self._changed = asyncio.Event()
 
     async def put(self, message):
         self._publish(message)
 
     def _publish(self, message):
-        if self._finished:
+        if self._finished or (self._terminal and message is not None):
             return
         if message is None:
+            if not self._terminal:
+                self._publish({"type": "error", "message": "İşlem sonuç bildirmeden kapandı."})
             self._finished = True
         else:
             self._events.append(message)
             self._next += 1
+            self._terminal = message.get("type") in {"result", "error"}
         signal = self._changed
         self._changed = asyncio.Event()
         signal.set()
@@ -590,19 +595,25 @@ class JobEvents:
             self._publish({"type": "error", "message": error})
         self._publish(None)
 
-    async def read(self):
-        cursor = 0
+    @property
+    def latest_id(self):
+        return self._next
+
+    async def read(self, cursor=0):
         while True:
             first = self._next - len(self._events)
             cursor = max(cursor, first)
             if cursor < self._next:
                 message = self._events[cursor - first]
                 cursor += 1
-                yield message
+                yield cursor, message
             elif self._finished:
                 break
             else:
-                await self._changed.wait()
+                try:
+                    await asyncio.wait_for(self._changed.wait(), timeout=_JOB_HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    yield None, None
 
 
 def forget_completed_job(job_id):
@@ -3727,16 +3738,32 @@ async def start_render(
     return {"job_id": job_id}
 
 @app.get("/stream-events/{job_id}")
-async def stream_events(job_id: str):
+async def stream_events(
+    job_id: str,
+    last_event_id: typing.Annotated[str | None, Header()] = None,
+):
     job = jobs.get(job_id)
     if not job:
-        raise HTTPException(404)
-        
-    async def event_generator():
-        async for message in job["q"].read():
-            yield f"data: {json.dumps(message)}\n\n"
+        raise HTTPException(404, "İş kaydı bulunamadı veya süresi doldu.")
+    events = job["q"]
+    cursor = 0
+    if last_event_id:
+        if not re.fullmatch(r"[0-9]{1,16}", last_event_id):
+            raise HTTPException(400, "Geçersiz olay kimliği.")
+        cursor = int(last_event_id)
+        if cursor > events.latest_id:
+            raise HTTPException(400, "Olay kimliği bu akışta bulunamadı.")
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    async def event_generator():
+        async for event_id, message in events.read(cursor):
+            if event_id is None:
+                yield "event: heartbeat\ndata: {}\n\n"
+            else:
+                yield f"id: {event_id}\ndata: {json.dumps(message)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache"})
+
 
 def send_bytes_range_requests(file_obj: typing.BinaryIO, start: int, end: int, chunk_size: int = 65536):
     with file_obj as f:

@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
+
 from test_update import load_source_backend
 
 
@@ -46,6 +48,56 @@ class JobRetentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(expected), 3)
         self.assertIn("/download/test/mp4", expected[-1])
         self.assertEqual(self.backend.active_job_count(), 0)
+
+    async def test_reconnect_requests_missing_ids_and_does_not_cancel_job(self):
+        events = self.backend.JobEvents()
+        self.backend.jobs["job"] = {"q": events}
+        proceed = asyncio.Event()
+
+        async def work():
+            await events.put({"type": "progress", "percent": 10})
+            await events.put({"type": "log", "message": "started"})
+            await proceed.wait()
+            await events.put({"type": "result", "download_url": "/download/job/mp4"})
+            await events.put(None)
+
+        task = self.backend.schedule_job("job", work())
+        stream = (await self.backend.stream_events("job")).body_iterator
+        try:
+            self.assertTrue((await anext(stream)).startswith("id: 1\n"))
+            self.assertTrue((await anext(stream)).startswith("id: 2\n"))
+            await stream.aclose()
+            self.assertFalse(task.done())
+        finally:
+            proceed.set()
+            await task
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.backend.app), base_url="http://editor"
+        ) as client:
+            resumed = await client.get("/stream-events/job", headers={"Last-Event-ID": "2"})
+            self.assertEqual(resumed.status_code, 200)
+            self.assertEqual(resumed.text.splitlines()[0], "id: 3")
+            self.assertIn("/download/job/mp4", resumed.text)
+            self.assertNotIn("started", resumed.text)
+            self.assertEqual((await client.get("/stream-events/job", headers={"Last-Event-ID": "3"})).text, "")
+            for invalid in ("99", "-1", "broken"):
+                response = await client.get("/stream-events/job", headers={"Last-Event-ID": invalid})
+                self.assertEqual(response.status_code, 400)
+            self.backend.forget_completed_job("job")
+            expired = await client.get("/stream-events/job", headers={"Last-Event-ID": "2"})
+            self.assertEqual(expired.status_code, 404)
+
+    async def test_heartbeat_does_not_shift_ids_and_unreported_finish_is_terminal(self):
+        events = self.backend.JobEvents()
+        self.backend.jobs["job"] = {"q": events}
+        stream = (await self.backend.stream_events("job")).body_iterator
+        with patch.object(self.backend, "_JOB_HEARTBEAT_SECONDS", .001):
+            self.assertEqual(await anext(stream), "event: heartbeat\ndata: {}\n\n")
+        events.finish()
+        self.assertTrue((await anext(stream)).startswith('id: 1\ndata: {"type": "error"'))
+        with self.assertRaises(StopAsyncIteration):
+            await anext(stream)
 
     async def test_eviction_keeps_existing_stream_and_output(self):
         output = Path(self.backend.OUTPUT_DIR) / "out_old.mp4"

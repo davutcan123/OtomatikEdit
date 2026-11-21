@@ -1214,16 +1214,39 @@
     }
     function events(id,handle){
       return new Promise((resolve,reject)=>{
-        const stream=new EventSource('/stream-events/'+id);
-        stream.onmessage=message=>{
-          try{
-            const event=JSON.parse(message.data);
-            handle(event);
-            if(event.type==='error')throw new Error(event.message);
-            if(event.type==='result'){stream.close();resolve(event)}
-          }catch(error){stream.close();reject(error)}
+        const stream=new EventSource('/stream-events/'+encodeURIComponent(id));
+        let deadline,lastEventId=0,settled=false;
+        const finish=(error,result)=>{
+          if(settled)return;
+          settled=true;clearTimeout(deadline);stream.close();
+          if(error)reject(error);else resolve(result);
         };
-        stream.onerror=()=>{stream.close();reject(new Error('Sunucu bağlantısı kesildi'))};
+        const refreshDeadline=()=>{
+          if(settled)return;
+          clearTimeout(deadline);
+          deadline=setTimeout(()=>finish(new Error('İş durumuna ulaşılamadı. Bağlantıyı kontrol edip işlemi yeniden deneyin.')),45000);
+        };
+        stream.addEventListener('heartbeat',refreshDeadline);
+        stream.onmessage=event=>{
+          if(settled)return;
+          try{
+            const eventId=Number(event.lastEventId);
+            if(eventId&&eventId<=lastEventId)return;
+            const message=JSON.parse(event.data);
+            refreshDeadline();
+            if(eventId)lastEventId=eventId;
+            handle(message);
+            if(message.type==='result')finish(null,message);
+            else if(message.type==='error')finish(new Error(message.message||'İşlem tamamlanamadı.'));
+          }catch(error){finish(error)}
+        };
+        stream.onerror=()=>{
+          // Keep the same EventSource so the browser resumes with Last-Event-ID.
+          if(stream.readyState===EventSource.CLOSED){
+            finish(new Error('İş akışı açılamadı. İş kaydı bulunamayabilir veya süresi dolmuş olabilir.'));
+          }
+        };
+        refreshDeadline();
       });
     }
     function buildRenderForm({fileId,clips,format='mp4',resolution=null,texts=[],transitions=[],images=[],audioLayers=[],stickers=[],options={}}){
