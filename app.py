@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import Headers
 from runtime_paths import resolve_runtime_paths, import_legacy_projects
+from studio_preferences import MAX_BYTES as STUDIO_PREFERENCES_LIMIT, read_preferences, write_preference
 from render_resources import choose_render_resources
 from render_encoder import select_video_encoder, invalidate_nvenc, is_nvenc_failure
 from render_overlays import compact_overlay
@@ -3090,7 +3091,7 @@ async def index(request: Request):
         # External code is restricted to these bundled entry points, not every
         # same-origin upload or future route. Inline scripts remain hash-only.
         bundled_scripts = [str(request.base_url).rstrip("/") + "/static/" + name
-                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js")]
+                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js")]
         script_sources = " ".join([*hashes, *bundled_scripts])
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
@@ -3175,6 +3176,32 @@ async def api_cancel_desktop_close(attempt: int):
             state.close_attempt = attempt
             state.closing = False
     return {"closing": state.closing}
+
+
+@app.get("/api/desktop/studio-preferences")
+async def api_studio_preferences():
+    if not DESKTOP_MODE:
+        raise HTTPException(404)
+    return await asyncio.to_thread(read_preferences, os.path.join(DATA_DIR, "studio-preferences.json"))
+
+
+@app.put("/api/desktop/studio-preferences/{key}")
+async def api_save_studio_preference(key: str, request: Request):
+    if not DESKTOP_MODE:
+        raise HTTPException(404)
+    raw = bytearray()
+    async for chunk in request.stream():
+        if len(raw) + len(chunk) > STUDIO_PREFERENCES_LIMIT:
+            raise HTTPException(413, "Stüdyo tercihi çok büyük.")
+        raw.extend(chunk)
+    try:
+        value = json.loads(raw)
+        await asyncio.to_thread(write_preference, os.path.join(DATA_DIR, "studio-preferences.json"), key, value)
+    except (ValueError, RecursionError) as error:
+        raise HTTPException(400, "Geçersiz stüdyo tercihi.") from error
+    except OSError as error:
+        raise HTTPException(500, "Stüdyo tercihi kaydedilemedi.") from error
+    return {"saved": True}
 
 
 @app.post("/api/desktop/import-projects")
