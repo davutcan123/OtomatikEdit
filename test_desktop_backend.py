@@ -137,6 +137,19 @@ class DesktopBackendTests(unittest.TestCase):
             with patch.object(self.backend, "DESKTOP_MODE", False):
                 self.assertNotIn("Content-Security-Policy", client.get("/").headers)
 
+    def test_editor_serves_base_styles_before_the_utility_and_workspace_styles(self):
+        headers = {"X-Desktop-Token": "test-desktop-token"}
+        with TestClient(self.backend.app) as client:
+            response = client.get("/", headers=headers)
+            self.assertEqual(response.status_code, 200)
+            ordered_sources = ("/static/editor-base.css", "/static/editor.css", "/static/workspace.css")
+            positions = [response.text.index(f'href="{source}"') for source in ordered_sources]
+            self.assertEqual(positions, sorted(positions))
+            base_styles = client.get(ordered_sources[0], headers=headers)
+            self.assertEqual(base_styles.status_code, 200)
+            self.assertIn("text/css", base_styles.headers["Content-Type"])
+            self.assertIn(".export-modal-card", base_styles.text)
+
     def test_shutdown_terminates_owned_process(self):
         async def exercise():
             process = await self.backend.create_media_process(sys.executable, "-c", "import time; time.sleep(60)")
