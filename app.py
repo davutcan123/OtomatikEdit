@@ -37,12 +37,15 @@ from brush_masks import normalize_brush_strokes, brush_mask, create_brushed_imag
 from render_image_animation import image_animation_expressions
 from render_video_tracks import (normalize_video_track, normalize_source_crop, source_crop_filter,
                                  video_track_groups, next_track_clip, shift_clip_filter_time,
-                                 compose_video_tracks)
+                                 compose_video_tracks, fit_video_frame_count, sample_source_frames, shift_fade_time,
+                                 video_grid)
 from studio_fonts import bundled_font_path, font_face_css, normalize_font_family
 from render_audio import atempo_chain, clip_audio_filter, join_audio, mix_audio_layers
 from render_timing import (ClipClock, MICROSECONDS_PER_SECOND, align_output_frame_timestamps,
-                           display_frame_time_us, gif_clock_filters, normalize_zoom_cadence,
-                           plan_render_timing, resolve_export_range, snapshot_source_window)
+                           displayed_output_frame, first_output_frame, gif_clock_filters,
+                           normalize_zoom_cadence, output_frame_time_us, plan_render_timing,
+                           plan_video_frames, resolve_export_range, snapshot_source_window,
+                           source_frame_samples)
 
 RUNTIME_PATHS = resolve_runtime_paths(__file__)
 BASE_DIR = str(RUNTIME_PATHS.source_dir)
@@ -2091,72 +2094,88 @@ def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
     """
     fps = job["fps"]
     segments = job["segments"]
-    clocks = [ClipClock.from_segment(segment) for segment in segments]
-    timeline_ends = [segment["timelineStart"] + clock.duration for segment, clock in zip(segments, clocks)]
-    duration = max(job.get("snapshot_timeline_duration", 0), max(timeline_ends, default=0))
-    time_at = min(max(0.0, timeline_time), max(0.0, math.ceil(duration * fps - 1e-7) / fps - 1 / fps))
-    sources = {source["fileId"]: source for source in job["video_inputs"]}
-    selected = []
-    snapshot_tracks = []
     multitrack = job.get("multitrack", False)
-    transition_at = None
-    transition_elapsed = 0.0
-    for transition in ([] if multitrack else job["transitions"]):
-        left = segments[transition["boundary"]]
-        boundary = timeline_ends[transition["boundary"]]
-        if boundary - transition["duration"] <= time_at < boundary:
-            transition_at = transition
-            transition_elapsed = time_at - (boundary - transition["duration"])
-            selected = [(left, time_at - left["timelineStart"]), (segments[transition["boundary"] + 1], transition_elapsed)]
-            break
-    if not selected and not multitrack:
-        for seg, end in zip(segments, timeline_ends):
-            if seg["timelineStart"] <= time_at < end:
-                selected = [(seg, time_at - seg["timelineStart"])]
-                break
+    transitions = job["transitions"]
+    # The legacy single-track export shortens overlaps. Its snapshots stay on
+    # the editor ruler, while multitrack transitions have actual source handles.
+    ruler_transitions = transitions if multitrack else []
+    layer_duration = job.get("snapshot_timeline_duration", 0)
+    timing = plan_render_timing(segments, ruler_transitions, multitrack=multitrack, layer_duration=layer_duration)
+    spans = plan_video_frames(segments, timing, ruler_transitions, fps, multitrack=multitrack)
+    final_frame = max(0, first_output_frame(timing.output_duration, fps) - 1)
+    time_at = min(max(0.0, timeline_time), final_frame / fps)
+    frame = displayed_output_frame(time_at, fps)
+    sources = {source["fileId"]: source for source in job["video_inputs"]}
+
+    def track_selection(indices):
+        for transition in transitions:
+            left = transition["boundary"]
+            if left not in indices:
+                continue
+            right = next_track_clip(segments, left)
+            if multitrack:
+                first = spans[right].join_start
+            else:
+                end_time = segments[left]["timelineStart"] + timing.clips[left].clock.duration
+                first = first_output_frame(end_time - transition["duration"], fps)
+            if first <= frame < spans[left].end:
+                progress = time_at - first / fps
+                overlap = (spans[left].end - first) / fps
+                left_elapsed = time_at - spans[left].picture_start / fps - timing.clips[left].preroll
+                right_elapsed = (time_at - spans[right].picture_start / fps - timing.clips[right].preroll
+                                 if multitrack else progress)
+                right_frame = frame - (spans[right].picture_start if multitrack else first)
+                chosen = [(left, left_elapsed, frame - spans[left].picture_start), (right, right_elapsed, right_frame)]
+                return chosen, {**transition, "duration": overlap}, progress
+        return ([
+            (index, (frame - spans[index].picture_start) / fps - timing.clips[index].preroll,
+             frame - spans[index].picture_start)
+            for index in indices if spans[index].picture_start <= frame < spans[index].end
+        ], None, 0.0)
+
+    selected, snapshot_tracks = [], []
+    transition_at, transition_elapsed = None, 0.0
     if multitrack:
         for track, indices in video_track_groups(segments).items():
-            chosen, active_transition, elapsed_transition = [], None, 0.0
-            for transition in job["transitions"]:
-                if transition["boundary"] not in indices:
-                    continue
-                left = segments[transition["boundary"]]
-                cut = timeline_ends[transition["boundary"]]
-                if cut - transition["duration"] <= time_at < cut:
-                    right = segments[next_track_clip(segments, transition["boundary"])]
-                    chosen = [(left, time_at - left["timelineStart"]), (right, time_at - cut)]
-                    active_transition = transition
-                    elapsed_transition = time_at - (cut - transition["duration"])
-                    break
-            if not chosen:
-                chosen = [(segments[index], time_at - segments[index]["timelineStart"])
-                          for index in indices if segments[index]["timelineStart"] <= time_at
-                          < timeline_ends[index]]
+            chosen, transition, progress = track_selection(indices)
             if chosen:
-                snapshot_tracks.append({"track": track, "indices": list(range(len(selected), len(selected) + len(chosen))),
-                                        "transition": active_transition, "transition_elapsed": elapsed_transition})
+                positions = list(range(len(selected), len(selected) + len(chosen)))
+                snapshot_tracks.append({"track": track, "indices": positions,
+                                        "transition": transition, "transition_elapsed": progress})
                 selected.extend(chosen)
+    else:
+        selected, transition_at, transition_elapsed = track_selection(range(len(segments)))
     snapshot_segments = []
     snapshot_sources = []
-    for index, (seg, elapsed) in enumerate(selected):
+    for index, (original_index, elapsed, body_frame) in enumerate(selected):
+        seg = segments[original_index]
+        clip_timing = timing.clips[original_index]
+        span = spans[original_index]
         source = sources[seg["fileId"]]
-        # Keep enough context for temporal filters while decoding a short window.
+        decoded_duration = source.get("duration", seg["end"])
+        # Seek to bounded context, but retain the original PTS after seeking.
+        # Resetting to the first decoded packet shifts VFR and off-grid trims.
+        sampling_elapsed = body_frame / fps - clip_timing.preroll
         window = snapshot_source_window(
-            ClipClock.from_segment(seg), elapsed, source.get("duration", seg["end"]), allow_preroll=multitrack,
+            clip_timing.clock, sampling_elapsed, decoded_duration, allow_preroll=multitrack,
         )
+        first = max(0, body_frame - math.ceil(.5 * fps))
+        last = max(body_frame, min(span.pictures - 1, body_frame + math.ceil(.25 * fps)))
+        samples = source_frame_samples(
+            clip_timing.clock, fps, clip_timing.preroll, first, last, snapshot=True,
+        )
+        source_trim = clip_timing.source_trim(decoded_duration)
+        window_end = min(source_trim.end, window.source_start + window.source_duration + 1e-7)
         identifier = f"snapshot-{index}"
-        snapshot_sources.append({**source, "fileId": identifier, "snapshot_seek": window.source_start,
-                                 "snapshot_duration": window.source_duration, "snapshot_base": window.output_base})
+        snapshot_sources.append({
+            **source, "fileId": identifier, "snapshot_seek": window.source_start,
+            "snapshot_duration": window.source_duration, "snapshot_end": window_end,
+            "snapshot_samples": samples, "snapshot_frame": body_frame - first, "snapshot_preroll": clip_timing.preroll,
+        })
         snapshot_segments.append({**seg, "fileId": identifier, "timelineStart": 0,
-                                  "snapshot_elapsed": max(0, elapsed), "snapshot_trim_time": window.trim_time})
-    selected_clip_ids = {seg.get("clipId") for seg, _ in selected}
-    frame_us = display_frame_time_us(time_at, fps)
-    image_starts = {seg.get("clipId"): seg["timelineStart"] for seg, _ in selected}
-    if multitrack:
-        for transition in job["transitions"]:
-            right = segments[next_track_clip(segments, transition["boundary"])]
-            if right.get("clipId") in image_starts:
-                image_starts[right.get("clipId")] -= transition["duration"]
+                                  "snapshot_elapsed": max(0, elapsed)})
+    selected_clip_frames = {segments[index].get("clipId"): local_frame for index, _, local_frame in selected}
+    frame_us = output_frame_time_us(frame, fps)
 
     def prepare_layer(item):
         return {**item, "start": 0, "end": 1, "snapshot_elapsed": time_at - item["start"],
@@ -2171,15 +2190,15 @@ def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
         start_us = round(item["start"] * MICROSECONDS_PER_SECOND)
         end_us = round(item["end"] * MICROSECONDS_PER_SECOND)
         frame_visible = start_us <= frame_us <= end_us
-        active = owner in selected_clip_ids if owner else visible or frame_visible
+        active = owner in selected_clip_frames if owner else visible or frame_visible
         if not active:
             continue
-        if owner:
-            start_us = round(image_starts[owner] * MICROSECONDS_PER_SECOND)
+        elapsed_us = (output_frame_time_us(selected_clip_frames[owner], fps)
+                      if owner else frame_us - start_us)
         snapshot_images.append({
             **prepare_layer(item), "_snapshot_visible": bool(owner) or visible,
             "_snapshot_frame_visible": bool(owner) or frame_visible,
-            "_snapshot_frame_elapsed_us": frame_us - start_us,
+            "_snapshot_frame_elapsed_us": elapsed_us,
         })
     job["images"] = snapshot_images
     job.update({"type": "snapshot", "format": "png", "segments": snapshot_segments,
@@ -2218,9 +2237,12 @@ async def run_render_job(job_id: str):
             segments, transitions, multitrack=multitrack, layer_duration=job.get("timeline_duration", 0),
             snapshot_fps=target_fps if snapshot else None,
         )
-        segment_durations = [clip.duration for clip in render_timing.clips]
         video_duration = render_timing.video_duration
         total_duration = render_timing.output_duration
+        output_frames = max(1, first_output_frame(total_duration, target_fps))
+        frame_spans = (() if snapshot else plan_video_frames(
+            segments, render_timing, transitions, target_fps, multitrack=multitrack,
+        ))
         text_items = job.get("texts", [])
         sticker_items = job.get("stickers", [])
         image_items = []
@@ -2318,13 +2340,14 @@ async def run_render_job(job_id: str):
             brush_image_indices[index] = brush_input_start + len(brush_video_paths)
             brush_video_paths.append(mask_path)
 
-        def image_stream_filters(index, item, label, start):
+        def image_stream_filters(index, item, label, start, *, start_frame=0):
             filters = "format=rgba"
             if index not in streamed_images:
                 return filters
             if index in gif_inputs:
                 filters += "," + gif_clock_filters(
-                    target_fps, start=start, snapshot_elapsed_us=item.get("_snapshot_frame_elapsed_us"),
+                    target_fps, start=start, start_frame=start_frame,
+                    snapshot_elapsed_us=item.get("_snapshot_frame_elapsed_us"),
                     cycle_duration=item.get("_streamDuration", 0),
                 )
             else:
@@ -2347,7 +2370,10 @@ async def run_render_job(job_id: str):
         
         for i, (seg, timing) in enumerate(zip(segments, render_timing.clips)):
             clip_duration = timing.clock.duration
-            gap_before, preroll = timing.gap, timing.preroll
+            preroll = timing.preroll
+            span = frame_spans[i] if not snapshot else None
+            gap_frames = span.gap if span else 0
+            picture_frames = span.pictures if span else 1
             source_info = video_input_map[seg["fileId"]]
             input_index = source_info["index"]
             video_stream = source_info.get("video_index", "v")
@@ -2355,13 +2381,15 @@ async def run_render_job(job_id: str):
             clip_masks = owned_masks.get(seg.get("clipId"), [])
             clip_output_label = f"[v{i}unmasked]" if clip_masks else f"[v{i}]"
             trim = timing.source_trim(source_info.get("duration", timing.clock.source_end))
-            snapshot_base = source_info["snapshot_base"] if snapshot else None
-            video_filters = (
-                f"trim=start=0:end={source_info['snapshot_duration']:.8f}"
-                if snapshot else f"trim=start={trim.start}:end={trim.end}"
+            samples = (source_info["snapshot_samples"] if snapshot else
+                       source_frame_samples(timing.clock, target_fps, preroll, 0, max(0, picture_frames - 1)))
+            snapshot_base = samples.timeline_offset if snapshot else None
+            source_end = source_info["snapshot_end"] if snapshot else trim.end
+            # Keep the preceding decoded frame when a sample falls inside an
+            # existing VFR picture, and bound the upper end of the source decode.
+            video_filters = f"trim=end={source_end:.8f}," + sample_source_frames(
+                samples, timing.clock.speed, target_fps, interpolate=seg.get("opticalFlow", False),
             )
-            if timing.clock.reverse:
-                video_filters += ",reverse"
             stabilization = seg.get("stabilization", "none")
             if stabilization == "light":
                 video_filters += ",deshake=rx=16:ry=16:edge=mirror"
@@ -2376,9 +2404,6 @@ async def run_render_job(job_id: str):
             if motion_blur >= 4:
                 blur_frames = 3 if motion_blur < 60 else 5
                 video_filters += f",tmix=frames={blur_frames}"
-            video_filters += "," + timing.clock.video_timestamp_filters(
-                snapshot_base=snapshot_base, missing_handle=trim.missing_handle,
-            )
             crop_filter = source_crop_filter(seg.get("crop"))
             if crop_filter:
                 video_filters += "," + crop_filter
@@ -2430,8 +2455,6 @@ async def run_render_job(job_id: str):
             sharpen = seg.get("sharpen", 0) / 100
             if sharpen > .001:
                 video_filters += f",unsharp=5:5:{min(2.0, sharpen * 1.8):.5f}:5:5:0"
-            if seg.get("opticalFlow", False):
-                video_filters += f",minterpolate=fps={target_fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
             if seg.get("backgroundMode") == "chroma":
                 chroma_color = seg.get("keyColor", "#00FF00").lstrip("#")
                 similarity = seg.get("keySimilarity", 25) / 100
@@ -2570,16 +2593,16 @@ async def run_render_job(job_id: str):
             track_visible = job.get("video_visible", True) and seg.get("trackVisible", True)
             visible_filter = "" if track_visible else (",colorchannelmixer=aa=0" if multitrack
                                                        else ",drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill")
-            gap_video_filter = (
-                f",tpad=start_duration={gap_before:.8f}:start_mode=add:color={'black@0' if multitrack else 'black'}"
-                if gap_before >= .001 else ""
-            )
+            gap_filter = (f",tpad=start={gap_frames}:start_mode=add:color={'black@0' if multitrack else 'black'}"
+                          if gap_frames else "")
+            if not snapshot:
+                gap_filter += f",trim=end_frame={gap_frames + picture_frames},{video_grid(target_fps)}"
             opacity_is_animated = any(
                 abs(float(frame.get("opacity", 100)) - 100) > .001
                 for frame in seg.get("zoomKeyframes", [])
             )
             needs_canvas = (
-                multitrack or fit == "contain"
+                multitrack or fit == "contain" or (not snapshot and picture_frames <= 1)
                 or (not fixed_zoom_transform and abs(seg.get("scale", 100) - 100) > .001)
                 or abs(seg.get("opacity", 100) - 100) > .001
                 or opacity_is_animated
@@ -2592,7 +2615,13 @@ async def run_render_job(job_id: str):
                 or mask in {"circle", "ellipse", "rounded"}
             )
             video_filters = normalize_zoom_cadence(video_filters, target_fps, snapshot_base=snapshot_base)
-            snapshot_trim = f",trim=start={seg.get('snapshot_trim_time', seg['snapshot_elapsed']):.8f}" if snapshot else ""
+            if snapshot:
+                video_filters = shift_fade_time(video_filters, source_info["snapshot_preroll"])
+            snapshot_filters = (
+                f",fps={target_fps},{fit_video_frame_count(samples.count, target_fps)},"
+                f"trim=start_frame={source_info['snapshot_frame']},settb=AVTB,setpts=N/({target_fps}*TB)"
+                if snapshot else ""
+            )
             if needs_canvas:
                 compact_zoom_filter = ""
                 transform_scale_filter = "" if fixed_zoom_transform else (
@@ -2640,14 +2669,16 @@ async def run_render_job(job_id: str):
                     video_filters = shift_clip_filter_time(video_filters, preroll, target_fps)
                 if multitrack:
                     video_filters = re.sub(r"(fade=t=(?:in|out):[^,]+)", r"\1:alpha=1", video_filters)
-                video_filters += (
-                    f",fps={target_fps},settb=AVTB{snapshot_trim},"
-                    f"setpts=N/({target_fps}*TB)"
-                )
+                if snapshot:
+                    video_filters += snapshot_filters
+                else:
+                    video_filters += f",fps={target_fps}:start_time=0:eof_action=pass,trim=end_frame={picture_frames},"
+                    video_filters += f"settb=AVTB,setpts=N/({target_fps}*TB)"
                 foreground_label = f"[clipfg{i}]"
                 lines.append(f"{clip_video}{video_filters}{foreground_label}")
                 lines.append(
-                    f"color=c={'black@0' if multitrack else 'black'}:s={render_width}x{render_height}:r={target_fps}:d={clip_duration + preroll:.8f},"
+                    f"color=c={'black@0' if multitrack else 'black'}:s={render_width}x{render_height}:r={target_fps},"
+                    f"trim=end_frame={max(1, picture_frames)},"
                     f"{'format=rgba,' if multitrack else ''}"
                     f"settb=AVTB,setpts=N/({target_fps}*TB)[clipbg{i}]"
                 )
@@ -2719,9 +2750,9 @@ async def run_render_job(job_id: str):
                     y_expr = shift_clip_filter_time("'" + y_expr + "'", preroll, target_fps)[1:-1]
                 lines.append(
                     f"[clipbg{i}]{foreground_label}overlay=x='{x_expr}':y='{y_expr}':"
-                    f"shortest=1:eval=frame{':format=auto' if multitrack else ''}{visible_filter},fps={target_fps},"
-                    f"format={'yuva444p' if multitrack else 'yuv420p'},settb=AVTB"
-                    f"{gap_video_filter}{clip_output_label}"
+                    f"shortest={1 if snapshot else 0}:eval=frame{':format=auto' if multitrack else ''}{visible_filter},"
+                    f"format={'yuva444p' if multitrack else 'yuv420p'},"
+                    f"{'settb=AVTB' if snapshot else video_grid(target_fps)}{gap_filter}{clip_output_label}"
                 )
             else:
                 fast_path_segments += 1
@@ -2729,13 +2760,13 @@ async def run_render_job(job_id: str):
                     video_filters = freeze_snapshot_expressions(video_filters, seg["snapshot_elapsed"], target_fps)
                 elif preroll:
                     video_filters = shift_clip_filter_time(video_filters, preroll, target_fps)
-                video_filters += (
-                    f",setsar=1,fps={target_fps},settb=AVTB{snapshot_trim},"
-                    f"setpts=N/({target_fps}*TB),format=yuv420p"
-                )
-                lines.append(
-                    f"{clip_video}{video_filters}{visible_filter}{gap_video_filter}{clip_output_label}"
-                )
+                if snapshot:
+                    video_filters += snapshot_filters
+                else:
+                    video_filters += f",fps={target_fps}:start_time=0:eof_action=pass,"
+                    video_filters += fit_video_frame_count(picture_frames, target_fps)
+                lines.append(f"{clip_video}{video_filters},setsar=1,format=yuv420p"
+                             f"{visible_filter}{gap_filter}{clip_output_label}")
             if any(image_index in gif_inputs for image_index, _ in clip_masks):
                 aligned_clip = f"[clipgifclock{i}]"
                 lines.append(f"{clip_output_label}{align_output_frame_timestamps(target_fps)}{aligned_clip}")
@@ -2747,7 +2778,10 @@ async def run_render_job(job_id: str):
                     image_item.get("mask", "none"), image_item.get("maskScale", 100),
                     image_item.get("maskX", 50), image_item.get("maskY", 50))
                 mask_filters = (
-                    image_stream_filters(image_index, image_item, f"ownedbrush{image_index}", gap_before)
+                    image_stream_filters(
+                        image_index, image_item, f"ownedbrush{image_index}",
+                        0 if image_index in gif_inputs else gap_frames / target_fps, start_frame=gap_frames,
+                    )
                     + f",scale={render_width}:{render_height}:force_original_aspect_ratio=increase,"
                     f"crop={render_width}:{render_height},"
                     f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{mask_expression}'"
@@ -2758,8 +2792,9 @@ async def run_render_job(job_id: str):
                     mask_filters += f",fps={target_fps},settb=AVTB"
                 lines.append(f"[{mask_input}:v]{mask_filters}{mask_label}")
                 next_label = f"[v{i}]" if mask_number == len(clip_masks) - 1 else f"[v{i}mask{mask_number}]"
+                clock = video_grid(target_fps) if next_label == f"[v{i}]" and not snapshot else "settb=AVTB"
                 lines.append(f"{clip_output_label}{mask_label}overlay=0:0:format=auto:"
-                             f"enable='gte(t,{gap_before:.8f})':eof_action=pass:shortest=1,format=yuva444p,settb=AVTB{next_label}")
+                             f"enable='gte(n,{gap_frames})':eof_action=pass:shortest=1,format=yuva444p,{clock}{next_label}")
                 clip_output_label = next_label
             if snapshot:
                 continue
@@ -2771,11 +2806,10 @@ async def run_render_job(job_id: str):
 
         current_video = "[v0]"
         current_audio = "[a0]"
-        combined_duration = segment_durations[0] if segment_durations else 0
         if multitrack:
             current_video, current_audio = compose_video_tracks(
-                lines, segments, segment_durations, transition_map, total_duration,
-                render_width, render_height, target_fps, snapshot,
+                lines, segments, transition_map, total_duration, render_width, render_height, target_fps, snapshot,
+                frame_spans=frame_spans, output_frames=output_frames,
             )
         elif snapshot and not segments:
             lines.append(f"color=c=black:s={render_width}x{render_height}:r={target_fps}:d=1,settb=AVTB[v0]")
@@ -2790,35 +2824,28 @@ async def run_render_job(job_id: str):
             next_video = f"[joinv{index}]"
             next_audio = f"[joina{index}]"
             transition = transition_map.get(index)
-            if transition:
-                duration = transition["duration"]
-                offset = max(0.0, combined_duration - duration)
-                lines.append(
-                    f"{current_video}[v{index + 1}]xfade="
-                    f"transition={transition['type']}:duration={duration}:offset={offset}"
-                    f"{next_video}"
-                )
-                lines.append(join_audio(current_audio, f"[a{index + 1}]", next_audio, overlap=duration))
-                combined_duration += segment_durations[index + 1] - duration
+            span = frame_spans[index + 1]
+            if transition and span.overlap:
+                lines.append(f"{current_video}[v{index + 1}]xfade=transition={transition['type']}:"
+                             f"duration={span.overlap / target_fps:.8f}:offset={span.join_start / target_fps:.8f},"
+                             f"{fit_video_frame_count(span.end, target_fps)}{next_video}")
             else:
-                lines.append(
-                    f"{current_video}[v{index + 1}]concat=n=2:v=1:a=0{next_video}"
-                )
-                lines.append(join_audio(current_audio, f"[a{index + 1}]", next_audio))
-                combined_duration += segment_durations[index + 1]
-            current_video = next_video
-            current_audio = next_audio
+                lines.append(f"{current_video}[v{index + 1}]concat=n=2:v=1:a=0,{video_grid(target_fps)}{next_video}")
+            lines.append(join_audio(current_audio, f"[a{index + 1}]", next_audio,
+                                    overlap=transition["duration"] if transition else None))
+            current_video, current_audio = next_video, next_audio
 
-        if not multitrack and not snapshot and total_duration > video_duration + .0001:
-            tail = total_duration - video_duration
-            lines.append(f"{current_video}tpad=stop_duration={tail:.8f}:stop_mode=add:color=black[tailvideo]")
-            lines.append(f"{current_audio}apad=pad_dur={tail:.8f},atrim=duration={total_duration:.8f}[tailaudio]")
-            current_video, current_audio = "[tailvideo]", "[tailaudio]"
-
-        if any(item["_gif"] and not (multitrack and item.get("ownerClipId")) for item in image_items):
-            # Clip joins can leave ticks a microsecond off the shared frame grid.
-            lines.append(f"{current_video}{align_output_frame_timestamps(target_fps)}[imageclockbase]")
-            current_video = "[imageclockbase]"
+        if not multitrack and not snapshot:
+            tail_frames = output_frames - frame_spans[-1].end
+            if tail_frames > 0:
+                lines.append(f"{current_video}tpad=stop={tail_frames}:stop_mode=add:color=black[tailvideo]")
+                current_video = "[tailvideo]"
+            tail_seconds = total_duration - video_duration
+            if tail_seconds > .0001:
+                lines.append(f"{current_audio}apad=pad_dur={tail_seconds:.8f},atrim=duration={total_duration:.8f}[tailaudio]")
+                current_audio = "[tailaudio]"
+            lines.append(f"{current_video}settb=AVTB,setpts=N/({target_fps}*TB)[displayvideo]")
+            current_video = "[displayvideo]"
 
         for index, image_item in enumerate(image_items):
             if multitrack and image_item.get("ownerClipId"):
@@ -2960,7 +2987,9 @@ async def run_render_job(job_id: str):
         if export_range:
             first, last = export_range
             video_output, audio_output = "[rangev]", "[rangea]"
-            lines.append(f"[outv]trim=start={first:.8f}:end={last:.8f},setpts=PTS-STARTPTS{video_output}")
+            first_frame = first_output_frame(first, target_fps)
+            last_frame = first_output_frame(last, target_fps)
+            lines.append(f"[outv]trim=start_frame={first_frame}:end_frame={last_frame},{video_grid(target_fps)}{video_output}")
             lines.append(f"[outa]atrim=start={first:.8f}:end={last:.8f},asetpts=PTS-STARTPTS{audio_output}")
             progress_duration = last - first
 
@@ -2987,10 +3016,12 @@ async def run_render_job(job_id: str):
 
         def render_command(use_hardware, policy):
             cmd = [FFMPEG_BIN, "-y", "-nostdin", "-hide_banner", "-filter_complex_threads", str(policy.filter_threads)]
+            if snapshot:
+                cmd.extend(["-copyts", "-start_at_zero"])
             for source in video_inputs:
                 cmd.extend(["-threads", str(policy.decoder_threads)])
                 if snapshot:
-                    cmd.extend(["-ss", f"{source['snapshot_seek']:.8f}", "-t", f"{source['snapshot_duration']:.8f}"])
+                    cmd.extend(["-ss", f"{source['snapshot_seek']:.8f}", "-noaccurate_seek"])
                 # Full renders trim decoded streams: demux seeking can alter
                 # compressed audio priming and discard-padding at clip edges.
                 cmd.extend(["-i", source["path"]])

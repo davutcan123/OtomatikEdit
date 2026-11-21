@@ -1,5 +1,6 @@
 """Track layout and source-space crop helpers shared by render and snapshots."""
 import math
+import re
 
 from render_audio import join_audio
 
@@ -64,31 +65,73 @@ def next_track_clip(segments, boundary):
 
 def shift_clip_filter_time(filters, offset, fps=30):
     """Keep keyframes/animations at clip time zero during incoming pre-roll."""
-    import re
     if offset <= 0:
         return filters
     def quoted(match):
         expression = re.sub(r"\b(t|T|it)\b", lambda variable: f"max(0,{variable.group(0)}-{offset:.8f})", match.group(1))
         expression = re.sub(r"\bon\b", f"max(0,on-{offset * fps:.8f})", expression)
         return "'" + expression + "'"
-    filters = re.sub(r"'([^']*)'", quoted, filters)
+    return shift_fade_time(re.sub(r"'([^']*)'", quoted, filters), offset)
+
+
+def shift_fade_time(filters, offset):
+    if offset <= 0:
+        return filters
     # FFmpeg fade's start is a literal option, not a quoted time expression.
     return re.sub(r"(fade=t=(?:in|out):st=)([0-9.]+)",
                   lambda match: match.group(1) + f"{float(match.group(2)) + offset:.8f}", filters)
 
 
-def compose_video_tracks(lines, segments, segment_durations, transitions, total_duration,
-                         width, height, fps, snapshot=None):
+def video_grid(fps):
+    """Reset a consecutive video stream to the target frame ticks."""
+    return f"settb=expr=1/{fps},setpts=N"
+
+
+def fit_video_frame_count(frames, fps):
+    """Hold the last decoded picture into any vacant trailing frame slots."""
+    return f"tpad=stop=-1:stop_mode=clone,trim=end_frame={frames},{video_grid(fps)}"
+
+
+def sample_source_frames(samples, speed, fps, *, interpolate=False):
+    """Hold the source picture at each target tick, using source timestamps."""
+    # Keep the same sub-frame lattice after a bounded seek. Independent
+    # microsecond rounding of each window's start can shift one source sample.
+    ticks_per_frame = 100_000
+    time_base_denominator = fps * ticks_per_frame
+    origin_pts = round(samples.origin * time_base_denominator)
+    window_pts = samples.first_source_tick * ticks_per_frame
+    filters = (
+        f"settb=expr=1/{time_base_denominator},"
+        f"setpts=round((PTS{-origin_pts:+d})/{speed:.8f}){-window_pts:+d}"
+    )
+    if interpolate and samples.count >= 3:
+        # Interpolate native pictures before the regular sampler can duplicate
+        # them. Keep a small motion window across the first requested tick.
+        filters += f",trim=start=-0.5,minterpolate=fps={fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
+    filters += f",fps={fps}:start_time=0:round=up:eof_action=pass,{fit_video_frame_count(samples.count, fps)}"
+    if samples.reverse:
+        filters += ",reverse"
+    if samples.timeline_offset:
+        # Use AVTB for a fractional authored transition handle.
+        offset_us = round(samples.timeline_offset * 1_000_000)
+        filters += f",settb=AVTB,setpts=PTS+{offset_us}"
+    return filters
+
+
+def compose_video_tracks(lines, segments, transitions, total_duration,
+                         width, height, fps, snapshot=None, *, frame_spans=(), output_frames=1):
     """Join each track, then composite alpha video and mix audio in wall time."""
-    def crossfade(left, right, transition, offset, target):
+    def crossfade(left, right, transition, offset, target, *, duration=None, frames=None):
         # xfade interpolates each channel independently. Interpolate premultiplied
         # RGB so a partially transparent fade cannot darken the lower track twice.
         stem = target.strip("[]")
         lines.append(f"{left}format=gbrap,premultiply=inplace=1[{stem}left]")
         lines.append(f"{right}format=gbrap,premultiply=inplace=1[{stem}right]")
+        duration = transition["duration"] if duration is None else duration
+        conformance = "" if frames is None else "," + fit_video_frame_count(frames, fps)
         lines.append(f"[{stem}left][{stem}right]xfade=transition={transition['type']}:"
-                     f"duration={transition['duration']:.8f}:offset={offset:.8f},"
-                     f"unpremultiply=inplace=1,format=yuva444p{target}")
+                     f"duration={duration:.8f}:offset={offset:.8f},"
+                     f"unpremultiply=inplace=1,format=yuva444p{conformance}{target}")
 
     groups = video_track_groups(segments)
     tracks = []
@@ -105,26 +148,28 @@ def compose_video_tracks(lines, segments, segment_durations, transitions, total_
     else:
         for number, indices in enumerate(groups.values()):
             video, audio = f"[v{indices[0]}]", f"[a{indices[0]}]"
-            duration = segment_durations[indices[0]]
             for left, right in zip(indices, indices[1:]):
                 next_video, next_audio = f"[track{number}v{right}]", f"[track{number}a{right}]"
                 transition = transitions.get(left)
-                if transition:
-                    overlap = transition["duration"]
-                    crossfade(video, f"[v{right}]", transition, max(0, duration - overlap), next_video)
-                    lines.append(join_audio(audio, f"[a{right}]", next_audio, overlap=f"{overlap:.8f}"))
-                    duration += segment_durations[right] - overlap
+                span = frame_spans[right]
+                if transition and span.overlap:
+                    crossfade(video, f"[v{right}]", transition, span.join_start / fps, next_video,
+                              duration=span.overlap / fps, frames=span.end)
                 else:
-                    lines.append(f"{video}[v{right}]concat=n=2:v=1:a=0{next_video}")
-                    lines.append(join_audio(audio, f"[a{right}]", next_audio))
-                    duration += segment_durations[right]
+                    lines.append(f"{video}[v{right}]concat=n=2:v=1:a=0,{video_grid(fps)}{next_video}")
+                audio_overlap = f"{transition['duration']:.8f}" if transition else None
+                lines.append(join_audio(audio, f"[a{right}]", next_audio, overlap=audio_overlap))
                 video, audio = next_video, next_audio
             tracks.append((video, audio))
-    lines.append(f"color=c=black:s={width}x{height}:r={fps}:d={max(1 / fps, total_duration):.8f},"
+    lines.append(f"color=c=black:s={width}x{height}:r={fps},trim=end_frame={output_frames},"
                  f"settb=AVTB,setpts=N/({fps}*TB)[trackbackground]")
     current = "[trackbackground]"
     for number, (video, _) in enumerate(tracks):
         target = f"[trackcomposite{number}]"
+        if not snapshot:
+            aligned = f"[trackdisplay{number}]"
+            lines.append(f"{video}settb=AVTB,setpts=N/({fps}*TB){aligned}")
+            video = aligned
         lines.append(f"{current}{video}overlay=0:0:eof_action=pass:repeatlast=0:shortest=0{target}")
         current = target
     audio = None

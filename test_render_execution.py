@@ -220,8 +220,12 @@ class RenderExecutionTests(unittest.TestCase):
                       if item in {"-filter_complex_script", "-/filter_complex"})
         self.assertFalse(script.exists())
         expected_trims = [(3.0, 3.6), (1.0, 1.5), (2.0, 2.4)]
-        for pattern in [r"(?<!a)trim=start=([\d.]+):end=([\d.]+)", r"atrim=start=([\d.]+):end=([\d.]+)"]:
-            self.assertEqual([tuple(map(float, pair)) for pair in re.findall(pattern, text)], expected_trims)
+        audio_pattern = r"atrim=start=([\d.]+):end=([\d.]+)"
+        self.assertEqual([tuple(map(float, pair)) for pair in re.findall(audio_pattern, text)], expected_trims)
+        # Sampling holds the preceding source frame across an off-grid lower
+        # boundary, then discards source frames beyond the exclusive upper bound.
+        video_ends = re.findall(r"(?<!a)trim=end=([\d.]+)", text)
+        self.assertEqual(list(map(float, video_ends)), [end for _, end in expected_trims])
         self.assert_successful_cpu_output(result, duration=1.5)
         output = Path(self.backend.OUTPUT_DIR) / f"out_{result['job_id']}.mp4"
         colors = subprocess.check_output([

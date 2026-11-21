@@ -49,6 +49,14 @@ class MediaRegressionTests(unittest.TestCase):
                 "-f", "lavfi", "-i", f"sine=f={frequency}:r=48000:d={audio_duration}",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(cls.uploads / f"{name}.mp4"),
             )
+        # Encode each original input frame number as eight binary blocks so
+        # snapshot/export comparisons can identify the picture after compression.
+        encoded_frames = ("color=black:s=160x96:r=25:d=4,"
+                          "geq=lum='16+200*mod(floor(N/pow(2,floor(X*8/W))),2)':cb=128:cr=128")
+        for mode in ("cfr", "vfr"):
+            options = ["-vf", "select='not(eq(mod(n,5),3))'", "-fps_mode", "vfr"] if mode == "vfr" else []
+            cls.ffmpeg("-f", "lavfi", "-i", encoded_frames, *options, "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                       str(cls.uploads / f"coded-{mode}.mp4"))
         cls.ffmpeg("-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=1", str(cls.uploads / "silence.wav"))
         first, second = Image.new("RGB", (48, 48), "yellow"), Image.new("RGB", (48, 48), "lime")
         first.save(cls.uploads / "animated.gif", save_all=True, append_images=[second], duration=[300, 300], loop=0)
@@ -134,6 +142,71 @@ class MediaRegressionTests(unittest.TestCase):
         start = round(time * 48000)
         window = pcm[start:start + 2400]
         return math.sqrt(sum(sample * sample for sample in window) / len(window))
+
+    def frame_codes(self, path):
+        raw = self.ffmpeg("-i", str(path), "-vf", "crop=160:2:0:48", "-pix_fmt", "rgb24", "-f", "rawvideo", "-")
+        frame_size = 160 * 2 * 3
+        return [
+            sum(1 << bit for bit in range(8) if raw[offset + (bit * 20 + 10) * 3] > 100)
+            for offset in range(0, len(raw), frame_size)
+        ]
+
+    def test_cfr_and_vfr_use_the_same_source_ticks_in_bounded_snapshots(self):
+        for mode in ("cfr", "vfr"):
+            for speed, reverse, animation in ((1, False, "none"), (1.3, False, "none"),
+                                              (1.3, True, "none"), (1.3, False, "zoom")):
+                with self.subTest(mode=mode, speed=speed, reverse=reverse, animation=animation):
+                    clip = {"fileId": f"coded-{mode}.mp4", "start": .11, "end": 2.91, "speed": speed,
+                            "reverse": reverse, "animation": animation}
+                    output = self.export([clip])
+                    codes = self.frame_codes(output)
+                    self.assertEqual(len(codes), math.ceil((2.91 - .11) / speed * 30 - 1e-7))
+                    self.assertGreater(len(set(codes)), 20)
+                    for index in (0, 2, 16, 20, 30, 48, len(codes) - 1):
+                        still = self.export([clip], snapshot_time=index / 30 + .005)
+                        image = self.frame(still)
+                        actual = sum(1 << bit for bit in range(8) if image.getpixel((bit * 20 + 10, 48))[0] > 100)
+                        self.assertEqual(actual, codes[index], f"output frame {index}")
+
+    def test_exact_output_span_for_mismatched_fps_and_frame_based_range(self):
+        clip = {"fileId": "coded-cfr.mp4", "start": .4, "end": 2.9}
+        for multitrack in (False, True):
+            with self.subTest(multitrack=multitrack):
+                output = self.export([clip], multitrack=multitrack)
+                self.assert_video_stream(output, 75, 2.5)
+                part = self.export([clip], multitrack=multitrack, range_in=.55, range_out=1.32)
+                self.assertEqual(self.frame_codes(part), self.frame_codes(output)[17:40])
+                exact = self.export([clip], multitrack=multitrack, range_in=.5, range_out=2.3)
+                self.assert_video_stream(exact, 54, 1.8)
+                self.assertEqual(self.frame_codes(exact), self.frame_codes(output)[15:69])
+
+    def test_subframe_trim_still_holds_the_source_picture(self):
+        # VFR fixture has a held frame over the entire interval .12–.15.
+        clip = {"fileId": "coded-vfr.mp4", "start": .12, "end": .15}
+        output = self.export([clip])
+        self.assert_video_stream(output, 1, 1 / 30)
+        self.assertEqual(self.frame_codes(output), [2])
+        still = self.export([clip], snapshot_time=0)
+        self.assertGreater(self.frame(still).getpixel((30, 48))[0], 160)
+
+    def test_fractional_crossfade_has_planned_duration_in_both_layouts(self):
+        for multitrack, frames in ((False, 32), (True, 39)):
+            with self.subTest(multitrack=multitrack):
+                clips = [
+                    {"fileId": "changing.mp4", "start": 0, "end": .55},
+                    {"fileId": "changing.mp4", "start": 2.55, "end": 3.27, "timelineStart": .55},
+                ]
+                options = {"transitions": [{"boundary": 0, "type": "fade", "duration": .23}]}
+                output = self.export(clips, multitrack=multitrack, **options)
+                self.assert_video_stream(output, frames, frames / 30)
+                time = 13 / 30
+                still = self.export(clips, snapshot_time=time, multitrack=multitrack, **options)
+                rendered = self.frame(output, time - .001).getpixel((80, 48))
+                captured = self.frame(still).getpixel((80, 48))
+                for pixel in (rendered, captured):
+                    self.assertTrue(pixel[0] > 60 and pixel[2] > 60, pixel)
+                for a, b in zip(rendered, captured):
+                    self.assertAlmostEqual(a, b, delta=16)
 
     def test_short_audio_does_not_advance_the_next_clip(self):
         for multitrack in (False, True):
@@ -245,6 +318,33 @@ class MediaRegressionTests(unittest.TestCase):
                     red, green, _ = pixels.getpixel((80, 48))
                     self.assertGreater(green, 210)
                     self.assertEqual(red > 180, expected_yellow)
+
+    def test_clip_owned_gif_uses_materialized_cut_after_variable_source_trim_and_speed(self):
+        for start, end, speed, gap in ((0, .55, 1, 0), (0, .53, 1, 0),
+                                        (.07, .55, 1.3, 0), (0, .55, 1, .24)):
+            cut = (end - start) / speed + gap
+            cut_frame = math.ceil(cut * 30 - 1e-7)
+            clips = [
+                {"fileId": "changing.mp4", "clipId": "first", "videoTrack": 1,
+                 "start": start, "end": end, "speed": speed, "timelineStart": gap},
+                {"fileId": "changing.mp4", "clipId": "owner", "videoTrack": 1,
+                 "start": 0, "end": 1.4, "timelineStart": cut},
+            ]
+            mask = {"fileId": "fractional.gif", "start": cut, "end": cut + 1.4,
+                    "scale": 50, "mask": "circle", "ownerClipId": "owner", "ownerVideoTrack": 1}
+            with self.subTest(start=start, end=end, speed=speed, gap=gap):
+                movie = self.export(clips, multitrack=True, images=[mask])
+                pixels = self.ffmpeg("-i", str(movie), "-vf", "crop=2:2:80:48", "-pix_fmt", "rgb24", "-f", "rawvideo", "-")
+                self.assertEqual(next(frame for frame in range(len(pixels) // 12) if pixels[frame * 12 + 1] > 150),
+                                 cut_frame)
+                for local_frame in (2, 3, 4, 5, 9, 13, 17, 21):
+                    frame = cut_frame + local_frame
+                    offset = frame * 12
+                    expected_yellow = (local_frame * 1_000_000 // 30) % 140000 < 80000
+                    snapshot = self.export(clips, snapshot_time=frame / 30 + .005, multitrack=True, images=[mask])
+                    for red, green, _ in (pixels[offset:offset + 3], self.frame(snapshot).getpixel((80, 48))):
+                        self.assertGreater(green, 210)
+                        self.assertEqual(red > 180, expected_yellow, f"frame {frame}")
 
     def test_gif_snapshot_reduces_a_late_timeline_time_to_one_cycle(self):
         clip = {"fileId": "changing.mp4", "start": 0, "end": 2, "timelineStart": 10_000}

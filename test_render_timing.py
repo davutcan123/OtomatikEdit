@@ -2,7 +2,8 @@
 import unittest
 
 from render_audio import clip_audio_filter, join_audio, mix_audio_layers
-from render_timing import ClipClock, TimelineClip, normalize_zoom_cadence, plan_render_timing, snapshot_source_window
+from render_timing import (ClipClock, TimelineClip, normalize_zoom_cadence, plan_render_timing,
+                           plan_video_frames, snapshot_source_window, source_frame_samples)
 
 
 class RenderTimingTests(unittest.TestCase):
@@ -20,14 +21,13 @@ class RenderTimingTests(unittest.TestCase):
         reverse = TimelineClip(ClipClock(2, 7, 2, True), .25, .75)
         self.assertEqual(forward.duration, 3.5)
         self.assertEqual(reverse.duration, 3.5)
-        for timing, bounds in ((forward, (0, 5.5)), (reverse, (2, 7.5))):
+        for timing, bounds, seek in ((forward, (0, 5.5), 0), (reverse, (2, 7.5), 7)):
             with self.subTest(reverse=timing.clock.reverse):
                 trim = timing.source_trim(7.5)
                 self.assertEqual((trim.start, trim.end), bounds)
                 self.assertEqual(trim.missing_handle, .5)
                 window = snapshot_source_window(timing.clock, -.75, 7.5, allow_preroll=True)
-                self.assertEqual(window.trim_time, -.25)
-                self.assertEqual(window.output_base, -.25)
+                self.assertEqual(window.source_start, seek)
                 self.assertEqual(window.source_duration, .5)
 
     def test_render_and_snapshot_plan_respect_gaps_tracks_and_overlap(self):
@@ -46,6 +46,25 @@ class RenderTimingTests(unittest.TestCase):
         self.assertEqual(single.output_duration, 4.75)
         snapshot = plan_render_timing(sections, [], multitrack=True, layer_duration=6, snapshot_fps=24)
         self.assertEqual(snapshot.output_duration, 1 / 24)
+
+    def test_video_spans_quantize_cumulative_positions_instead_of_each_duration(self):
+        sections = [
+            {"start": 0, "end": .55, "timelineStart": .24},
+            {"start": .07, "end": .55, "speed": 1.3, "timelineStart": .79},
+            {"start": 0, "end": .51, "timelineStart": .79 + .48 / 1.3},
+        ]
+        timing = plan_render_timing(sections, [], multitrack=True, layer_duration=0)
+        spans = plan_video_frames(sections, timing, [], 30, multitrack=True)
+        self.assertEqual([(item.join_start, item.picture_start, item.end) for item in spans],
+                         [(0, 8, 24), (24, 24, 35), (35, 35, 51)])
+
+    def test_bounded_reverse_samples_keep_the_export_source_grid_origin(self):
+        clock = ClipClock(.07, .55, 1.3, True)
+        full = source_frame_samples(clock, 30, .15, 0, 20)
+        window = source_frame_samples(clock, 30, .15, 6, 13, snapshot=True)
+        self.assertEqual(full.origin, window.origin)
+        self.assertEqual((full.first_source_tick, window.first_source_tick), (-20, -13))
+        self.assertEqual((full.count, window.count, window.timeline_offset), (21, 8, .2))
 
     def test_zoom_receives_output_cadence_and_restores_each_snapshot_base(self):
         first = "trim=end=3,setpts=(PTS-STARTPTS)/2.00000000"
