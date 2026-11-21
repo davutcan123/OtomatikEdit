@@ -7,7 +7,7 @@
   const replacement = field('replace');
   const search = field('search');
   const styleFields = ['styleName','fontFamily','bold','size','color','outlineColor','outlineWidth','background','backgroundOpacity','shadow'];
-  let pendingImport = null, pendingExport = null, lastScope = '', listSignature = '', editorSignature = '';
+  let pendingImport = null, pendingExport = null, lastScope = '', listSignature = '', cueSignature = '';
   const scope = () => workspaceGeneration+':'+timelineGeneration;
   const texts = () => S.texts.filter(item=>item.kind==='subtitle');
   const selected = () => {
@@ -55,15 +55,17 @@
   function renderEditor(item) {
     field('editor').hidden = !item;
     for (const id of ['text','start','end','style','font','apply-edit','apply-all']) field(id).disabled = !item||locked();
-    const signature = JSON.stringify(item&&[item.id,item.start,item.end,item.text,item.styleName,item.fontFamily,item.bold]);
-    if (!item||signature===editorSignature) {editorSignature=signature;return;}
-    editorSignature = signature;
-    field('text').value = item.text;
-    field('start').value = Number(item.start.toFixed(3));
-    field('end').value = Number(item.end.toFixed(3));
+    const signature = JSON.stringify(item&&[scope(),item.id,item.start,item.end,item.text]);
+    if (item&&signature!==cueSignature) {
+      field('text').value = item.text;
+      field('start').value = Number(item.start.toFixed(3));
+      field('end').value = Number(item.end.toFixed(3));
+      displayCharacterCount();
+    }
+    cueSignature = signature;
+    if(!item)return;
     field('style').value = item.styleName||'classic';
     field('font').value = window.StudioFonts?.normalize(item.fontFamily)||'default';
-    displayCharacterCount();
   }
 
   function refresh() {
@@ -202,7 +204,7 @@
     const existingStyle=el('subtitle-selected-style'), existingFont=el('subtitle-selected-font-family');
     field('style').replaceChildren(...[...existingStyle.options].map(option=>option.cloneNode(true)));
     field('font').replaceChildren(...[...existingFont.options].map(option=>option.cloneNode(true)));
-    editorSignature='';refresh();
+    refresh();
   }
   field('import').onclick=()=>field('file').click();
   field('file').onchange=event=>{

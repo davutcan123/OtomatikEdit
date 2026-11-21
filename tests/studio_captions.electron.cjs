@@ -180,8 +180,14 @@ async function checkEditingAndReplacement() {
   assert.deepEqual(await rendererCues(),original);
   await editFirstCue();
   assert.deepEqual(await rendererCues(),edited);
+  await updateControl('studio-caption-text','Geçici metin','input');
+  await updateControl('studio-caption-start',.325,'input');
+  await updateControl('studio-caption-end',1.225,'input');
   await updateControl('studio-caption-style','neon');
   await updateControl('studio-caption-font','barlow');
+  const drafts=await evaluate("['text','start','end'].map(field=>el('studio-caption-'+field).value)");
+  assert.deepEqual(drafts,['Geçici metin','0.325','1.225'],'Appearance changes preserve an unapplied draft');
+  assert.deepEqual(await rendererCues(),edited,'Appearance changes do not commit the cue draft');
   await evaluate(`S.texts[1].transformKeyframes=[{id:'fixture-frame',time:.1,scale:107,x:50,y:87,opacity:100,easing:'linear'}];S.texts[1].sourceKey='keep-source'`);
   const sourceState=await evaluate('JSON.stringify([S.texts[1].transformKeyframes,S.texts[1].sourceKey])');
   await click('#studio-caption-apply-all');
@@ -290,6 +296,29 @@ async function checkBrowserExport(named,nativeData) {
   assert.deepEqual(assertSrt(browserFile),nativeData);
 }
 
+async function checkDraftIsolation() {
+  await evaluate(`(() => {
+    const state=emptyTimelineState();
+    state.texts=[{...TEXT_STYLES.classic,id:'T1',kind:'subtitle',styleName:'classic',text:'Kayıtlı metin',start:1,end:2}];
+    state.selectedText='T1';
+    restoreProject({id:'first',name:'Birinci proje',activeTimelineId:'TL1',
+      timelines:[{id:'TL1',name:'Bir',state},{id:'TL2',name:'İki',state:structuredClone(state)}]});
+  })()`);
+  const draft=()=>evaluate("['text','start','end'].map(field=>el('studio-caption-'+field).value)");
+  assert.deepEqual(await draft(),['Kayıtlı metin','1','2']);
+  const writeDraft=async text=>{
+    await updateControl('studio-caption-text',text,'input');
+    await updateControl('studio-caption-start',.5,'input');
+    await updateControl('studio-caption-end',2.5,'input');
+  };
+  await writeDraft('İlk çizelgenin taslağı');
+  await evaluate("switchTimeline('TL2')");
+  assert.deepEqual(await draft(),['Kayıtlı metin','1','2'],'An identical cue in a different timeline starts from saved values');
+  await writeDraft('İlk projenin taslağı');
+  await evaluate(`(()=>{const project=projectPayload();restoreProject({...project,id:'second',name:'İkinci proje'})})()`);
+  assert.deepEqual(await draft(),['Kayıtlı metin','1','2'],'Even identical timeline and cue IDs are scoped to the current project');
+}
+
 async function render(captions) {
   const job=await evaluate(`(async()=>{
     const data=manualExportData();data.resolution={width:320,height:180};
@@ -336,6 +365,7 @@ app.whenReady().then(async()=>{
   const nativeData=await checkNativeExports();
   await checkRenderedTiming();
   await checkBrowserExport(named,nativeData);
+  await checkDraftIsolation();
   console.log('SRT editor, restore, both save paths and timed FFmpeg render verified.',artifacts);
 }).catch(error=>{
   console.error(error);
