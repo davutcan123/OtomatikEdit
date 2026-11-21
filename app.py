@@ -29,7 +29,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.datastructures import Headers
 from runtime_paths import resolve_runtime_paths, import_legacy_projects
 from studio_preferences import MAX_BYTES as STUDIO_PREFERENCES_LIMIT, read_preferences, write_preference
-from preview_media import PreviewBusy, PreviewCache, PreviewError
+from preview_media import PreviewBusy, PreviewCache, PreviewError, original_streams
 from render_resources import choose_render_resources
 from render_encoder import select_video_encoder, invalidate_nvenc, is_nvenc_failure
 from render_overlays import compact_overlay
@@ -745,8 +745,22 @@ def is_gif_image(filepath: str) -> bool:
         return source.read(6) in {b"GIF87a", b"GIF89a"}
 
 
+def source_playback_streams(filepath):
+    import subprocess
+    try:
+        return original_streams(FFPROBE_BIN, filepath)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None, None
+
+
 def get_video_dimensions(filepath: str) -> tuple[int, int]:
     import subprocess
+    if get_media_kind(filepath) == "video":
+        video, _ = source_playback_streams(filepath)
+        if video and video.get("width") and video.get("height"):
+            width, height = video["width"], video["height"]
+            rotation = next((item.get("rotation", 0) for item in video.get("side_data_list", []) if "rotation" in item), 0)
+            return (height, width) if abs(float(rotation)) % 180 == 90 else (width, height)
     cmd = [
         FFPROBE_BIN, "-v", "error", "-select_streams", "v:0",
         "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", filepath
@@ -1437,8 +1451,10 @@ def create_sticker_overlay(path: str, item: dict, width: int, height: int):
     canvas.save(path, "PNG")
 
 async def detect_silence(filepath: str, threshold: float, min_duration: float):
+    _, audio = await asyncio.to_thread(source_playback_streams, filepath)
+    stream = f"0:{audio['index']}" if audio else "0:a:0"
     cmd = [
-        FFMPEG_BIN, "-nostdin", "-xerror", "-i", filepath, "-map", "0:a:0",
+        FFMPEG_BIN, "-nostdin", "-xerror", "-i", filepath, "-map", stream,
         "-af", f"silencedetect=noise={threshold}dB:d={min_duration}",
         "-f", "null", "-"
     ]
@@ -2324,6 +2340,8 @@ async def run_render_job(job_id: str):
             gap_before, preroll = timing.gap, timing.preroll
             source_info = video_input_map[seg["fileId"]]
             input_index = source_info["index"]
+            video_stream = source_info.get("video_index", "v")
+            clip_video = f"[{input_index}:{video_stream}]"
             clip_masks = owned_masks.get(seg.get("clipId"), [])
             clip_output_label = f"[v{i}unmasked]" if clip_masks else f"[v{i}]"
             trim = timing.source_trim(source_info.get("duration", timing.clock.source_end))
@@ -2617,7 +2635,7 @@ async def run_render_job(job_id: str):
                     f"setpts=N/({target_fps}*TB)"
                 )
                 foreground_label = f"[clipfg{i}]"
-                lines.append(f"[{input_index}:v]{video_filters}{foreground_label}")
+                lines.append(f"{clip_video}{video_filters}{foreground_label}")
                 lines.append(
                     f"color=c={'black@0' if multitrack else 'black'}:s={render_width}x{render_height}:r={target_fps}:d={clip_duration + preroll:.8f},"
                     f"{'format=rgba,' if multitrack else ''}"
@@ -2706,7 +2724,7 @@ async def run_render_job(job_id: str):
                     f"setpts=N/({target_fps}*TB),format=yuv420p"
                 )
                 lines.append(
-                    f"[{input_index}:v]{video_filters}{visible_filter}{gap_video_filter}{clip_output_label}"
+                    f"{clip_video}{video_filters}{visible_filter}{gap_video_filter}{clip_output_label}"
                 )
             if any(image_index in gif_inputs for image_index, _ in clip_masks):
                 aligned_clip = f"[clipgifclock{i}]"
@@ -2735,7 +2753,8 @@ async def run_render_job(job_id: str):
                 clip_output_label = next_label
             if snapshot:
                 continue
-            audio_source = f"[{input_index}:a]" if source_info.get("hasAudio", True) else None
+            audio_stream = source_info.get("audio_index", "a")
+            audio_source = f"[{input_index}:{audio_stream}]" if source_info.get("hasAudio", True) else None
             lines.append(clip_audio_filter(
                 audio_source, f"[a{i}]", seg, timing, trim, mute=job.get("mute_video_audio", False),
             ))
@@ -3603,12 +3622,21 @@ async def start_render(
         if not os.path.exists(segment_path) or get_media_kind(segment_file_id) != "video":
             raise HTTPException(400, "Timeline'daki video dosyası bulunamadı")
         if segment_file_id not in video_sources:
-            video_sources[segment_file_id] = {
+            video_stream, audio_stream = await asyncio.to_thread(source_playback_streams, segment_path)
+            has_audio = bool(audio_stream)
+            if not video_stream and not snapshot:
+                has_audio = await asyncio.to_thread(video_has_audio, segment_path)
+            source = {
                 "fileId": segment_file_id,
                 "path": segment_path,
                 "duration": await asyncio.to_thread(get_video_duration, segment_path),
-                "hasAudio": False if snapshot else await asyncio.to_thread(video_has_audio, segment_path),
+                "hasAudio": not snapshot and has_audio,
             }
+            if video_stream:
+                source["video_index"] = video_stream["index"]
+            if audio_stream and not snapshot:
+                source["audio_index"] = audio_stream["index"]
+            video_sources[segment_file_id] = source
         video_duration = video_sources[segment_file_id]["duration"]
         try:
             start = float(segment["start"])
@@ -3937,8 +3965,10 @@ async def get_waveform(
     end = max(start + .02, min(float(end) if end > 0 else duration, duration))
     width = max(80, min(1600, int(width)))
     height = max(24, min(96, int(height)))
+    _, audio = await asyncio.to_thread(source_playback_streams, path)
+    stream = f"0:{audio['index']}" if audio else "0:a:0"
     cache_key = hashlib.sha1(
-        f"{safe_id}:{start:.3f}:{end:.3f}:{width}:{height}".encode("utf-8")
+        f"v2:{safe_id}:{stream}:{start:.3f}:{end:.3f}:{width}:{height}".encode("utf-8")
     ).hexdigest()
     output_path = os.path.join(WAVEFORM_DIR, f"{cache_key}.png")
 
@@ -3947,7 +3977,7 @@ async def get_waveform(
             FFMPEG_BIN, "-v", "error", "-y", "-ss", f"{start:.3f}",
             "-t", f"{end - start:.3f}", "-i", path,
             "-filter_complex",
-            f"aformat=channel_layouts=mono,showwavespic=s={width}x{height}:colors=0x4ade80:draw=full",
+            f"[{stream}]aformat=channel_layouts=mono,showwavespic=s={width}x{height}:colors=0x4ade80:draw=full",
             "-frames:v", "1", output_path,
         ]
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

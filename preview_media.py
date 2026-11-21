@@ -3,9 +3,11 @@
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass
+from functools import lru_cache
 from hashlib import sha256
 import json
 import os
+import subprocess
 from pathlib import Path
 import tempfile
 import threading
@@ -41,15 +43,44 @@ def source_fingerprint(path):
     return sha256(repr(identity).encode("utf-8")).hexdigest()
 
 
-def profile_media(path, data):
+def probe_stream_arguments(ffprobe, path):
+    return [
+        ffprobe, "-v", "error", "-show_entries",
+        "stream=index,codec_type,codec_name,pix_fmt,width,height:"
+        "stream_disposition=default,attached_pic:stream_side_data=rotation:format=format_name",
+        "-of", "json", str(path),
+    ]
+
+
+def select_playback_streams(data):
     streams = data.get("streams", [])
     video = next((item for item in streams if item.get("codec_type") == "video"
                   and not item.get("disposition", {}).get("attached_pic")), None)
-    if not video or min(video.get("width", 0), video.get("height", 0)) <= 0:
-        raise PreviewError("Videoda görüntü akışı bulunamadı.")
     audio_streams = [item for item in streams if item.get("codec_type") == "audio"]
     audio = next((item for item in audio_streams if item.get("disposition", {}).get("default")),
-                 audio_streams[0] if audio_streams else {})
+                 audio_streams[0] if audio_streams else None)
+    return video, audio
+
+
+@lru_cache(maxsize=256)
+def _probe_original_streams(ffprobe, path, fingerprint):
+    output = subprocess.run(
+        probe_stream_arguments(ffprobe, path), stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, check=True, timeout=20,
+    ).stdout
+    return select_playback_streams(json.loads(output))
+
+
+def original_streams(ffprobe, path):
+    path = Path(path)
+    return _probe_original_streams(ffprobe, path, source_fingerprint(path))
+
+
+def profile_media(path, data):
+    video, audio = select_playback_streams(data)
+    if not video or min(video.get("width", 0), video.get("height", 0)) <= 0:
+        raise PreviewError("Videoda görüntü akışı bulunamadı.")
+    audio = audio or {}
     codec, pixel = video.get("codec_name"), video.get("pix_fmt")
     audio_codec = audio.get("codec_name")
     suffix = path.suffix.lower()
@@ -62,6 +93,13 @@ def profile_media(path, data):
              or (codec == "hevc" and pixel in {"yuv420p", "yuvj420p", "yuv420p10le"}))
         or webm and codec in {"vp8", "vp9", "av1"} and audio_codec in {None, "opus", "vorbis"}
     )
+    streams = data.get("streams", [])
+    if sum(item.get("codec_type") == "video" for item in streams) > 1 or sum(
+        item.get("codec_type") == "audio" for item in streams
+    ) > 1:
+        # Browser track ordering can differ, especially with cover art or
+        # commentary. Pin ambiguous sources to the same streams as the editor.
+        native = False
     return MediaProfile(video["index"], audio.get("index"), video["width"], video["height"], bool(native))
 
 
@@ -111,11 +149,12 @@ class PreviewCache:
 
             async def worker():
                 with self.lock:
-                    limit = self.worker_limits.get(loop)
-                    if limit is None:
-                        limit = asyncio.Semaphore(1)
-                        self.worker_limits[loop] = limit
-                async with limit:
+                    limits = self.worker_limits.get(loop)
+                    if limits is None:
+                        limits = {"metadata": asyncio.Semaphore(4), "encode": asyncio.Semaphore(1)}
+                        self.worker_limits[loop] = limits
+                kind = "metadata" if key[-1] == "metadata" else "encode"
+                async with limits[kind]:
                     return await make_result()
 
             try:
@@ -161,12 +200,7 @@ class PreviewCache:
                 return cached
 
         async def probe():
-            output = await self._run([
-                self.ffprobe, "-v", "error", "-show_entries",
-                "stream=index,codec_type,codec_name,pix_fmt,width,height:"
-                "stream_disposition=default,attached_pic:format=format_name",
-                "-of", "json", str(path),
-            ], timeout=20, capture=True)
+            output = await self._run(probe_stream_arguments(self.ffprobe, path), timeout=20, capture=True)
             profile = profile_media(path, json.loads(output))
             with self.lock:
                 self.profiles[fingerprint] = profile
