@@ -78,16 +78,25 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
     mainWindow.webContents.downloadURL(origin + result.download_url);
   });
   assert.equal((await fs.stat(nativeSaved)).size, (await fs.stat(renderPath)).size);
-  const nativeSaveResult = await mainWindow.webContents.executeJavaScript(`window.desktopApp.saveOutput(${JSON.stringify(result.download_url)})`);
+  const { nativeSaveResult, outputMarkedSaved, downloadWasVisible, downloadIsHidden } = await mainWindow.webContents.executeJavaScript(`(async () => {
+    const output = outputJobs.begin('manual', 'mp4', 'Render hazırlanıyor');
+    outputJobs.complete(output, ${JSON.stringify(result.download_url)}, 'Çıktı hazır');
+    outputJobs.finish(output);
+    const download = document.getElementById('manual-download-top');
+    const downloadWasVisible = !download.classList.contains('hidden');
+    const nativeSaveResult = await saveCompletedOutput(output);
+    return { nativeSaveResult, outputMarkedSaved: output.saved, downloadWasVisible, downloadIsHidden: download.classList.contains('hidden') };
+  })()`);
+  assert.equal(downloadWasVisible, true);
   assert.equal(nativeSaveResult.saved, true);
-  assert.equal((await fs.stat(nativeSaveResult.path)).size, (await fs.stat(renderPath)).size);
+  assert.equal(outputMarkedSaved, true);
+  assert.equal(downloadIsHidden, true);
+  assert.deepEqual(await fs.readFile(nativeSaveResult.path), await fs.readFile(renderPath));
   const srtText = '\uFEFF1\r\n00:00:00,125 --> 00:00:01,625\r\nİstanbul’da güzel gün.\r\nÇığ düşmedi.\r\n';
   const nativeSubtitles = await mainWindow.webContents.executeJavaScript(`desktopApp.saveSubtitles('İstanbul - altyazı.srt',${JSON.stringify(srtText)})`);
   assert.equal(nativeSubtitles.saved, true);
   assert.deepEqual(await fs.readFile(nativeSubtitles.path), Buffer.from(srtText, 'utf8'));
 
-  await mainWindow.webContents.executeJavaScript(`saveCompletedOutput(${JSON.stringify(result.download_url)},'manual-download','manual-log')`);
-  assert.equal(await mainWindow.webContents.executeJavaScript('document.getElementById("manual-download-top").classList.contains("hidden")'), true);
   // The actual packaged log HTML/preload must open independently, without
   // editor mutation privileges or interpreting untrusted diagnostic text.
   await mainWindow.webContents.executeJavaScript(`desktopApp.appendLog({source:'manual',message:'Packaged log <img src=x onerror=alert(1)>',level:'info'});desktopApp.openLogs()`);
