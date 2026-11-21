@@ -3129,7 +3129,7 @@ async def index(request: Request):
         # External code is restricted to these bundled entry points, not every
         # same-origin upload or future route. Inline scripts remain hash-only.
         bundled_scripts = [str(request.base_url).rstrip("/") + "/static/" + name
-                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js", "studio_commands.js")]
+                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js", "studio_commands.js", "studio/templates.js")]
         script_sources = " ".join([*hashes, *bundled_scripts])
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "

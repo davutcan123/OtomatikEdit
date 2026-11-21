@@ -53,6 +53,18 @@
     return true;
   }
 
+  function useFont(id) {
+    const { item } = selection();
+    if (item) return applyToSelection(id);
+    if (timelineToolsBlocked() || !families.has(id) || !outDuration() || isTrackLocked('text')) return false;
+    const added = addTextPreset('classic', currentOutputTime(), id);
+    if (added) {
+      drawClips();
+      scheduleAutosave();
+    }
+    return !!added;
+  }
+
   function setupInspector() {
     for (const [familyId, weightId] of [
       ['text-font-family', 'text-font-weight'],
@@ -86,7 +98,8 @@
     const { item, kind, locked } = selection();
     const id = normalize(item?.fontFamily);
     const face = families.get(id);
-    const state = JSON.stringify([item?.id, kind, id, item?.bold, locked]);
+    const canAdd = !item && outDuration() > 0 && !isTrackLocked('text');
+    const state = JSON.stringify([item?.id, kind, id, item?.bold, locked, canAdd]);
     if (!force && previousSelection === state) return;
     previousSelection = state;
     for (const [prefix, matching] of [['text', kind === 'text'], ['subtitle-selected', kind === 'subtitle']]) {
@@ -99,12 +112,15 @@
       weight.value = face ? fileWeight(face, item?.bold !== false) : item?.bold === false ? '400' : '700';
     }
     if (library) {
-      library.context.textContent = !item ? 'Uygulamak için timeline’dan bir metin ya da altyazı seçin.'
-        : locked ? 'Seçili katmanın kanalı kilitli.'
+      library.context.textContent = !item ? (
+        canAdd ? 'Seçtiğiniz yazı tipiyle oynatma noktasına metin ekleyin.' : 'Metin eklemek için düzenlenebilir bir timeline açın.'
+      ) : locked ? 'Seçili katmanın kanalı kilitli.'
           : (kind === 'subtitle' ? 'Seçili altyazı' : 'Seçili metin') + ' · ' + (face?.name || 'Varsayılan');
       library.results.querySelectorAll('[data-apply-font]').forEach(button => {
-        button.disabled = !item || locked || button.dataset.applyFont === id;
-        button.setAttribute('aria-pressed', String(button.dataset.applyFont === id));
+        button.textContent = item ? 'Uygula' : 'Bu yazı tipiyle metin ekle';
+        button.disabled = item ? locked || button.dataset.applyFont === id : !canAdd;
+        if (item) button.setAttribute('aria-pressed', String(button.dataset.applyFont === id));
+        else button.removeAttribute('aria-pressed');
       });
     }
   }
@@ -179,7 +195,7 @@
       const apply = make('button', 'Uygula');
       apply.type = 'button';
       apply.dataset.applyFont = face.id;
-      apply.addEventListener('click', () => applyToSelection(face.id));
+      apply.addEventListener('click', () => useFont(face.id));
       foot.append(meta, apply);
       card.append(header, text, foot);
       return card;

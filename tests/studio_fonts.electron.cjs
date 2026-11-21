@@ -1,59 +1,10 @@
 'use strict';
 
-const { app, BrowserWindow } = require('electron');
+const { app } = require('electron');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { withStudioBrowser } = require('./support/studio_backend.cjs');
 
-const root = path.resolve(__dirname, '..');
-const token = 'studio-fonts-test';
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-fonts-'));
-const winPython = path.join(root, '.venv-windows', 'Scripts', 'python.exe');
-const localPython = path.join(root, 'venv', 'bin', 'python');
-const python = process.env.SMART_EDITOR_PYTHON || (process.platform === 'win32'
-  ? fs.existsSync(winPython) ? winPython : 'python'
-  : fs.existsSync(localPython) ? localPython : 'python3');
-
-function startBackend() {
-  const processHandle = spawn(python, ['app.py'], {
-    cwd: root,
-    env: { ...process.env, SMART_EDITOR_DESKTOP: '1', SMART_EDITOR_DESKTOP_TOKEN: token,
-      SMART_EDITOR_DATA_DIR: temporary, SMART_EDITOR_LEGACY_DIR: '', SMART_EDITOR_PORT: '0' },
-    stdio: ['ignore', 'ignore', 'pipe'],
-  });
-  let diagnostics = '';
-  const ready = new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Backend did not start: ' + diagnostics)), 15000);
-    processHandle.stderr.on('data', buffer => {
-      diagnostics = (diagnostics + buffer).slice(-7000);
-      const origin = /http:\/\/127\.0\.0\.1:\d+/.exec(diagnostics)?.[0];
-      if (origin) {
-        clearTimeout(timeout);
-        resolve(origin);
-      }
-    });
-    processHandle.once('error', error => { clearTimeout(timeout); reject(error); });
-    processHandle.once('exit', code => { clearTimeout(timeout); reject(new Error('Backend exited ' + code + ': ' + diagnostics)); });
-  });
-  return { processHandle, ready };
-}
-
-app.whenReady().then(async () => {
-  const { processHandle, ready } = startBackend();
-  const win = new BrowserWindow({ width: 1280, height: 820, show: false,
-    webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
-  try {
-    const origin = await ready;
-    const filter = { urls: ['<all_urls>'] };
-    win.webContents.session.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
-      if (!details.url.startsWith(origin + '/')) return callback({ cancel: true });
-      details.requestHeaders['X-Desktop-Token'] = token;
-      callback({ requestHeaders: details.requestHeaders });
-    });
-    await win.loadURL(origin);
-    const evaluate = code => win.webContents.executeJavaScript(code);
+app.whenReady().then(() => withStudioBrowser(async ({ evaluate }) => {
     const loaded = await evaluate(`(async () => {
       await window.StudioFonts.ready;
       const faces = await document.fonts.load('700 32px "studio-font-barlow"', 'İğşÖüç');
@@ -132,17 +83,19 @@ app.whenReady().then(async () => {
         await new Promise(resolve => setTimeout(resolve, 30));
       }
       assert.ok(await evaluate("window.StudioPreferences.get('favorites',[]).includes('font:ibmplexmono')"));
+
+      await evaluate("S.selectedText=null;drawClips()");
+      assert.equal(await evaluate("document.querySelector('[data-apply-font=ibmplexmono]').textContent"), 'Bu yazı tipiyle metin ekle');
+      const count = await evaluate('S.texts.length');
+      await evaluate("document.querySelector('[data-apply-font=ibmplexmono]').click()");
+      assert.equal(await evaluate('S.texts.length'), count + 1);
+      assert.equal(await evaluate('selectedText().fontFamily'), 'ibmplexmono');
+      await evaluate("undoEdit();S.selectedText=null;S.trackState.text.locked=true;drawClips()");
+      assert.equal(await evaluate('S.texts.length'), count);
+      assert.equal(await evaluate("document.querySelector('[data-apply-font=ibmplexmono]').disabled"), true);
     }
     console.log('Bundled fonts load in offline Chromium and persist for text/subtitle editing.');
-  } finally {
-    win.webContents.session.webRequest.onBeforeSendHeaders(null);
-    win.destroy();
-    const closed = new Promise(resolve => processHandle.once('close', resolve));
-    processHandle.kill();
-    await Promise.race([closed, new Promise(resolve => setTimeout(resolve, 3000))]);
-    fs.rmSync(temporary, { recursive: true, force: true, maxRetries: 3 });
-  }
-}).then(() => app.quit()).catch(error => {
+})).then(() => app.quit()).catch(error => {
   console.error(error);
   app.exit(1);
 });
