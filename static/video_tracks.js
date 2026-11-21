@@ -1,4 +1,4 @@
-/* A shared output clock for parallel video channels, gaps and cropped sources.
+/* A shared output clock for parallel video channels, gaps and canvas effects.
    The original single-track transport remains in use for legacy timelines. */
 (() => {
   const primary = el('manual-video'), stage = el('preview-stage');
@@ -26,7 +26,7 @@
     let end = 0;
     for (const clip of [...S.clips].sort((a, b) => clipTimelineStart(a) - clipTimelineStart(b))) {
       const c = cropOf(clip);
-      if (clip.reverse || c.x || c.y || c.width < .99999 || c.height < .99999 || clipTimelineStart(clip) > end + .001) return true;
+      if (clip.reverse || clip.backgroundMode === 'chroma' || c.x || c.y || c.width < .99999 || c.height < .99999 || clipTimelineStart(clip) > end + .001) return true;
       end = Math.max(end, clipTimelineEnd(clip));
     }
     return outDuration() > end + .001;
@@ -123,8 +123,17 @@
     const ratio=clip.fit==='contain'?Math.min(width/sw,height/sh):Math.max(width/sw,height/sh), dw=clip.fit==='stretch'?width:sw*ratio, dh=clip.fit==='stretch'?height:sh*ratio;
     ctx.clearRect(0,0,width,height);ctx.drawImage(video,video.videoWidth*crop.x,video.videoHeight*crop.y,sw,sh,(width-dw)/2,(height-dh)/2,dw,dh);
     if(clip.backgroundMode==='chroma'){
-      const pixels=ctx.getImageData(0,0,width,height),hex=(clip.keyColor||'#00ff00').slice(1),r=parseInt(hex.slice(0,2),16),g=parseInt(hex.slice(2,4),16),b=parseInt(hex.slice(4,6),16),threshold=Math.max(.01,clip.keySimilarity/100),blend=Math.max(.001,clip.keyBlend/100);
-      for(let i=0;i<pixels.data.length;i+=4){const distance=Math.hypot(pixels.data[i]-r,pixels.data[i+1]-g,pixels.data[i+2]-b)/441.673;pixels.data[i+3]*=clamp((distance-threshold)/blend,0,1)}ctx.putImageData(pixels,0,0);
+      const pixels=ctx.getImageData(0,0,width,height),color=parseInt((clip.keyColor||'#00ff00').slice(1),16);
+      const red=color>>16,green=(color>>8)&255,blue=color&255,threshold=Math.max(.01,clip.keySimilarity/100),blend=clip.keyBlend/100;
+      // FFmpeg's chromakey measures chroma distance. Convert canvas RGB differences to BT.601 chroma.
+      for(let i=0;i<pixels.data.length;i+=4){
+        const r=pixels.data[i]-red,g=pixels.data[i+1]-green,b=pixels.data[i+2]-blue;
+        const u=-.148*r-.291*g+.439*b,v=.439*r-.368*g-.071*b;
+        const distance=Math.sqrt(u*u+v*v)/(255*Math.SQRT2);
+        const alpha=blend>0?clamp((distance-threshold)/blend,0,1):Number(distance>threshold);
+        pixels.data[i+3]*=alpha;
+      }
+      ctx.putImageData(pixels,0,0);
     }
     const zoom=zoomStateAtOutputTime(clip,t),animation=clipAnimationStyle(clip,clip.start+Math.max(0,t-clipTimelineStart(clip))*(+clip.speed||1));
     setVideoEffect(canvas,{...clip,scale:zoom.scale,opacity:100,zoomFocusX:zoom.x,zoomFocusY:zoom.y},animation.filter,animation.transform);canvas.style.opacity=String(zoom.opacity/100);
@@ -133,8 +142,18 @@
     entry.mask.hidden=!(maskSrc&&clip.mask!=='none');if(!entry.mask.hidden){if(entry.mask.getAttribute('src')!==maskSrc)entry.mask.src=maskSrc;entry.mask.style.clipPath=maskClipPath(clip)}
     entry.lastPainted=sourceTime;entry.canvas.dataset.outputTime=t.toFixed(4);entry.canvas.dataset.sourceTime=video.currentTime.toFixed(4);
   }
+  function leave() {
+    const outputTime = Math.max(0, Math.min(outDuration()-.001, playing ? anchor + (performance.now()-started)/1000 : cursor));
+    const wasPlaying = playing;
+    reset();
+    const index = S.clips.findIndex(clip => outputTime >= clipTimelineStart(clip) && outputTime < clipTimelineEnd(clip));
+    if (index < 0) return;
+    const clip = S.clips[index];
+    S.preview = index;
+    setPreviewSource(index, clip.start + (outputTime - clipTimelineStart(clip)) * (+clip.speed || 1), wasPlaying);
+  }
   function paint(force=false) {
-    if(!enabled()){if(entered)reset();return}if(painting)return;enter();painting=true;
+    if(!enabled()){if(entered)leave();return}if(painting)return;enter();painting=true;
     try{
       const t=time(),active=new Map(),wanted=new Set();
       for(const clip of S.clips){if(t>=clipTimelineStart(clip)&&t<clipTimelineEnd(clip)){

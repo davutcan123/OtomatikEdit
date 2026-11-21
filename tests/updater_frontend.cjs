@@ -8,7 +8,7 @@ const html = fs.readFileSync(path.join(__dirname, '../templates/index.html'), 'u
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const tracker = script.slice(script.indexOf('    function beginDesktopOperation'), script.indexOf('    // Keep the workflow active'));
 const updater = script.slice(script.indexOf('    let desktopUpdateState='), script.indexOf('    if(desktopBridge)initializeDesktopUpdater()'));
-const autoRecovery = script.slice(script.indexOf('    function normalizeAutoCutterData'), script.indexOf("    el('auto-clear-selection').onclick")) + script.slice(script.indexOf('    function autoResult'), script.indexOf('    function drawAuto'));
+const autoRecovery = script.slice(script.indexOf('    const autoCutterDefaults'), script.indexOf("    el('auto-clear-selection').onclick")) + script.slice(script.indexOf('    function autoResult'), script.indexOf('    function drawAuto'));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((ok, no) => { resolve = ok; reject = no; }); return { promise, resolve, reject }; };
 
@@ -152,6 +152,7 @@ test('completed auto-cutter results survive recovery without serializing File ob
   const saved = JSON.parse(JSON.stringify(c.captureAutoCutterState()));
   assert.equal(saved.fileId, 'uploaded video.mp4');assert.equal(saved.data.valid_segments.length, 2);
   assert.equal(saved.autoFile, undefined);assert.equal(saved.data.unusedTranscript, undefined);
+  Object.assign(node('auto-video'), { pause() {}, load() {}, removeAttribute() {} });
   c.restoreAutoCutterState(saved);
   assert.equal(c.S.autoFile, null);assert.equal(c.S.autoPendingSelection, false);assert.equal(c.S.autoSourceName, 'Konuşma.mp4');
   assert.equal(c.S.autoData.valid_segments[1].start, 4);assert.equal(node('auto-video').src, '/video/uploaded%20video.mp4');

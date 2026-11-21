@@ -133,9 +133,10 @@ test('deleting an open saved project detaches its id and updates recovery withou
   const c = vm.createContext({ S: { projectId: 'project-1', mediaAssets: [{ fileId: 'shared' }] },
     el: id => id === 'project-list' ? { value: 'project-1', selectedOptions: [{ textContent: 'My project' }] } : {}, confirm: () => true,
     fetch: async (url, options) => { requests.push([url, options.method]); return { ok: true }; },
+    workspaceGeneration: 0, loadingProjectId: null, projectSave: null, pendingProjectDeletes: new Set(),
     persistProjectRecovery: async () => { recoveredId = c.S.projectId; }, refreshProjectList: async () => {}, log() {},
   });
-  vm.runInContext(between('    async function deleteNamedProject', '    function newProject'), c);
+  vm.runInContext(between('    async function deleteNamedProject', '    async function newProject'), c);
   await c.deleteNamedProject();
   assert.deepEqual(requests, [['/projects/project-1', 'DELETE']]);
   assert.equal(recoveredId, null);

@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, '../templates/index.html'), 'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-const persistenceCode = script.slice(script.indexOf('    async function persistProjectRecovery'), script.indexOf('    function scheduleAutosave'));
+const persistenceCode = script.slice(script.indexOf('    function projectEditState'), script.indexOf('    function scheduleAutosave'));
 const startupCode = script.slice(script.indexOf('    async function initializeProjectWorkspace'), script.indexOf('    /* ═', script.indexOf('    async function initializeProjectWorkspace')));
 const inertCode = script.slice(script.indexOf('    function setDesktopEditorInert'), script.indexOf('    function freezeDesktopEditor'));
 const project = name => ({ name, timelines: [{ id: 'TL1', state: {} }] });
@@ -23,7 +23,7 @@ function workspace({ desktop = null, browserSnapshot = null, browserError = null
     desktopOperations: new Map(), desktopInertState: new Map(), desktopPointerActive: false, desktopUpdateFrozen: false,
     stopProjectAudio() {},
     desktopBridge: desktop?{ onCloseCancelled() {}, ...desktop }:null, RECOVERY_KEY: 'test', recoveryWrite: Promise.resolve(), projectWorkspaceReady: true, desktopClosing: false, desktopCloseAttempt: null,
-    S: {}, snapshot: project('Current'), restored: null,
+    workspaceGeneration: 0, savedProjectState: null, recoveryRevision: 0, S: {}, snapshot: project('Current'), restored: null,
     Promise, JSON, clearTimeout,
     localStorage: {
       getItem: () => browserSnapshot,
@@ -92,6 +92,26 @@ test('recovery writes retain snapshot order and recover after a failed write', a
   context.desktopBridge.saveRecovery = async value => { saved.push(JSON.parse(value).name); };
   await context.persistProjectRecovery();
   assert.equal(saved.at(-1), 'Second');
+});
+
+test('a queued desktop recovery from a prior workspace cannot overwrite a newer one', async () => {
+  const saved = [];
+  let finishFirst;
+  const { context, getBrowserSnapshot } = workspace({ desktop: { saveRecovery: value => {
+    saved.push(JSON.parse(value).name);
+    return saved.length === 1 ? new Promise(resolve => { finishFirst = resolve; }) : Promise.resolve();
+  } } });
+  const inFlight = context.persistProjectRecovery();
+  await new Promise(resolve => setImmediate(resolve));
+  context.snapshot = project('Stale queued');
+  const stale = context.persistProjectRecovery();
+  context.workspaceGeneration++;
+  context.snapshot = project('New workspace');
+  const current = context.persistProjectRecovery();
+  assert.equal(JSON.parse(getBrowserSnapshot()).name, 'New workspace');
+  finishFirst();
+  await Promise.all([inFlight, stale, current]);
+  assert.deepEqual(saved, ['Current', 'New workspace']);
 });
 
 test('an uninitialized workspace cannot overwrite existing recovery', async () => {
