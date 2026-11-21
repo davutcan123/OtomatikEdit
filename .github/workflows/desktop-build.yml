@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       prepare_release:
-        description: Prepare a draft GitHub release after both installers pass validation
+        description: Prepare a draft with both validated installers and the source ZIP
         type: boolean
         default: false
         required: false
@@ -60,7 +60,7 @@ jobs:
         run: brew install ffmpeg
       - name: Check desktop persistence, rendering and backend isolation
         run: >-
-          python -m unittest test_runtime_paths test_desktop_backend test_desktop_update
+          python -m unittest test_runtime_paths test_update test_desktop_backend test_desktop_update
           test_snapshot test_sticker_timing test_render_encoder test_render_resources
           test_render_overlays test_render_execution test_render_graph_optimizations test_render_color test_image_layer_effects
           test_multitrack_crop test_brush_masks
@@ -111,7 +111,10 @@ jobs:
           retention-days: 14
 
   release:
-    name: Prepare validated installers as a draft release
+    name: Prepare validated release assets as a draft
+    concurrency:
+      group: release-draft-${{ github.repository }}
+      cancel-in-progress: false
     needs: desktop
     if: ${{ inputs.prepare_release && needs.desktop.result == 'success' }}
     runs-on: ubuntu-latest
@@ -145,6 +148,9 @@ jobs:
           const version = require('./package.json').version;
           assert.match(version, /^\d+\.\d+\.\d+$/);
           assert.equal(require('./version.json').version, version);
+          const lock = require('./package-lock.json');
+          assert.equal(lock.version, version);
+          assert.equal(lock.packages[''].version, version);
           async function verify(manifest, installer) {
             const metadata = yaml.load(fs.readFileSync(path.join('release-artifacts', manifest), 'utf8'));
             assert.equal(metadata.version, version, `${manifest}: wrong version`);
@@ -189,7 +195,15 @@ jobs:
             "release-artifacts/OtomatikEdit-${release_version}-win-x64.exe"
             "release-artifacts/OtomatikEdit-${release_version}-mac-arm64.dmg"
           )
-          release_assets=("${installer_assets[@]}" "release-artifacts/latest.yml" "release-artifacts/latest-mac.yml")
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            printf 'The source checkout differs from the validated revision.\n' >&2
+            exit 1
+          fi
+          source_archive="release-artifacts/OtomatikEdit-${release_tag}.zip"
+          git archive --format=zip --prefix="OtomatikEdit-${release_tag}/" \
+            --output="$source_archive" "$GITHUB_SHA"
+          unzip -tq "$source_archive"
+          release_assets=("${installer_assets[@]}" "release-artifacts/latest.yml" "release-artifacts/latest-mac.yml" "$source_archive")
           for installer in "${installer_assets[@]}"; do
             if [[ -s "${installer}.blockmap" && ! -L "${installer}.blockmap" ]]; then
               release_assets+=("${installer}.blockmap")
@@ -218,5 +232,5 @@ jobs:
           gh release create "$release_tag" "${release_assets[@]}" \
             --draft --target "$GITHUB_SHA" \
             --title "Otomatik Edit ${release_version}" \
-            --notes "Windows x64 ve macOS Apple Silicon kurulum dosyaları. Her iki platformda paket bağımlılıkları, medya oynatma, proje kurtarma, render ve kare kaydetme kontrolleri tamamlandı. Bu taslak elle incelendikten sonra yayımlanmalıdır."
+            --notes "Windows x64 ve macOS Apple Silicon kurulum dosyaları ile kaynak kod arşivi. Her iki platformda paket bağımlılıkları, medya oynatma, proje kurtarma, render ve kare kaydetme kontrolleri tamamlandı. Bu taslak elle incelendikten sonra yayımlanmalıdır."
           printf 'Prepared draft **%s** from validated commit `%s`. Publishing remains manual.\n' "$release_tag" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

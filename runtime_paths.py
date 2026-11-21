@@ -119,22 +119,3 @@ def import_legacy_projects(paths, legacy_dir):
         except FileExistsError:
             pass
     return report
-
-
-def release_download_url(assets, desktop=False, platform=None, machine=None):
-    """Never offer a desktop archive to the legacy source-code updater."""
-    import platform as platform_module
-    import re
-    platform = sys.platform if platform is None else platform
-    machine = platform_module.machine().lower() if machine is None else machine.lower()
-    if not desktop:
-        return next((asset.get("browser_download_url", "") for asset in assets
-                     if re.fullmatch(r"OtomatikEdit-v\d+(?:\.\d+)+\.zip", asset.get("name", ""))), "")
-    extensions = {"win32": (".exe", ".msi"), "darwin": (".dmg",), "linux": (".appimage", ".deb")}
-    supported = extensions.get(platform, ())
-    matches = [asset for asset in assets if asset.get("name", "").lower().endswith(supported)]
-    architecture = "arm64" if machine in {"aarch64", "arm64"} else "x64"
-    for asset in matches:
-        if architecture in asset.get("name", "").lower():
-            return asset.get("browser_download_url", "")
-    return matches[0].get("browser_download_url", "") if matches else ""

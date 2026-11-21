@@ -16,6 +16,14 @@ PROGRAMI ACMA
 3. Program acikken siyah komut penceresini kapatmayin.
 4. Kapatmak icin komut penceresinde Ctrl+C tuslarina basin.
 
+KAYNAK SURUMUNU GUNCELLEME
+1. Acik projeyi kaydedin ve sunucuyu Ctrl+C ile durdurun.
+2. https://github.com/davutcan123/OtomatikEdit/releases sayfasindan surume ait
+   OtomatikEdit-v<SURUM>.zip dosyasini indirin ve yeni bir klasore cikartin.
+3. Eski klasordeki projects, uploads ve outputs klasorlerini yeni klasore kopyalayin.
+   Eski klasoru yedek olarak saklayin.
+4. Yeni klasorde WINDOWS_KUR.bat ve ardindan WINDOWS_BASLAT.bat dosyasini calistirin.
+
 NOTLAR
 - FFmpeg proje klasorune otomatik kurulur; Windows PATH ayari veya yonetici izni gerekmez.
 - Otomatik altyazi ve kelime analizi modelleri ilk kullanimda indirildigi icin internet gerekir.

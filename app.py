@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, Res
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import Headers
-from runtime_paths import resolve_runtime_paths, import_legacy_projects, release_download_url
+from runtime_paths import resolve_runtime_paths, import_legacy_projects
 from render_resources import choose_render_resources
 from render_encoder import select_video_encoder, invalidate_nvenc, is_nvenc_failure
 from render_overlays import compact_overlay
@@ -524,38 +524,20 @@ if DESKTOP_MODE:
 
 # ── Sürüm ve güncelleme sistemi ────────────────────────
 VERSION_FILE = os.path.join(RESOURCE_DIR, "version.json")
-BACKUP_DIR = os.path.join(DATA_DIR, ".backup")
-GITHUB_REPO = os.environ.get("SMART_EDITOR_GITHUB_REPO", "").strip() or "davutcan123/OtomatikEdit"
+GITHUB_REPO = "davutcan123/OtomatikEdit"
 
-def _make_ssl_context():
-    """Windows'ta SSL sertifika sorunlarını aşmak için context oluşturur."""
-    import ssl
-    try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        pass
-    try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        return ctx
-    except Exception:
-        return None
 
 def _load_version() -> str:
     try:
         with open(VERSION_FILE, "r", encoding="utf-8") as f:
-            return json.load(f).get("version", "0.0.0")
-    except Exception:
-        return "0.0.0"
+            version = json.load(f).get("version", "")
+            if isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+                return version
+    except (OSError, ValueError, AttributeError):
+        pass
+    return "0.0.0"
 
 APP_VERSION = _load_version()
-
-# Korunan dizinler — güncelleme sırasında bunlar asla silinmez/üzerine yazılmaz
-_PROTECTED_DIRS = {"venv", ".venv-windows", "uploads", "outputs", "projects",
-                   "tools", "__pycache__", ".backup", ".git", "node_modules",
-                   "build", "dist", ".venv-build"}
 
 # In-memory storage for jobs
 jobs = {}
@@ -3076,206 +3058,68 @@ async def api_import_legacy_projects(request: Request):
         raise HTTPException(500, "Aktarım tamamlanamadı. Disk alanını ve klasör izinlerini kontrol edin; eski dosyalarınız korunuyor.") from exc
 
 
-@app.get("/api/check-update")
-async def api_check_update():
-    """GitHub Releases API'sine bakarak yeni sürüm olup olmadığını kontrol eder."""
-    if not GITHUB_REPO:
-        return {"update_available": False, "reason": "GITHUB_REPO ayarlanmamış"}
+def _latest_release():
+    import ssl
     import urllib.request
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
     api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-    req = urllib.request.Request(api_url, headers={
+    request = urllib.request.Request(api_url, headers={
         "Accept": "application/vnd.github+json",
         "User-Agent": "OtomatikEdit-Updater/1.0",
     })
     try:
-        ssl_ctx = _make_ssl_context()
-        with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        return {"update_available": False, "reason": str(exc)}
+        import certifi
+    except ImportError:
+        context = ssl.create_default_context()
+    else:
+        context = ssl.create_default_context(cafile=certifi.where())
+    opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=context))
+    with opener.open(request, timeout=10) as response:
+        return json.loads(response.read(2 * 1024 * 1024))
 
-    remote_tag = data.get("tag_name", "").lstrip("vV")
-    if not remote_tag:
-        return {"update_available": False, "reason": "Release tag bulunamadı"}
 
-    def ver_tuple(v):
-        parts = []
-        for p in v.split("."):
-            try:
-                parts.append(int(p))
-            except ValueError:
-                parts.append(0)
-        return tuple(parts)
+@app.get("/api/check-update")
+async def api_check_update():
+    if DESKTOP_MODE:
+        return {"update_available": False}
+    try:
+        release = await asyncio.to_thread(_latest_release)
+    except (OSError, ValueError):
+        return {"update_available": False, "reason": "Sürüm bilgisi alınamadı"}
 
-    if ver_tuple(remote_tag) <= ver_tuple(APP_VERSION):
-        return {"update_available": False, "current": APP_VERSION, "latest": remote_tag}
+    if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
+        return {"update_available": False}
+    tag = release.get("tag_name")
+    if not isinstance(tag, str) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
+        return {"update_available": False}
+    remote_version = tag[1:]
+    if tuple(map(int, remote_version.split("."))) <= tuple(map(int, APP_VERSION.split("."))):
+        return {"update_available": False, "current": APP_VERSION, "latest": remote_version}
 
-    download_url = release_download_url(data.get("assets", []), desktop=DESKTOP_MODE)
-
+    archive = f"OtomatikEdit-{tag}.zip"
+    assets = release.get("assets")
+    source_available = isinstance(assets, list) and any(
+        isinstance(asset, dict) and asset.get("name") == archive and asset.get("state") == "uploaded"
+        for asset in assets
+    )
     return {
         "update_available": True,
         "current": APP_VERSION,
-        "latest": remote_tag,
-        "download_url": download_url,
-        "release_url": data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases/latest"),
-        "desktop": DESKTOP_MODE,
-        "update_method": "installer" if DESKTOP_MODE else "source",
-        "release_notes": data.get("body", ""),
-        "published_at": data.get("published_at", ""),
+        "latest": remote_version,
+        "source_available": source_available,
+        "release_url": f"https://github.com/{GITHUB_REPO}/releases/tag/{tag}",
     }
 
 
 @app.post("/api/apply-update")
-async def api_apply_update(request: Request):
-    """Güncelleme ZIP'ini indirir, dosyaları güvenli şekilde günceller."""
+async def api_apply_update():
     if DESKTOP_MODE:
         raise HTTPException(409, "Masaüstü sürümü kurulum dosyasıyla güncellenir. Güncellemeler menüsünden yeni sürümü indirin; projeleriniz korunur.")
-    body = await request.json()
-    download_url = body.get("download_url", "").strip()
-    if not download_url:
-        raise HTTPException(400, "download_url gerekli")
-
-    job_id = str(uuid.uuid4())
-    q: asyncio.Queue = asyncio.Queue()
-    jobs[job_id] = {"type": "update", "q": q}
-
-    async def _apply():
-        import urllib.request
-        import tempfile
-        import zipfile
-
-        try:
-            await q.put({"type": "log", "message": "Güncelleme indiriliyor..."})
-
-            req = urllib.request.Request(download_url, headers={
-                "User-Agent": "OtomatikEdit-Updater/1.0",
-            })
-            temp_zip = os.path.join(tempfile.gettempdir(), f"otamatik_update_{job_id}.zip")
-
-            loop = asyncio.get_running_loop()
-
-            def _download():
-                ssl_ctx = _make_ssl_context()
-                with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp, open(temp_zip, "wb") as out:
-                    total = int(resp.headers.get("Content-Length", "0") or 0)
-                    downloaded = 0
-                    while True:
-                        chunk = resp.read(256 * 1024)
-                        if not chunk:
-                            break
-                        out.write(chunk)
-                        downloaded += len(chunk)
-                        if total:
-                            pct = min(100, round(downloaded / total * 100))
-                            asyncio.run_coroutine_threadsafe(
-                                q.put({"type": "progress", "percent": pct, "phase": "download"}),
-                                loop,
-                            )
-
-            await asyncio.to_thread(_download)
-            await q.put({"type": "log", "message": "İndirme tamamlandı. Dosyalar çıkarılıyor..."})
-
-            # Yedek al
-            os.makedirs(BACKUP_DIR, exist_ok=True)
-            backup_targets = ["app.py", "templates", "requirements.txt",
-                              "windows_setup.py", "version.json"]
-            for name in backup_targets:
-                src = os.path.join(BASE_DIR, name)
-                dst = os.path.join(BACKUP_DIR, name)
-                if os.path.isfile(src):
-                    shutil.copy2(src, dst)
-                elif os.path.isdir(src):
-                    if os.path.exists(dst):
-                        shutil.rmtree(dst)
-                    shutil.copytree(src, dst)
-
-            await q.put({"type": "log", "message": "Mevcut dosyalar yedeklendi (.backup/)."})
-
-            # ZIP'i geçici dizine aç ve dosyaları kopyala
-            temp_extract = os.path.join(tempfile.gettempdir(), f"otamatik_extract_{job_id}")
-            if os.path.exists(temp_extract):
-                shutil.rmtree(temp_extract)
-
-            with zipfile.ZipFile(temp_zip) as zf:
-                zf.extractall(temp_extract)
-
-            # ZIP içinde tek bir kök dizin olabilir, onu tespit et
-            top_items = os.listdir(temp_extract)
-            source_dir = temp_extract
-            if len(top_items) == 1:
-                single = os.path.join(temp_extract, top_items[0])
-                if os.path.isdir(single):
-                    source_dir = single
-
-            # Dosyaları kopyala (korunan dizinleri atla)
-            copied = 0
-            for item in os.listdir(source_dir):
-                if item in _PROTECTED_DIRS:
-                    continue
-                src_path = os.path.join(source_dir, item)
-                dst_path = os.path.join(BASE_DIR, item)
-                if os.path.isdir(src_path):
-                    if os.path.exists(dst_path):
-                        shutil.rmtree(dst_path)
-                    shutil.copytree(src_path, dst_path)
-                else:
-                    shutil.copy2(src_path, dst_path)
-                copied += 1
-
-            await q.put({"type": "log", "message": f"{copied} dosya/klasör güncellendi."})
-
-            # Temizlik
-            try:
-                os.remove(temp_zip)
-                shutil.rmtree(temp_extract, ignore_errors=True)
-            except Exception:
-                pass
-
-            # Bağımlılıkları güncelle
-            await q.put({"type": "log", "message": "Bağımlılıklar kontrol ediliyor..."})
-            req_file = os.path.join(BASE_DIR, "requirements.txt")
-            if os.path.isfile(req_file):
-                venv_pip = None
-                for candidate in [
-                    os.path.join(BASE_DIR, ".venv-windows", "Scripts", "pip.exe"),
-                    os.path.join(BASE_DIR, ".venv-windows", "Scripts", "pip3.exe"),
-                    os.path.join(BASE_DIR, "venv", "bin", "pip3"),
-                    os.path.join(BASE_DIR, "venv", "bin", "pip"),
-                ]:
-                    if os.path.isfile(candidate):
-                        venv_pip = candidate
-                        break
-                if venv_pip:
-                    proc = await asyncio.create_subprocess_exec(
-                        venv_pip, "install", "-r", req_file,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,
-                    )
-                    stdout, _ = await proc.communicate()
-                    pip_out = stdout.decode("utf-8", errors="replace").strip().split("\n")
-                    for line in pip_out[-3:]:
-                        if line.strip():
-                            await q.put({"type": "log", "message": f"[pip] {line.strip()}"})
-
-            # Yeni sürümü oku
-            new_version = "?"
-            try:
-                with open(os.path.join(BASE_DIR, "version.json"), "r", encoding="utf-8") as f:
-                    new_version = json.load(f).get("version", "?")
-            except Exception:
-                pass
-
-            await q.put({"type": "progress", "percent": 100, "phase": "done"})
-            await q.put({"type": "log", "message": f"✅ Güncelleme tamamlandı! Yeni sürüm: v{new_version}"})
-            await q.put({"type": "result", "new_version": new_version})
-
-        except Exception as exc:
-            await q.put({"type": "error", "message": f"Güncelleme hatası: {exc}"})
-        finally:
-            await q.put(None)
-
-    schedule_job(job_id, _apply())
-    return {"job_id": job_id}
+    raise HTTPException(410, "Kaynak sürümünü güncellemek için projeyi kaydedin, sunucuyu durdurun ve resmi sürüm arşivini yeni bir klasöre çıkarın.")
 
 
 def _project_file(project_id: str) -> str:
@@ -3952,7 +3796,7 @@ async def download_file(job_id: str, fmt: str):
 
 if __name__ == "__main__":
     import uvicorn
-    host = "127.0.0.1" if DESKTOP_MODE else os.environ.get("SMART_EDITOR_HOST", "0.0.0.0")
+    host = "127.0.0.1" if DESKTOP_MODE else os.environ.get("SMART_EDITOR_HOST", "127.0.0.1")
     try:
         port = int(os.environ.get("SMART_EDITOR_PORT", "4242"))
     except ValueError:

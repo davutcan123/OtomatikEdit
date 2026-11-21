@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from runtime_paths import import_legacy_projects, release_download_url, resolve_runtime_paths
+from runtime_paths import import_legacy_projects, resolve_runtime_paths
 
 
 class RuntimePathsTests(unittest.TestCase):
@@ -75,21 +75,6 @@ class RuntimePathsTests(unittest.TestCase):
             self.assertEqual(import_legacy_projects(paths, root / "legacy")["errors"], 1)
             project.write_text(json.dumps({"timelines": []}))
             self.assertEqual(import_legacy_projects(paths, root / "legacy")["projects"], 1)
-
-    def test_installer_is_not_mistaken_for_source_update(self):
-        assets = [
-            {"name": "OtomatikEdit-1.1.0-mac-arm64.zip", "browser_download_url": "desktop archive"},
-            {"name": "OtomatikEdit-v1.1.0-win-x64.zip", "browser_download_url": "another desktop archive"},
-            {"name": "OtomatikEdit-v1.1.0.zip", "browser_download_url": "source archive"},
-            {"name": "OtomatikEdit-1.1.0-mac-arm64.dmg", "browser_download_url": "arm installer"},
-            {"name": "OtomatikEdit-1.1.0-mac-x64.dmg", "browser_download_url": "intel installer"},
-            {"name": "OtomatikEdit-1.1.0-win-x64.exe", "browser_download_url": "windows installer"},
-        ]
-        self.assertEqual(release_download_url(assets), "source archive")
-        self.assertEqual(release_download_url(assets, True, "darwin", "arm64"), "arm installer")
-        self.assertEqual(release_download_url(assets, True, "darwin", "x86_64"), "intel installer")
-        self.assertEqual(release_download_url(assets, True, "win32", "AMD64"), "windows installer")
-        self.assertEqual(release_download_url(assets[:2]), "")
 
 
 if __name__ == "__main__":

@@ -87,16 +87,11 @@
         <div>
           <b id="update-title">Yeni sürüm mevcut!</b>
           <span id="update-version-info" class="text-sm opacity-90 ml-2"></span>
-          <p id="update-notes" class="text-xs opacity-80 mt-0.5 max-w-xl truncate"></p>
+          <p id="update-notes" class="text-xs opacity-80 mt-0.5 max-w-xl"></p>
         </div>
       </div>
       <div class="flex items-center gap-3">
-        <div id="update-progress-area" class="hidden items-center gap-2">
-          <div class="w-40 bg-black/30 rounded-full h-2"><div id="update-progress-bar" class="bg-white h-2 rounded-full transition-all" style="width:0%"></div></div>
-          <span id="update-progress-text" class="text-xs font-mono">0%</span>
-        </div>
-        <button id="update-apply-btn" class="bg-white text-orange-700 font-bold text-sm px-4 py-1.5 rounded-lg hover:bg-orange-100 transition">Güncelle</button>
-        <button id="update-restart-btn" class="hidden bg-green-500 text-white font-bold text-sm px-4 py-1.5 rounded-lg hover:bg-green-600 transition animate-pulse">Yeniden Başlat</button>
+        <a id="update-release-link" target="_blank" rel="noopener noreferrer" class="bg-white text-orange-700 font-bold text-sm px-4 py-1.5 rounded-lg hover:bg-orange-100 transition">Sürüm sayfasını aç</a>
         <button id="update-dismiss-btn" class="text-white/70 hover:text-white text-lg leading-none" title="Kapat">✕</button>
       </div>
     </div>
@@ -1902,53 +1897,11 @@
         const banner=document.getElementById('update-banner');
         banner.classList.remove('hidden');
         document.getElementById('update-version-info').textContent=`v${d.current} → v${d.latest}`;
-        if(d.release_notes)document.getElementById('update-notes').textContent=d.release_notes;
-
-        const applyBtn=document.getElementById('update-apply-btn');
-        const restartBtn=document.getElementById('update-restart-btn');
-        const progressArea=document.getElementById('update-progress-area');
-        const progressBar=document.getElementById('update-progress-bar');
-        const progressText=document.getElementById('update-progress-text');
-        const dismissBtn=document.getElementById('update-dismiss-btn');
-
-        dismissBtn.onclick=()=>banner.classList.add('hidden');
-
-        applyBtn.onclick=async()=>{
-          applyBtn.disabled=true;applyBtn.textContent='İndiriliyor...';
-          progressArea.classList.remove('hidden');progressArea.classList.add('flex');
-          try{
-            const r=await fetch('/api/apply-update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({download_url:d.download_url})});
-            const j=await r.json();
-            const es=new EventSource('/stream-events/'+j.job_id);
-            es.onmessage=e=>{
-              const msg=JSON.parse(e.data);
-              if(msg.type==='progress'){
-                progressBar.style.width=msg.percent+'%';
-                progressText.textContent=msg.percent+'%';
-              }else if(msg.type==='log'){
-                console.log('[Güncelleme]',msg.message);
-              }else if(msg.type==='result'){
-                es.close();
-                applyBtn.classList.add('hidden');
-                progressArea.classList.add('hidden');
-                restartBtn.classList.remove('hidden');
-                document.getElementById('update-title').textContent='✅ Güncelleme tamamlandı!';
-                document.getElementById('update-version-info').textContent='v'+msg.new_version;
-                document.getElementById('update-notes').textContent='Değişikliklerin geçerli olması için uygulamayı yeniden başlatın.';
-                banner.classList.remove('from-amber-600','to-orange-600');
-                banner.classList.add('from-green-600','to-emerald-600');
-              }else if(msg.type==='error'){
-                es.close();
-                applyBtn.disabled=false;applyBtn.textContent='Tekrar Dene';
-                progressArea.classList.add('hidden');
-                document.getElementById('update-notes').textContent='❌ '+msg.message;
-              }
-            };
-            es.onerror=()=>{es.close();applyBtn.disabled=false;applyBtn.textContent='Tekrar Dene'};
-          }catch(x){applyBtn.disabled=false;applyBtn.textContent='Tekrar Dene';console.error(x)}
-        };
-
-        restartBtn.onclick=()=>{location.reload()};
+        document.getElementById('update-notes').textContent=d.source_available
+          ? 'Projeyi kaydedin ve sunucuyu durdurun. Sürüm sayfasındaki kaynak ZIP’i yeni bir klasöre çıkarıp kurulum adımlarını izleyin.'
+          : 'Bu sürümle bir kaynak kurulum arşivi yayımlanmadı.';
+        document.getElementById('update-release-link').href=d.release_url;
+        document.getElementById('update-dismiss-btn').onclick=()=>banner.classList.add('hidden');
       }catch(e){/* Güncelleme kontrolü başarısız — sessizce geç */}
     })();
   </script>

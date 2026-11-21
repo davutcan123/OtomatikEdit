@@ -2,6 +2,7 @@
 venv/
 .venv-windows/
 .venv-build/
+.req-hash
 node_modules/
 build/
 dist/

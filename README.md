@@ -115,10 +115,17 @@ Terminale aşağıdaki komutu girerek FastAPI sunucusunu başlatın:
 ```bash
 python app.py
 ```
-*(Alternatif olarak: `uvicorn app:app --host 0.0.0.0 --port 4242` komutunu da kullanabilirsiniz.)*
+*(Alternatif olarak: `uvicorn app:app --host 127.0.0.1 --port 4242` komutunu da kullanabilirsiniz.)*
+
+### Kaynak sürümünü güncelleme
+
+1. Açık projenizi **Projeyi kaydet** ile kaydedin ve sunucuyu çalıştırdığınız terminalde **Ctrl+C** ile durdurun.
+2. [Resmî sürüm sayfasından](https://github.com/davutcan123/OtomatikEdit/releases) `OtomatikEdit-v<SÜRÜM>.zip` dosyasını indirip yeni bir klasöre çıkarın. Bir sürümde bu dosya yoksa önceki kaynak kurulumunuzu kullanmaya devam edebilirsiniz.
+3. Eski klasördeki `projects`, `uploads` ve `outputs` klasörlerini yeni klasöre kopyalayın. Eski klasörü yedek olarak saklayın.
+4. Yeni klasörde kurulum adımlarını uygulayın. Windows’ta `WINDOWS_KUR.bat`, ardından `WINDOWS_BASLAT.bat` dosyasını çalıştırın. Diğer sistemlerde bağımlılıkları yeni bir sanal ortamda yükleyip `python app.py` ile başlatın.
 
 ### 3. Kullanım
-Tarayıcınızı açın ve **http://localhost:4242** adresine gidin.
+Tarayıcınızı açın ve **http://127.0.0.1:4242** adresine gidin.
 1. Manuel kurgu için **Manuel Edit** alanındaki **Dosya / video yükle** bölümünden ana videonuzu ve kullanacağınız resim/ses dosyalarını yükleyin.
 2. Projelerim alanındaki video, resim veya sesi kendi VİDEO/GÖRSEL/SES kanalına sürükleyin; timeline üzerinde yatay sürükleyerek zamanını değiştirin.
 3. Otomatik kesim için **Otomatik Kırpıcı** alanına geçin ve videoyu seçin.
