@@ -55,3 +55,56 @@ test('native settings keep fast edits ahead of stale hydration and write them in
   await Promise.all([first, second]);
   assert.deepEqual(writes, [['favorites', ['text:one']], ['favorites', ['text:two']]]);
 });
+
+test('a failed desktop write restores the confirmed value and never caches the rejected value', async () => {
+  const fallback = new Map([['otamatik-edit:studio-preferences:v1', JSON.stringify({favorites:['text:old']})]]);
+  const { api } = preferences(async (_url, options) => options.method === 'PUT'
+    ? { ok: false, status: 500 } : { ok: true, json: async () => ({favorites:['text:confirmed']}) }, fallback);
+  await api.ready;
+  const notifications = [];
+  api.subscribe((key, value) => notifications.push([key, Array.from(value)]));
+  const write = api.set('favorites', ['text:unsaved']);
+  assert.deepEqual(Array.from(api.get('favorites')), ['text:unsaved']);
+  await assert.rejects(write, /kaydedilemedi/);
+  assert.deepEqual(Array.from(api.get('favorites')), ['text:confirmed']);
+  assert.deepEqual(notifications, [['favorites',['text:unsaved']],['favorites',['text:confirmed']]]);
+  const reopened = preferences(undefined, fallback).api;
+  assert.deepEqual(Array.from(reopened.get('favorites')), ['text:confirmed']);
+});
+
+test('a delayed failure does not overwrite a newer edit and the following success compacts the fallback', async () => {
+  let finishFirst;
+  const writes = [];
+  const { api, localStorage } = preferences(async (_url, options) => {
+    if (options.method !== 'PUT') return { ok: true, json: async () => ({ savedLooks: [{id:'old'}] }) };
+    writes.push(JSON.parse(options.body));
+    if (writes.length === 1) return new Promise(resolve => { finishFirst = resolve; });
+    return { ok: true };
+  });
+  await api.ready;
+  const first = assert.rejects(api.set('savedLooks',[{id:'rejected'}]), /kaydedilemedi/);
+  const second = api.set('savedLooks',[]);
+  await immediate();
+  finishFirst({ok:false,status:413});
+  await first;
+  assert.equal(api.get('savedLooks').length,0);
+  await second;
+  assert.equal(preferences(undefined,localStorage).api.get('savedLooks').length,0);
+  assert.deepEqual(writes, [[{id:'rejected'}],[]]);
+});
+
+test('failed browser storage writes restore the last confirmed value', async () => {
+  class QuotaStorage extends Map {
+    set(key, value) {
+      if (this.block) throw new Error('quota');
+      return super.set(key,value);
+    }
+  }
+  const storage = new QuotaStorage();
+  const { api } = preferences(undefined,storage);
+  await api.set('layout',{panel:'baseline'});
+  storage.block = true;
+  await assert.rejects(api.set('layout',{panel:'optimistic'}), /quota/);
+  assert.equal(api.get('layout').panel,'baseline');
+  assert.equal(preferences(undefined,storage).api.get('layout').panel,'baseline');
+});
