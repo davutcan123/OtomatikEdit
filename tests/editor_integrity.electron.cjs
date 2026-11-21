@@ -249,8 +249,14 @@ async function checkMediaPlacement() {
 
   const verifyTransfer = async ({ locked, populated }) => {
     await blank();if(populated)await seedLayers();
+    assert.ok(await evaluate('el("studio-auto-result").hidden'));
     if(locked)await evaluate('videoTrackState(1).locked=true;drawClips()');
     await evaluate(`autoResult({duration:12,valid_segments:[{start:1,end:3},{start:4,end:7}]},'source.mp4','Auto video');switchTab('auto')`);
+    const summary="['source','kept','removed','clips'].map(metric=>el('auto-duration-'+metric).textContent)";
+    assert.deepEqual(await evaluate(summary),['12 sn','5 sn','7 sn','2']);
+    await evaluate('restoreAutoCutterState(captureAutoCutterState())');
+    assert.deepEqual(await evaluate(summary),['12 sn','5 sn','7 sn','2'],'Saved analyses rebuild the same visible summary');
+    assert.ok(await evaluate('!el("studio-auto-result").hidden && el("auto-format").labels.length===1'));
     await click('#to-manual');
     const createsTimeline = locked||populated;
     const actual = await evaluate(`(() => {

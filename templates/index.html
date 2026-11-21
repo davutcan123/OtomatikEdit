@@ -706,10 +706,10 @@
 
     <section id="auto" class="workspace grid-cols-12 gap-4">
       <aside class="col-span-12 xl:col-span-4 panel rounded-2xl p-5 space-y-4 xl:max-h-[calc(100vh-96px)] overflow-y-auto">
-        <div class="flex justify-between"><div><h2 class="font-bold text-lg">Otomatik Kırpıcı</h2><p class="text-xs text-slate-500">Sessizlikleri ve seçilen kelimeleri kaldırır.</p></div><span class="text-[10px] text-violet-300">ÇALIŞMA ALANI 2</span></div>
-        <label id="auto-drop" class="block border-2 border-dashed border-slate-700 hover:border-violet-500 rounded-xl p-6 text-center cursor-pointer bg-slate-950/40">
-          <input id="auto-file" type="file" accept="video/*" class="hidden">
-          <div class="text-3xl">⇧</div><b class="text-sm">Video seçin veya sürükleyin</b><p id="auto-file-name" class="text-xs text-slate-500 mt-1">Dosya seçilmedi</p>
+        <div><h2 class="font-bold text-lg">Otomatik Kırpıcı</h2><p class="studio-auto-hint">Sessizlikleri ve seçilen kelimeleri kaldırır.</p></div>
+        <label id="auto-drop" class="block border-2 border-dashed rounded-xl p-6 text-center cursor-pointer">
+          <input id="auto-file" type="file" accept="video/*" class="studio-auto-file-input" aria-label="Analiz edilecek videoyu seç">
+          <span aria-hidden="true" class="text-3xl block">⇧</span><b class="text-sm">Video seçin veya sürükleyin</b><span id="auto-file-name" class="studio-auto-hint block mt-1">Dosya seçilmedi</span>
         </label>
         <button id="auto-clear-selection" type="button" class="hidden text-xs text-slate-400 hover:text-white" title="Yalnızca henüz işlenmemiş dosya seçimini kaldırır; tamamlanmış analiz korunur.">Seçimi temizle</button>
         <div id="upload-progress" class="hidden"><div class="flex justify-between text-[10px] text-slate-400"><span>Yükleniyor</span><span>0%</span></div><div class="h-2 mt-1 bg-slate-800 rounded overflow-hidden"><div class="h-full bg-violet-500" style="width:0"></div></div></div>
@@ -720,11 +720,12 @@
         <label class="text-xs text-slate-400">Çıkarılacak kelimeler<input id="keywords" type="text" placeholder="şey, yani, ııı, ee" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded-lg p-2"></label>
         <button id="analyze" class="w-full bg-violet-600 rounded-lg p-3 text-sm font-black disabled:opacity-40">Videoyu Yükle ve Analiz Et</button>
         <div id="auto-actions" class="hidden border-t border-slate-800 pt-4 space-y-2">
-          <button id="to-manual" class="w-full bg-blue-600 rounded-lg p-3 text-sm font-black">Manuel Editöre Gönder →</button>
-          <p class="text-[10px] text-center text-slate-500">Timeline dolu veya kilitliyse kesimler yeni bir timeline’a aktarılır.</p>
-          <div class="flex gap-2 pt-2">
-            <select id="auto-format" class="flex-1 bg-slate-900 border border-slate-700 rounded p-2 text-sm"><option value="mp4">MP4</option><option value="mkv">MKV</option><option value="webm">WebM</option><option value="mov">MOV</option></select>
-            <button id="auto-render" class="bg-emerald-600 rounded p-2 text-sm font-bold">Direkt Çıktı Al</button>
+          <button id="to-manual" class="w-full rounded-lg p-3 text-sm font-black">Zaman çizelgesine aktar</button>
+          <p class="studio-auto-hint">Geçerli çizelge dolu veya kilitliyse yeni bir zaman çizelgesi açılır.</p>
+          <div class="studio-auto-export">
+            <label for="auto-format" class="studio-auto-hint">Dosya biçimi</label>
+            <select id="auto-format" class="border rounded p-2 text-sm"><option value="mp4">MP4</option><option value="mkv">MKV</option><option value="webm">WebM</option><option value="mov">MOV</option></select>
+            <button id="auto-render" class="rounded p-2 text-sm font-bold">Çıktı al</button>
           </div>
           <div id="auto-progress" class="render-progress hidden" role="progressbar" aria-label="Video render ilerlemesi" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><b class="render-progress-label">Render hazırlanıyor</b><div class="render-progress-track"><div class="h-full" style="width:0"></div></div><p>0%</p></div>
           <a id="auto-download" class="hidden block bg-indigo-600 rounded p-3 text-center text-sm font-bold" download>Videoyu İndir</a>
@@ -739,11 +740,25 @@
           </div>
           <div class="bg-black rounded-xl aspect-video max-h-[55vh] relative flex items-center justify-center overflow-hidden">
             <video id="auto-video" controls class="w-full h-full"></video>
-            <div id="auto-placeholder" class="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center text-slate-500 pointer-events-none"><span class="text-5xl">✦</span><b class="mt-3">Analiz sonucu burada önizlenir</b></div>
+            <div id="auto-placeholder" class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"><b>Analiz sonucu burada önizlenir</b></div>
           </div>
-          <div class="mt-4"><div class="flex justify-between mb-2"><b class="text-sm">Akıllı zaman çizelgesi</b><label class="text-xs text-slate-400"><input id="jump" type="checkbox" checked class="accent-violet-500"> Kesilen yerleri canlı atla</label></div><canvas id="auto-timeline" class="w-full h-10 rounded bg-slate-950 border border-slate-800" height="40"></canvas><p class="text-[10px] text-slate-500 mt-2">🟩 Korunan &nbsp; ⬛ Sessizlik &nbsp; 🟧 Kelime</p></div>
+          <div id="studio-auto-result" role="status" aria-label="Analiz özeti" hidden>
+            <dl>
+              <div><dt>Kaynak süresi</dt><dd id="auto-duration-source"></dd></div>
+              <div><dt>Korunan süre</dt><dd id="auto-duration-kept"></dd></div>
+              <div><dt>Çıkarılan süre</dt><dd id="auto-duration-removed"></dd></div>
+              <div><dt>Korunan klipler</dt><dd id="auto-duration-clips"></dd></div>
+            </dl>
+          </div>
+          <div class="mt-4">
+            <div class="flex justify-between flex-wrap gap-2 mb-2"><b class="text-sm">Analiz zaman çizelgesi</b><label class="studio-auto-hint"><input id="jump" type="checkbox" checked> Kesilen yerleri canlı atla</label></div>
+            <canvas id="auto-timeline" class="w-full h-10 rounded bg-slate-950 border border-slate-800" height="40" role="img" aria-label="Zamana göre korunan ve kesilen bölümler"></canvas>
+            <ul class="studio-auto-legend">
+              <li>Korunan</li><li>Sessizlik</li><li>Kelime</li>
+            </ul>
+          </div>
         </div>
-        <div class="panel rounded-2xl p-3"><button id="auto-log-open" type="button" class="terminal-launch"><b>⌘ Terminal</b><span>Ayrıntılı işlem kayıtlarını aç</span><span aria-hidden="true">↗</span></button><div id="auto-log" class="terminal rounded-xl p-3 h-48 overflow-y-auto text-xs" role="button" tabindex="0" aria-label="Ayrıntılı işlem kayıtlarını ayrı pencerede aç"><div class="info">&gt; Otomatik kırpıcı hazır.</div></div></div>
+        <div class="studio-auto-terminal panel"><button id="auto-log-open" type="button" class="terminal-launch"><b>⌘ Terminal</b><span id="auto-log-summary">Otomatik kırpıcı hazır.</span><span aria-hidden="true">↗</span></button><div id="auto-log" hidden></div></div>
       </div>
     </section>
   </main>
@@ -1162,13 +1177,12 @@
       const message=String(msg??'').slice(0,12000),level=type==='error'?'error':type==='info'?'info':'log',source=box==='manual-log'?'manual':'auto',host=el(box),d=document.createElement('div');
       d.className=level;d.textContent='> '+message;host.appendChild(d);while(host.childElementCount>500)host.firstElementChild.remove();host.scrollTop=host.scrollHeight;
       editorLogEntries.push({message,level,source,time:new Date().toLocaleTimeString('tr-TR')});editorLogSize+=message.length;while(editorLogEntries.length>1000||editorLogSize>500000)editorLogSize-=editorLogEntries.shift().message.length;
-      if(source==='manual')el('manual-log-summary').textContent=message;
+      el(source+'-log-summary').textContent=message;
       try{desktopBridge?.appendLog?.({source,level,message})}catch{/* The local log remains available if the native viewer is unavailable. */}
       refreshLogViewer();
     }
     async function openEditorLogs(){if(desktopBridge?.openLogs){try{await desktopBridge.openLogs();return}catch{}}el('logs-modal').showModal();refreshLogViewer();el('logs-search').focus()}
     el('manual-log-open').onclick=el('auto-log-open').onclick=openEditorLogs;
-    el('auto-log').onclick=()=>{if(!window.getSelection()?.toString())openEditorLogs()};el('auto-log').onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openEditorLogs()}};
     el('logs-close').onclick=()=>el('logs-modal').close();el('logs-search').oninput=refreshLogViewer;el('logs-modal').addEventListener('keydown',event=>event.stopPropagation());
     function switchTab(name){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));document.querySelectorAll('.workspace').forEach(x=>x.classList.toggle('active',x.id===name));if(name==='auto'&&S.autoData)drawAuto(S.autoData)}
     document.querySelectorAll('.tab').forEach(x=>x.onclick=()=>switchTab(x.dataset.tab));
@@ -2727,10 +2741,20 @@
       log('auto-log',data.valid_segments.length?data.valid_segments.length+' korunacak klip hazır.':'Analiz sonucunda korunacak klip bulunamadı. Analiz ayarlarını değiştirip yeniden deneyebilirsiniz.','info');
       scheduleAutosave();return true;
     }
+    const autoTimeFormat=new Intl.NumberFormat('tr-TR',{maximumFractionDigits:2});
     function drawAuto(data){
       const canvas=el('auto-timeline'),ctx=canvas.getContext('2d'),w=canvas.clientWidth,h=canvas.clientHeight;
       canvas.width=w;canvas.height=h;
+      el('studio-auto-result').hidden=!data;
       if(!data)return;
+      const kept=data.valid_segments.reduce((total,segment)=>total+segment.end-segment.start,0);
+      const values={source:data.duration,kept,removed:Math.max(0,data.duration-kept)};
+      for(const [id,seconds] of Object.entries(values)){
+        const label=el('auto-duration-'+id),text=autoTimeFormat.format(seconds)+' sn';
+        if(label.textContent!==text)label.textContent=text;
+      }
+      const count=el('auto-duration-clips'),label=String(data.valid_segments.length);
+      if(count.textContent!==label)count.textContent=label;
       ctx.fillStyle='#334155';ctx.fillRect(0,0,w,h);
       ctx.fillStyle='#22c55e';data.valid_segments.forEach(s=>ctx.fillRect(s.start/data.duration*w,0,(s.end-s.start)/data.duration*w,h));
       ctx.fillStyle='#f97316';data.keyword_segments.forEach(s=>ctx.fillRect(s.start/data.duration*w,0,Math.max(2,(s.end-s.start)/data.duration*w),h));
