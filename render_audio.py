@@ -101,6 +101,6 @@ def mix_audio_layers(base, layers, first_input):
         labels.append(label)
     lines.append(
         f"{base}{''.join(labels)}amix=inputs={len(labels) + 1}:"
-        "duration=first:dropout_transition=0:normalize=0,alimiter=limit=.95[outa]"
+        "duration=first:dropout_transition=0:normalize=0,alimiter=limit=.95:latency=1[outa]"
     )
     return lines

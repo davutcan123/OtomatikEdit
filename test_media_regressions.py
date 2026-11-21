@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import wave
 from urllib.parse import quote
 from unittest.mock import patch
 
@@ -243,6 +244,55 @@ class MediaRegressionTests(unittest.TestCase):
                 self.assertLess(self.rms(pcm, 2.4), 10)
                 self.assertGreater(self.rms(pcm, 2.75), 400)
                 self.assertGreater(self.rms(pcm, 3.25), 1000)
+
+    def test_audio_layer_transients_stay_on_timeline_and_survive_the_export_tail(self):
+        source = self.uploads / "audio-transients.wav"
+        rate = 48000
+        centers = (.123, .627, 2.097)
+        pcm = array("h", [0]) * int(2.1 * rate)
+        for center in centers:
+            peak = round(center * rate)
+            for index in range(peak - 320, min(peak + 320, len(pcm))):
+                elapsed = (index - peak) / rate
+                pcm[index] = round(22000 * math.exp(-(elapsed / .002) ** 2)
+                                   * math.cos(math.tau * (970 * elapsed + 200000 * elapsed ** 2)))
+        if sys.byteorder != "little":
+            pcm.byteswap()
+        with wave.open(str(source), "wb") as wav:
+            wav.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+            wav.writeframes(pcm.tobytes())
+        reference = self.audio_samples(source)
+
+        clips = [{"fileId": "changing.mp4", "start": 0, "end": 2}]
+        layers = [{"fileId": source.name, "start": 0, "end": 2, "sourceStart": .1, "volume": .6}]
+        for multitrack in (False, True):
+            for first in (0, .5):
+                with self.subTest(multitrack=multitrack, range_start=first):
+                    output = self.export(clips, multitrack=multitrack, audio_layers=layers,
+                                         range_in=first, range_out=2)
+                    samples = self.audio_samples(output)
+                    expected_length = round((2 - first) * rate)
+                    self.assertGreaterEqual(len(samples), expected_length)
+                    self.assertLess(len(samples) - expected_length, 1024)
+                    self.assertLess(self.rms(samples, .2), 10)
+                    for center in centers:
+                        timeline_time = center - .1 - first
+                        if timeline_time < 0:
+                            continue
+                        source_start = round(center * rate) - 200
+                        frame_start = round(timeline_time * rate) - 200
+                        template = reference[source_start:source_start + 320]
+                        energy = sum(value * value for value in template)
+                        scores = []
+                        for lag in range(-300, 301):
+                            window = samples[frame_start + lag:frame_start + lag + len(template)]
+                            window_energy = sum(value * value for value in window)
+                            dot = sum(a * b for a, b in zip(template, window))
+                            scores.append((dot / math.sqrt(energy * window_energy) if window_energy else 0, lag))
+                        score, lag = max(scores)
+                        self.assertGreater(score, .95, (timeline_time, lag, score))
+                        self.assertLessEqual(abs(lag), 6, (timeline_time, lag, score))
+                        self.assertGreater(max(abs(value) for value in samples[frame_start:frame_start + 320]), 6000)
 
     def test_gif_layers_use_local_playback_time_and_keep_brush_and_static_support(self):
         clip = {"fileId": "changing.mp4", "start": 0, "end": 2.2}

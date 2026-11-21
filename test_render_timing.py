@@ -108,7 +108,7 @@ class RenderTimingTests(unittest.TestCase):
         self.assertEqual(mix_audio_layers("[a]", [], 4), ["[a]anull[outa]"])
         self.assertEqual(mix_audio_layers("[a]", [{"start": 1, "end": 2, "sourceStart": .25, "volume": .5}], 4), [
             "[4:a]atrim=start=0.25:duration=1,asetpts=PTS-STARTPTS,volume=0.5,adelay=1000:all=1[mediaa0]",
-            "[a][mediaa0]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=.95[outa]",
+            "[a][mediaa0]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=.95:latency=1[outa]",
         ])
 
 
