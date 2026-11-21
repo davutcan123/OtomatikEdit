@@ -200,7 +200,7 @@
         return false;
       }
       if (!source) throw new Error('Geçerli bir kaynak video seçin.');
-      const previous = { id: S.activeTimelineId, history: [...S.history], cursor: currentOutputTime() };
+      const previous = { id: S.activeTimelineId, cursor: currentOutputTime() };
       const state = buildTimeline(template, source);
       if (addedAsset) {
         addedAsset.id = 'M' + S.nextAssetId++;
@@ -209,8 +209,8 @@
       }
       const item = { id: 'TL' + Date.now().toString(36) + S.nextTimelineId++, name: template.name, state };
       S.timelines.push(item);
-      activateTimeline(item);
-      S.history.push({ studioTemplateCreation: { id: item.id, previous, addedAssetId: addedAsset?.id } });
+      activateTimeline(item,{keepHistory:true});
+      recordHistory({ studioTemplateCreation: { id: item.id, previous, addedAsset } });
       drawClips();
       seekOutputTime(0);
       el('timeline').focus({ preventScroll: true });
@@ -232,27 +232,38 @@
     }
   }
 
-  function undoCreation(entry) {
-    const creation = entry?.studioTemplateCreation;
-    if (!creation || S.activeTimelineId !== creation.id) return false;
+  function replayCreation(entry, redo) {
+    const creation = entry.studioTemplateCreation;
+    if (!creation) return false;
     const previous = S.timelines.find(item => item.id === creation.previous.id);
-    const createdIndex = S.timelines.findIndex(item => item.id === creation.id);
-    if (!previous || createdIndex < 0) return false;
-    S.timelines.splice(createdIndex, 1);
-    if (creation.addedAssetId) {
-      const asset = assetById(creation.addedAssetId);
-      if (asset && !projectAssetUsage(asset, projectPayload()).total) {
+    const index = S.timelines.findIndex(item => item.id === creation.id);
+    if (!previous || (redo ? index >= 0 || !creation.timeline : index < 0)) return false;
+    if (redo) {
+      const asset = creation.addedAsset;
+      if (asset && !assetById(asset.id)) S.mediaAssets.push({ ...asset });
+      const timeline = JSON.parse(JSON.stringify(creation.timeline));
+      S.timelines.splice(creation.index, 0, timeline);
+      creation.previous.cursor = currentOutputTime();
+      activateTimeline(timeline,{keepHistory:true});
+      seekOutputTime(Math.min(creation.cursor,outDuration()));
+    } else {
+      syncActiveTimeline();
+      creation.index = index;
+      creation.timeline = JSON.parse(JSON.stringify(S.timelines[index]));
+      creation.cursor = currentOutputTime();
+      S.timelines.splice(index,1);
+      const asset = creation.addedAsset && assetById(creation.addedAsset.id);
+      if (asset && !projectAssetUsage(asset,projectPayload()).total) {
         S.mediaAssets = S.mediaAssets.filter(item => item.id !== asset.id);
       }
+      activateTimeline(previous,{keepHistory:true});
+      seekOutputTime(Math.min(creation.previous.cursor,outDuration()));
     }
-    activateTimeline(previous);
-    S.history = creation.previous.history;
-    seekOutputTime(Math.min(creation.previous.cursor, outDuration()));
     drawClips();
-    scheduleAutosave();
     refreshSources(true);
-    if (library) library.feedback.textContent = 'Şablon timeline’ı geri alındı.';
-    log('manual-log', 'Şablon timeline’ı geri alındı.', 'info');
+    const message = redo ? 'Şablon timeline’ı yeniden eklendi.' : 'Şablon timeline’ı geri alındı.';
+    if (library) library.feedback.textContent = message;
+    log('manual-log',message,'info');
     return true;
   }
 
@@ -451,7 +462,7 @@
     Promise.resolve(window.StudioFonts?.ready).then(renderLibrary);
   }
 
-  window.StudioTemplates = { applyTemplate, undoCreation, refreshSources };
+  window.StudioTemplates = { applyTemplate, replayCreation, refreshSources };
   window.addEventListener('studio:section', event => {
     if (event.detail?.id === 'templates') {
       mountLibrary();

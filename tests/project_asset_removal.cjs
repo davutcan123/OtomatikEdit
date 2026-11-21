@@ -24,7 +24,7 @@ function fixture() {
         transitions: [{ type: 'fade', duration: .5, leftClipId: 'c2', rightClipId: 'c3', boundary: 1 }], trackState: { image: { locked: false } } } },
       { id: 'two', state: { manualId: 'other.mp4', clips: [{ ...clip('c4', 'other.mp4', 0), maskImageId: asset.id, mask: 'circle' }], imageLayers: [layer('i2')], trackState: { image: { locked: false } } } },
     ] };
-  const state = { ...copy(project.timelines[0].state), mediaAssets: copy(project.mediaAssets), timelines: copy(project.timelines), history: [{ prior: true }], autoAnalyzing: false };
+  const state = { ...copy(project.timelines[0].state), mediaAssets: copy(project.mediaAssets), timelines: copy(project.timelines), history: [{ prior: true }], redoHistory: [], autoAnalyzing: false };
   let persisted = 0, restored = 0;
   const c = vm.createContext({ S: state, desktopUpdateFrozen: false, desktopClosing: false,
     TRANSITION_NAMES: { fade: 'Fade' },
@@ -32,12 +32,14 @@ function fixture() {
     clipOutputDuration: item => (item.end - item.start) / (item.speed || 1),
     clipTimelineStart: item => item.timelineStart || 0,
     clipTimelineEnd: item => (item.timelineStart || 0) + (item.end - item.start) / (item.speed || 1),
-    currentOutputTime: () => 2, outDuration: () => 12, seekOutputTime() {}, drawProjectLibrary() {}, log() {},
+    currentOutputTime: () => 2, outDuration: () => 12, seekOutputTime() {}, drawProjectLibrary() {}, log() {}, el() {},
     scheduleAutosave: () => persisted++,
     projectPayload: () => ({ ...copy(project), mediaAssets: copy(state.mediaAssets), timelines: state.timelines.map((t, i) => i ? copy(t) : { ...copy(t), state: { ...copy(t.state), clips: copy(state.clips), imageLayers: copy(state.imageLayers) } }) }),
-    restoreProject: next => { restored++;state.mediaAssets = copy(next.mediaAssets);state.timelines = copy(next.timelines);Object.assign(state, copy(next.timelines[0].state));state.history = []; },
+    restoreProject: next => { restored++;state.mediaAssets = copy(next.mediaAssets);state.timelines = copy(next.timelines);Object.assign(state, copy(next.timelines[0].state)); },
   });
   vm.runInContext(script.split('\n').find(line=>line.includes('function nextClipOnTrack('))+between('    function newClipId()', '    function clampClipTransitions()') +
+    between('    const EDIT_HISTORY_LIMIT=', '    const selectedClip=') +
+    between('    function restoreHistoryPoint(', "    el('undo').onclick") +
     between('    const assetById=', "    el('asset-remove-cancel').onclick="), c);
   return { c, state, asset, video, project, persisted: () => persisted, restored: () => restored };
 }
@@ -77,13 +79,13 @@ test('library-only action retains active legacy mask source without reloading vi
   assert.equal(f.c.removeProjectAsset(f.asset.id, false), true);
   assert.equal(f.restored(), 0);assert.equal(f.state.clips[0].maskImageFileId, f.asset.fileId);
   assert.equal(f.state.mediaAssets.length, 1);assert.equal(f.persisted(), 1);
-  assert.equal(f.c.undoProjectAssetRemoval(f.state.history.pop()), true);
+  assert.equal(f.c.undoEdit(), true);
   assert.equal(f.state.mediaAssets.length, 2);assert.equal(f.state.history.length, 1);assert.equal(f.persisted(), 2);
 });
 test('removal and undo restore inactive timelines and independent deep-copied keyframes', () => {
   const f = fixture();assert.equal(f.c.removeProjectAsset(f.asset.id, true), true);
   assert.equal(f.state.timelines[1].state.imageLayers.length, 0);
-  const entry = f.state.history.pop();assert.equal(f.c.undoProjectAssetRemoval(entry), true);
+  const entry = f.state.history.at(-1);assert.equal(f.c.undoEdit(), true);
   assert.equal(f.state.timelines[1].state.imageLayers[0].transformKeyframes[0].scale, 200);
   f.state.timelines[1].state.imageLayers[0].transformKeyframes[0].scale = 250;
   assert.equal(entry.assetRemovalProject.timelines[1].state.imageLayers[0].transformKeyframes[0].scale, 200);
@@ -98,13 +100,28 @@ test('stale IDs, closing, updating and active analysis cannot mutate the project
   f.c.desktopClosing = true;assert.equal(f.c.removeProjectAsset(f.asset.id), false);f.c.desktopClosing = false;
   f.c.desktopUpdateFrozen = true;assert.equal(f.c.removeProjectAsset(f.asset.id), false);f.c.desktopUpdateFrozen = false;
   assert.deepEqual(f.state, before);f.state.autoAnalyzing = true;assert.equal(f.c.removeProjectAsset(f.asset.id), false);
-  f.state.autoAnalyzing = false;f.c.removeProjectAsset(f.asset.id);const entry = f.state.history.pop();f.state.autoAnalyzing = true;
-  assert.equal(f.c.undoProjectAssetRemoval(entry), true);assert.equal(f.state.mediaAssets.length, 1);assert.equal(f.state.history.at(-1), entry);
-  f.state.autoAnalyzing = false;f.c.undoProjectAssetRemoval(f.state.history.pop());assert.equal(f.state.mediaAssets.length, 2);
+  f.state.autoAnalyzing = false;f.c.removeProjectAsset(f.asset.id);const entry = f.state.history.at(-1);f.state.autoAnalyzing = true;
+  assert.equal(f.c.undoEdit(), false);assert.equal(f.state.mediaAssets.length, 1);assert.equal(f.state.history.at(-1), entry);
+  f.state.autoAnalyzing = false;f.c.undoEdit();assert.equal(f.state.mediaAssets.length, 2);
 });
 test('removal is metadata-only and its modal blocks editor shortcuts behind the dialog', () => {
   const implementation = between('    const assetById=', '    function drawProjectLibrary()');
   assert.doesNotMatch(implementation, /fetch\(|\.unlink|\.rm\(|method\s*:\s*['"]DELETE/);
   assert.match(implementation, /asset-remove-dialog'\)\.addEventListener\('keydown',event=>event.stopPropagation\(\)\)/);
   assert.match(html, /id="asset-remove-cancel"/);assert.match(html, /id="asset-remove-library"/);assert.match(html, /id="asset-remove-all"/);
+});
+
+
+test('redo reapplies the project edit and keeps unrelated fields from other timelines', () => {
+  const fixtureState = fixture(), {c,state,asset} = fixtureState;
+  assert.equal(c.removeProjectAsset(asset.id, true), true);
+  assert.equal(c.undoEdit(), true);
+  state.timelines[1].name = 'Updated';
+  state.timelines[1].state.trackState.audio = {locked: true};
+  state.timelines[1].state.clips[0].name = 'Independent clip change';
+  assert.equal(c.redoEdit(), true);
+  assert.equal(state.timelines[1].name, 'Updated');
+  assert.equal(state.timelines[1].state.trackState.audio.locked, true);
+  assert.equal(state.timelines[1].state.clips[0].name, 'Independent clip change');
+  assert.equal(state.timelines[1].state.imageLayers.length, 0);
 });

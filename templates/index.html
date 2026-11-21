@@ -658,6 +658,7 @@
             <div class="studio-timeline-edit-actions">
               <h2 class="sr-only">Zaman çizelgesi</h2>
             <button id="undo" type="button" title="Geri al">↶ Geri al</button>
+            <button id="redo" type="button" title="Yinele" disabled>↷ Yinele</button>
             <button id="split" type="button" title="Oynatma noktasında böl">Böl</button>
             <button id="remove" type="button" title="Seçili öğeyi sil">Sil</button>
             <button id="left" tabindex="-1">Sola taşı</button>
@@ -821,7 +822,7 @@
     const el=id=>document.getElementById(id);
     const TIMELINE_GUTTER=132;
     const defaultTrackState=()=>({sticker:{locked:false,visible:true},text:{locked:false,visible:true},subtitle:{locked:false,visible:true},image:{locked:false,visible:true},video:{locked:false,visible:true,muted:false},audio:{locked:false,muted:false}});
-    const S={autoFile:null,autoId:null,autoData:null,autoSourceName:'',autoPendingSelection:false,autoAnalyzing:false,manualId:null,manualName:'',duration:0,clips:[],selected:-1,videoTracks:[{id:1,name:'Video 1',locked:false,visible:true,muted:false}],activeVideoTrack:1,history:[],preview:-1,seeking:false,zoom:14,timelineMagnet:true,timelineRipple:false,selectedVideoClipIds:[],timelineCursor:null,previewGap:false,dragIndex:-1,sourceToken:0,thumbVideo:null,thumbReady:null,thumbQueue:Promise.resolve(),thumbCache:{},activeVideoFileId:null,texts:[],selectedText:null,selectedTextKeyframe:null,nextTextId:1,stickers:[],selectedSticker:null,nextStickerId:1,transitions:[],liveTransition:null,preparedTransition:null,transitionToken:0,pendingTransitionToken:0,previewFrame:0,mediaAssets:[],nextAssetId:1,imageLayers:[],audioLayers:[],selectedLayer:null,selectedImageKeyframe:null,nextLayerId:1,audioElements:{},clipAudioGraph:null,brushPainting:false,brushMaskCache:new WeakMap(),imageChromaCache:new Map(),selectedZoomKeyframe:null,nextZoomKeyframeId:1,zoomFocusPicking:false,panelOpen:{clipInspector:true,assetEditor:true,zoomKeyframes:false},trackState:defaultTrackState(),contextTarget:null,canvas:{width:1920,height:1080},projectId:null,timelines:[],activeTimelineId:'TL1',nextTimelineId:2,autosaveTimer:null,restoringProject:false};
+    const S={autoFile:null,autoId:null,autoData:null,autoSourceName:'',autoPendingSelection:false,autoAnalyzing:false,manualId:null,manualName:'',duration:0,clips:[],selected:-1,videoTracks:[{id:1,name:'Video 1',locked:false,visible:true,muted:false}],activeVideoTrack:1,history:[],redoHistory:[],preview:-1,seeking:false,zoom:14,timelineMagnet:true,timelineRipple:false,selectedVideoClipIds:[],timelineCursor:null,previewGap:false,dragIndex:-1,sourceToken:0,thumbVideo:null,thumbReady:null,thumbQueue:Promise.resolve(),thumbCache:{},activeVideoFileId:null,texts:[],selectedText:null,selectedTextKeyframe:null,nextTextId:1,stickers:[],selectedSticker:null,nextStickerId:1,transitions:[],liveTransition:null,preparedTransition:null,transitionToken:0,pendingTransitionToken:0,previewFrame:0,mediaAssets:[],nextAssetId:1,imageLayers:[],audioLayers:[],selectedLayer:null,selectedImageKeyframe:null,nextLayerId:1,audioElements:{},clipAudioGraph:null,brushPainting:false,brushMaskCache:new WeakMap(),imageChromaCache:new Map(),selectedZoomKeyframe:null,nextZoomKeyframeId:1,zoomFocusPicking:false,panelOpen:{clipInspector:true,assetEditor:true,zoomKeyframes:false},trackState:defaultTrackState(),contextTarget:null,canvas:{width:1920,height:1080},projectId:null,timelines:[],activeTimelineId:'TL1',nextTimelineId:2,autosaveTimer:null,restoringProject:false};
     const RECOVERY_KEY='otamatik-edit:recovery:v2';
     const desktopBridge=window.desktopApp?.isDesktop?window.desktopApp:null;
     let recoveryWrite=Promise.resolve(),projectWorkspaceReady=false,desktopClosing=false,desktopCloseAttempt=null;
@@ -866,12 +867,12 @@
     function portableMediaItem(item,fallbackFileId){const normalized={...item},fileId=item.fileId||fallbackFileId;if(fileId)normalized.src='/video/'+encodeURIComponent(fileId);const maskFileId=item.maskImageFileId||S.mediaAssets.find(asset=>asset.id===item.maskImageId)?.fileId;if(maskFileId)normalized.maskImageSrc='/video/'+encodeURIComponent(maskFileId);return normalized}
     function portableTimelineState(state){const clips=copy(state.clips||[]),transitions=resolveClipTransitions(clips,copyTransitions(state.transitions||[]));return{...state,transitions,clips:clips.map(item=>portableMediaItem(item,state.manualId)),imageLayers:(state.imageLayers||[]).map(item=>portableMediaItem(item)),audioLayers:(state.audioLayers||[]).map(item=>portableMediaItem(item))}}
     function restoreAssetSources(){S.mediaAssets.forEach(asset=>Object.assign(asset,portableMediaItem(asset)));S.clips.forEach(clip=>Object.assign(clip,portableMediaItem(clip,S.manualId)));S.imageLayers.forEach(item=>Object.assign(item,portableMediaItem(item)));S.audioLayers.forEach(item=>Object.assign(item,portableMediaItem(item)))}
-    function applyTimelineState(raw){resetLiveTransition(false);window.multiTrackPreview?.reset();S.cancelPreviewSource?.();const state={...emptyTimelineState(),...(raw||{})};S.studioTimeline=window.StudioCommands?window.StudioCommands.normalizeTimeline(state.studioTimeline):(state.studioTimeline??null);clearProjectAudio();S.manualId=state.manualId;S.manualName=state.manualName||'';S.duration=+state.duration||0;S.clips=copy(state.clips||[]);S.texts=copyTexts(state.texts||[]).map(hydrateText);S.stickers=copyLayers(state.stickers||[]);S.transitions=copyTransitions(state.transitions||[]);clampClipTransitions();S.imageLayers=copyLayers(state.imageLayers||[]).map(hydrateImageLayer);S.audioLayers=copyLayers(state.audioLayers||[]);S.selected=Number.isInteger(state.selected)?state.selected:(S.clips.length?0:-1);S.preview=Number.isInteger(state.preview)?state.preview:S.selected;S.selectedText=state.selectedText||null;S.selectedTextKeyframe=state.selectedTextKeyframe||null;S.selectedSticker=state.selectedSticker||null;S.selectedLayer=state.selectedLayer||null;S.selectedImageKeyframe=state.selectedImageKeyframe||null;S.selectedZoomKeyframe=state.selectedZoomKeyframe||null;S.nextTextId=+state.nextTextId||1;S.nextStickerId=+state.nextStickerId||1;S.nextLayerId=+state.nextLayerId||1;S.nextZoomKeyframeId=+state.nextZoomKeyframeId||1;S.trackState=state.trackState||defaultTrackState();S.videoTracks=(raw?.videoTracks||[{id:1,name:'Video 1',...S.trackState.video}]).map(track=>({...track}));S.activeVideoTrack=+state.activeVideoTrack||1;ensureVideoTracks();S.canvas=state.canvas||{width:1920,height:1080};S.zoom=Math.max(.02,Math.min(80,+state.zoom||14));S.timelineMagnet=state.timelineMagnet!==false;S.timelineRipple=state.timelineRipple===true;S.selectedVideoClipIds=[];S.history=[];S.timelineCursor=null;S.previewGap=false;restoreAssetSources();const preset=S.canvas.width+'x'+S.canvas.height;if(document.querySelector('#canvas-preset option[value="'+preset+'"]')){el('canvas-preset').value=preset;el('canvas-preset-top').value=preset}updateCanvas();el('timeline-zoom').value=S.zoom;updateZoomLabel();drawMagnetButton();if(S.clips.length){const clip=S.clips[Math.max(0,Math.min(S.clips.length-1,S.preview))],src=clip.src||('/video/'+encodeURIComponent(clip.fileId||S.manualId));S.selected=S.preview=Math.max(0,Math.min(S.clips.length-1,S.preview));S.manualId=S.manualId||clip.fileId;S.manualName=S.manualName||clip.name||'';el('manual-placeholder').classList.add('hidden');el('media-title').textContent=el('media-title-top').textContent=S.manualName||clip.name||'Video';setupThumbnailSource(src);setPreviewSource(S.preview,undefined,false)}else{pausePreview();window.StudioMediaPreview?.release(el('manual-video'));el('manual-video').removeAttribute('src');el('manual-video').load();el('transition-video').removeAttribute('src');el('manual-placeholder').classList.remove('hidden');el('media-title').textContent=el('media-title-top').textContent='Henüz video yüklenmedi'}drawClips();showTextProperties();drawProjectLibrary()}
+    function applyTimelineState(raw,{keepHistory=false}={}){resetLiveTransition(false);window.multiTrackPreview?.reset();S.cancelPreviewSource?.();const state={...emptyTimelineState(),...(raw||{})};S.studioTimeline=window.StudioCommands?window.StudioCommands.normalizeTimeline(state.studioTimeline):(state.studioTimeline??null);clearProjectAudio();S.manualId=state.manualId;S.manualName=state.manualName||'';S.duration=+state.duration||0;S.clips=copy(state.clips||[]);S.texts=copyTexts(state.texts||[]).map(hydrateText);S.stickers=copyLayers(state.stickers||[]);S.transitions=copyTransitions(state.transitions||[]);clampClipTransitions();S.imageLayers=copyLayers(state.imageLayers||[]).map(hydrateImageLayer);S.audioLayers=copyLayers(state.audioLayers||[]);S.selected=Number.isInteger(state.selected)?state.selected:(S.clips.length?0:-1);S.preview=Number.isInteger(state.preview)?state.preview:S.selected;S.selectedText=state.selectedText||null;S.selectedTextKeyframe=state.selectedTextKeyframe||null;S.selectedSticker=state.selectedSticker||null;S.selectedLayer=state.selectedLayer||null;S.selectedImageKeyframe=state.selectedImageKeyframe||null;S.selectedZoomKeyframe=state.selectedZoomKeyframe||null;S.nextTextId=+state.nextTextId||1;S.nextStickerId=+state.nextStickerId||1;S.nextLayerId=+state.nextLayerId||1;S.nextZoomKeyframeId=+state.nextZoomKeyframeId||1;S.trackState=state.trackState||defaultTrackState();S.videoTracks=(raw?.videoTracks||[{id:1,name:'Video 1',...S.trackState.video}]).map(track=>({...track}));S.activeVideoTrack=+state.activeVideoTrack||1;ensureVideoTracks();S.canvas=state.canvas||{width:1920,height:1080};S.zoom=Math.max(.02,Math.min(80,+state.zoom||14));S.timelineMagnet=state.timelineMagnet!==false;S.timelineRipple=state.timelineRipple===true;S.selectedVideoClipIds=[];if(!keepHistory){S.history=[];S.redoHistory=[]}S.timelineCursor=null;S.previewGap=false;restoreAssetSources();const preset=S.canvas.width+'x'+S.canvas.height;if(document.querySelector('#canvas-preset option[value="'+preset+'"]')){el('canvas-preset').value=preset;el('canvas-preset-top').value=preset}updateCanvas();el('timeline-zoom').value=S.zoom;updateZoomLabel();drawMagnetButton();if(S.clips.length){const clip=S.clips[Math.max(0,Math.min(S.clips.length-1,S.preview))],src=clip.src||('/video/'+encodeURIComponent(clip.fileId||S.manualId));S.selected=S.preview=Math.max(0,Math.min(S.clips.length-1,S.preview));S.manualId=S.manualId||clip.fileId;S.manualName=S.manualName||clip.name||'';el('manual-placeholder').classList.add('hidden');el('media-title').textContent=el('media-title-top').textContent=S.manualName||clip.name||'Video';setupThumbnailSource(src);setPreviewSource(S.preview,undefined,false)}else{pausePreview();window.StudioMediaPreview?.release(el('manual-video'));el('manual-video').removeAttribute('src');el('manual-video').load();el('transition-video').removeAttribute('src');el('manual-placeholder').classList.remove('hidden');el('media-title').textContent=el('media-title-top').textContent='Henüz video yüklenmedi'}drawClips();showTextProperties();drawProjectLibrary()}
     function requestTimelineName(currentName){const dialog=el('timeline-name-dialog'),input=el('timeline-name-input');if(dialog.open)return Promise.resolve(null);input.value=currentName;dialog.returnValue='';el('timeline-name-cancel').onclick=()=>dialog.close('cancel');return new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='save'?input.value:null),{once:true});dialog.showModal();input.focus();input.select()})}
     function drawTimelineTabs(){const box=el('timeline-tabs'),add=el('timeline-add');box.querySelectorAll('.timeline-tab').forEach(node=>node.remove());S.timelines.forEach(timeline=>{const button=document.createElement('button');button.type='button';button.className='timeline-tab '+(timeline.id===S.activeTimelineId?'active':'');button.dataset.timelineId=timeline.id;button.innerHTML='<span>'+escapeHtml(timeline.name)+'</span>';button.title=timeline.name+' timeline’ına geç';button.onclick=()=>switchTimeline(timeline.id);button.ondblclick=async()=>{const name=await requestTimelineName(timeline.name);if(name?.trim()){timeline.name=name.trim().slice(0,60);drawTimelineTabs();scheduleAutosave()}};box.insertBefore(button,add)})}
-    function activateTimeline(timeline){
+    function activateTimeline(timeline,{keepHistory=false}={}){
       syncActiveTimeline();timelineGeneration++;invalidateSubtitleJob();
-      S.activeTimelineId=timeline.id;applyTimelineState(timeline.state);drawTimelineTabs();scheduleAutosave();
+      S.activeTimelineId=timeline.id;applyTimelineState(timeline.state,{keepHistory});drawTimelineTabs();scheduleAutosave();
     }
     function switchTimeline(id){
       if(id===S.activeTimelineId)return;
@@ -923,7 +924,7 @@
       const generation=workspaceGeneration,revision=++recoveryRevision;
       S.autosaveTimer=setTimeout(()=>saveRecoveryWithStatus(generation,revision),700);
     }
-    function restoreProject(payload,{keepWorkspace=false}={}){
+    function restoreProject(payload,{keepWorkspace=false,keepAutoCutter=false}={}){
       if(!Array.isArray(payload?.timelines)||!payload.timelines.length)throw new Error('Proje verisi geçersiz');
       const mediaAssets=(payload.mediaAssets||[]).map(asset=>({...asset,src:'/video/'+encodeURIComponent(asset.fileId)}));
       const timelines=payload.timelines.map((timeline,index)=>({
@@ -938,7 +939,7 @@
         S.mediaAssets=mediaAssets;S.nextAssetId=+payload.nextAssetId||mediaAssets.length+1;
         S.timelines=timelines;S.nextTimelineId=+payload.nextTimelineId||timelines.length+1;
         const active=timelines.find(item=>item.id===payload.activeTimelineId)||timelines[0];
-        S.activeTimelineId=active.id;applyTimelineState(active.state);el('manual-file-name').textContent=S.manualName||'Dosya seçilmedi';restoreAutoCutterState(payload.autoCutter);drawTimelineTabs();
+        S.activeTimelineId=active.id;applyTimelineState(active.state,{keepHistory:keepWorkspace});el('manual-file-name').textContent=S.manualName||'Dosya seçilmedi';if(!keepAutoCutter)restoreAutoCutterState(payload.autoCutter);drawTimelineTabs();
         if(abandonedAnalysis){log('auto-log','Proje değiştiği için önceki analiz uygulanmayacak.','info');status('Analiz işlemi bırakıldı')}
         if(!keepWorkspace)savedProjectState=payload.unsavedChanges===true?null:projectEditState(projectPayload());
       }finally{S.restoringProject=false}
@@ -1536,7 +1537,35 @@
         try{const c=document.createElement('canvas');c.width=320;c.height=180;c.getContext('2d').drawImage(v,0,0,c.width,c.height);const background='linear-gradient(180deg,rgba(3,7,18,.08),rgba(3,7,18,.72)),url('+c.toDataURL('image/jpeg',.68)+')';S.thumbCache[key]=background;button.style.backgroundImage=background}catch{}
       }).catch(()=>{});
     }
-    function remember(){clampClipTransitions();S.history.push({studioTimeline:S.studioTimeline,timelineRipple:S.timelineRipple===true,selectedVideoClipIds:[...(S.selectedVideoClipIds||[])],videoTracks:ensureVideoTracks().map(track=>({...track})),activeVideoTrack:S.activeVideoTrack,clips:copy(S.clips),selected:S.selected,selectedZoomKeyframe:S.selectedZoomKeyframe,texts:copyTexts(S.texts),selectedText:S.selectedText,stickers:copyLayers(S.stickers),selectedSticker:S.selectedSticker,transitions:copyTransitions(S.transitions),imageLayers:copyLayers(S.imageLayers),audioLayers:copyLayers(S.audioLayers),selectedImageKeyframe:S.selectedImageKeyframe,selectedLayer:S.selectedLayer?{...S.selectedLayer}:null,trackState:copyTrackState()});if(S.history.length>50)S.history.shift()}
+    const EDIT_HISTORY_LIMIT=50;
+    function historyPoint(){
+      clampClipTransitions();
+      return {
+        timelineId:S.activeTimelineId,studioTimeline:S.studioTimeline,timelineRipple:S.timelineRipple===true,
+        selectedVideoClipIds:[...(S.selectedVideoClipIds||[])],videoTracks:ensureVideoTracks().map(track=>({...track})),
+        activeVideoTrack:S.activeVideoTrack,clips:copy(S.clips),selected:S.selected,
+        selectedZoomKeyframe:S.selectedZoomKeyframe,texts:copyTexts(S.texts),selectedText:S.selectedText,
+        selectedTextKeyframe:S.selectedTextKeyframe,stickers:copyLayers(S.stickers),selectedSticker:S.selectedSticker,
+        transitions:copyTransitions(S.transitions),imageLayers:copyLayers(S.imageLayers),audioLayers:copyLayers(S.audioLayers),
+        selectedImageKeyframe:S.selectedImageKeyframe,selectedLayer:S.selectedLayer?{...S.selectedLayer}:null,
+        trackState:copyTrackState()
+      };
+    }
+    function addHistoryPoint(stack,entry){
+      stack.push(entry);
+      if(stack.length>EDIT_HISTORY_LIMIT)stack.shift();
+    }
+    function paintHistoryControls(){
+      const undo=el('undo'),redo=el('redo');
+      if(undo)undo.disabled=!S.history.length;
+      if(redo)redo.disabled=!S.redoHistory?.length;
+    }
+    function recordHistory(entry){
+      addHistoryPoint(S.history,entry);
+      S.redoHistory=[];
+      paintHistoryControls();
+    }
+    function remember(){recordHistory(historyPoint())}
     const selectedClip=()=>S.clips[S.selected]?hydrateClip(S.clips[S.selected]):null;
     function switchClipInspectorTab(name){document.querySelectorAll('.clip-inspector-tab').forEach(button=>button.classList.toggle('active',button.dataset.clipTab===name));document.querySelectorAll('.clip-inspector-panel').forEach(panel=>panel.classList.toggle('active',panel.dataset.clipPanel===name))}
     document.querySelectorAll('.clip-inspector-tab').forEach(button=>button.onclick=()=>switchClipInspectorTab(button.dataset.clipTab));
@@ -1704,7 +1733,7 @@
       const valid=S.selected>=0&&S.selected<S.clips.length,has=S.clips.length>0;
       const actionTrack=timelineSelectedTrack(),actionLocked=isTrackLocked(actionTrack);
       el('split').disabled=actionLocked||(actionTrack==='video'?!has:actionTrack!=='audio');
-      el('remove').disabled=actionLocked||(actionTrack==='video'&&!valid);el('reset').disabled=!has||timelineResetLocked();el('left').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],-1)||isTrackLocked('video');el('right').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],1)||isTrackLocked('video');el('undo').disabled=!S.history.length;outputJobs.draw();
+      el('remove').disabled=actionLocked||(actionTrack==='video'&&!valid);el('reset').disabled=!has||timelineResetLocked();el('left').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],-1)||isTrackLocked('video');el('right').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],1)||isTrackLocked('video');paintHistoryControls();outputJobs.draw();
       el('clip-start').disabled=el('clip-end').disabled=el('trim').disabled=!valid||isTrackLocked('video');
       el('clip-start').value=valid?S.clips[S.selected].start.toFixed(2):'';el('clip-end').value=valid?S.clips[S.selected].end.toFixed(2):'';
       const summaryText=S.clips.length+' klip · '+total.toFixed(2)+' sn çıktı';el('summary').textContent=summaryText;el('summary-top').textContent=summaryText;drawClipInspector();drawImageInspector();drawStudioLayerInspector();drawTexts();drawPlayhead();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();drawAnimations();drawVideoEffects();drawFilters();window.multiTrackPreview?.paint();applyVideoEffectPreview();drawTrackControls();syncProjectAudio(true);window.StudioLibrary?.refreshLookSelection();if(typeof drawRippleButton==='function')drawRippleButton();if(typeof paintTimelineVideoSelection==='function')paintTimelineVideoSelection();window.StudioTemplates?.refreshSources();scheduleAutosave();
@@ -1743,10 +1772,10 @@
     function fitClipPosition(start,duration,item,direction,trackId=item?.videoTrack||S.activeVideoTrack||1){const wanted=Math.max(0,start),others=videoTrackClips(trackId).filter(clip=>clip!==item).map(clip=>({start:clipTimelineStart(clip),end:clipTimelineEnd(clip)})),free=position=>position>=0&&!others.some(other=>position<other.end-.00001&&position+duration>other.start+.00001);if(free(wanted))return wanted;const candidates=[0,...others.flatMap(other=>[other.end,other.start-duration])].filter(free);candidates.sort((a,b)=>Math.abs(a-wanted)-Math.abs(b-wanted)||(direction<0?a-b:b-a));return candidates[0]??wanted}
     function drawMagnetButton(){const button=el('timeline-magnet');button.classList.toggle('active',S.timelineMagnet);button.setAttribute('aria-pressed',String(S.timelineMagnet));button.textContent=S.timelineMagnet?'Hizalama açık':'Hizalama kapalı';button.title=S.timelineMagnet?'Tüm kliplerin iki kenarı ve oynatma kafası yakındaki sınıra hizalanır (10 piksel).':'Yapışma kapalı; klipleri ve oynatma kafasını serbestçe taşıyın.';if(!S.timelineMagnet)clearTimelineSnapGuide()}
     function beginClipDrag(event,index,button){
-      const item=S.clips[index];if(event.button!==0||!item||isVideoTrackLocked(item))return;event.preventDefault();pausePreview();ensureClipTimelinePositions();const box=el('timeline'),viewport=box.getBoundingClientRect(),startX=event.clientX,startY=event.clientY,startScroll=box.scrollLeft,originalStart=clipTimelineStart(item),originalTrack=item.videoTrack||1,previousHistory=[...S.history],duration=clipOutputDuration(item);let pointerX=startX,pointerY=startY,moved=false,remembered=false,active=true,frame=0,lastPosition=originalStart;
+      const item=S.clips[index];if(event.button!==0||!item||isVideoTrackLocked(item))return;event.preventDefault();pausePreview();ensureClipTimelinePositions();const box=el('timeline'),viewport=box.getBoundingClientRect(),startX=event.clientX,startY=event.clientY,startScroll=box.scrollLeft,originalStart=clipTimelineStart(item),originalTrack=item.videoTrack||1,previousHistory=[...S.history],previousRedo=S.redoHistory,duration=clipOutputDuration(item);let pointerX=startX,pointerY=startY,moved=false,remembered=false,active=true,frame=0,lastPosition=originalStart;
       const tick=()=>{if(!active)return;if(moved){const edge=42,maxScroll=Math.max(0,box.scrollWidth-box.clientWidth);if(pointerX<viewport.left+edge)box.scrollLeft=Math.max(0,box.scrollLeft-Math.max(3,(viewport.left+edge-pointerX)*.18));else if(pointerX>viewport.right-edge)box.scrollLeft=Math.min(maxScroll,box.scrollLeft+Math.max(3,(pointerX-(viewport.right-edge))*.18));if(pointerY<viewport.top+24)box.scrollTop=Math.max(0,box.scrollTop-6);else if(pointerY>viewport.bottom-24)box.scrollTop+=6;if(!remembered){remember();remembered=true}const trackId=videoTrackAtClientY(pointerY);if(trackId&&!isVideoTrackLocked(trackId)){item.videoTrack=trackId;el('video-track-'+trackId)?.append(button)}const delta=(pointerX-startX+box.scrollLeft-startScroll)/S.zoom,raw=Math.max(0,originalStart+delta);lastPosition=snapClipPosition(raw,duration,item);item.timelineStart=lastPosition;button.style.left=(lastPosition*S.zoom)+'px'}frame=requestAnimationFrame(tick)};
       const move=e=>{pointerX=e.clientX;pointerY=e.clientY;if(Math.hypot(pointerX-startX,pointerY-startY)>5){moved=true;button.classList.add('dragging')}e.preventDefault()};
-      const up=()=>{active=false;cancelAnimationFrame(frame);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);clearTimelineSnapGuide();button.classList.remove('dragging');if(moved){const rippled=typeof commitRippleMove==='function'?commitRippleMove(item,item.videoTrack,lastPosition):false;if(rippled!==false)lastPosition=rippled;const occupied=rippled===false&&videoTrackClips(item.videoTrack).some(other=>other!==item&&lastPosition<clipTimelineEnd(other)-.00001&&lastPosition+duration>clipTimelineStart(other)+.00001);if(occupied){item.videoTrack=originalTrack;item.timelineStart=originalStart;lastPosition=originalStart;S.history=previousHistory;log('manual-log','Hedef aralık dolu; klip eski yerinde kaldı. Yeni kanal otomatik açılmadı.','info')}S.activeVideoTrack=item.videoTrack;S.clips.sort((a,b)=>clipTimelineStart(a)-clipTimelineStart(b));clampClipTransitions();S.selected=S.preview=S.clips.indexOf(item);S.suppressClick=true;setTimeout(()=>S.suppressClick=false,0);drawClips();seekOutputTime(lastPosition);if(!occupied)log('manual-log',(S.timelineMagnet?'Mıknatısla hizalandı: ':'Serbest taşındı: ')+ft(lastPosition)+'.','info')}};
+      const up=()=>{active=false;cancelAnimationFrame(frame);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);clearTimelineSnapGuide();button.classList.remove('dragging');if(moved){const rippled=typeof commitRippleMove==='function'?commitRippleMove(item,item.videoTrack,lastPosition):false;if(rippled!==false)lastPosition=rippled;const occupied=rippled===false&&videoTrackClips(item.videoTrack).some(other=>other!==item&&lastPosition<clipTimelineEnd(other)-.00001&&lastPosition+duration>clipTimelineStart(other)+.00001);if(occupied){item.videoTrack=originalTrack;item.timelineStart=originalStart;lastPosition=originalStart;S.history=previousHistory;S.redoHistory=previousRedo;log('manual-log','Hedef aralık dolu; klip eski yerinde kaldı. Yeni kanal otomatik açılmadı.','info')}S.activeVideoTrack=item.videoTrack;S.clips.sort((a,b)=>clipTimelineStart(a)-clipTimelineStart(b));clampClipTransitions();S.selected=S.preview=S.clips.indexOf(item);S.suppressClick=true;setTimeout(()=>S.suppressClick=false,0);drawClips();seekOutputTime(lastPosition);if(!occupied)log('manual-log',(S.timelineMagnet?'Mıknatısla hizalandı: ':'Serbest taşındı: ')+ft(lastPosition)+'.','info')}};
       frame=requestAnimationFrame(tick);window.addEventListener('pointermove',move,{passive:false});window.addEventListener('pointerup',up)
     }
     function beginTimedTrim(event,type,id,edge,node){
@@ -1853,8 +1882,48 @@
       S.selected=S.preview=S.clips.indexOf(selected);drawClips();setPreviewSource(S.selected,undefined,false);
     }
     el('left').onclick=()=>move(-1);el('right').onclick=()=>move(1);
-    function undoEdit(){const h=S.history.pop();if(!h)return;if(undoProjectAssetRemoval(h)||window.StudioTemplates?.undoCreation(h))return;if(Object.hasOwn(h,'studioTimeline'))S.studioTimeline=h.studioTimeline;S.timelineRipple=h.timelineRipple===true;S.selectedVideoClipIds=[...(h.selectedVideoClipIds||[])];S.clips=h.clips;S.selected=h.selected;S.preview=S.selected;S.selectedZoomKeyframe=h.selectedZoomKeyframe||null;S.texts=h.texts||[];S.selectedText=h.selectedText||null;S.stickers=h.stickers||[];S.selectedSticker=h.selectedSticker||null;S.transitions=h.transitions||[];S.imageLayers=h.imageLayers||[];S.audioLayers=h.audioLayers||[];S.selectedLayer=h.selectedLayer||null;S.selectedImageKeyframe=h.selectedImageKeyframe||null;S.trackState=h.trackState||defaultTrackState();S.videoTracks=(h.videoTracks||[{id:1,name:'Video 1',...S.trackState.video}]).map(track=>({...track}));S.activeVideoTrack=h.activeVideoTrack||1;ensureVideoTracks();if(S.clips[S.selected])setPreviewSource(S.selected,undefined,false);drawClips();showTextProperties();log('manual-log','Son işlem geri alındı.')}
+    function restoreHistoryPoint(entry){
+      if(Object.hasOwn(entry,'studioTimeline'))S.studioTimeline=entry.studioTimeline;
+      S.timelineRipple=entry.timelineRipple===true;
+      S.selectedVideoClipIds=[...(entry.selectedVideoClipIds||[])];
+      S.clips=entry.clips;S.selected=S.preview=entry.selected;S.selectedZoomKeyframe=entry.selectedZoomKeyframe||null;
+      S.texts=entry.texts||[];S.selectedText=entry.selectedText||null;S.selectedTextKeyframe=entry.selectedTextKeyframe||null;
+      S.stickers=entry.stickers||[];S.selectedSticker=entry.selectedSticker||null;
+      S.transitions=entry.transitions||[];S.imageLayers=entry.imageLayers||[];S.audioLayers=entry.audioLayers||[];
+      S.selectedLayer=entry.selectedLayer||null;S.selectedImageKeyframe=entry.selectedImageKeyframe||null;
+      S.trackState=entry.trackState||defaultTrackState();
+      S.videoTracks=(entry.videoTracks||[{id:1,name:'Video 1',...S.trackState.video}]).map(track=>({...track}));
+      S.activeVideoTrack=entry.activeVideoTrack||1;ensureVideoTracks();
+      if(S.clips[S.selected])setPreviewSource(S.selected,undefined,false);
+      drawClips();showTextProperties();
+    }
+    function transferEditHistory(redo){
+      const future=(S.redoHistory??=[]),from=redo?future:S.history,to=redo?S.history:future,entry=from.at(-1);
+      if(!entry)return false;
+      const intended=entry.studioTemplateCreation
+        ? (redo?entry.studioTemplateCreation.previous.id:entry.studioTemplateCreation.id)
+        : entry.timelineId;
+      if(intended!==undefined&&intended!==S.activeTimelineId)return false;
+      from.pop();
+      let inverse=entry,applied;
+      if(entry.assetRemovalProject)applied=applyAssetRemovalHistory(entry,redo);
+      else if(entry.studioTemplateCreation)applied=window.StudioTemplates?.replayCreation(entry,redo);
+      else{
+        inverse=historyPoint();
+        restoreHistoryPoint(entry);
+        log('manual-log',redo?'Son işlem yinelendi.':'Son işlem geri alındı.');
+        applied=true;
+      }
+      if(applied)addHistoryPoint(to,inverse);
+      else from.push(entry);
+      paintHistoryControls();
+      if(applied)scheduleAutosave();
+      return !!applied;
+    }
+    function undoEdit(){return transferEditHistory(false)}
+    function redoEdit(){return transferEditHistory(true)}
     el('undo').onclick=undoEdit;
+    el('redo').onclick=redoEdit;
     function timelineResetLocked(){return ensureVideoTracks().some(track=>track.locked)||Object.entries(S.trackState).some(([type,state])=>type!=='video'&&state.locked)}
     el('reset').onclick=()=>{if(timelineResetLocked())return log('manual-log','Timeline’ı sıfırlamadan önce kanal kilitlerini açın.','error');const asset=S.mediaAssets.find(x=>x.fileId===S.manualId);if(!asset)return;remember();S.clips=[{fileId:asset.fileId,src:asset.src,name:asset.name,sourceDuration:asset.duration,start:0,end:asset.duration,timelineStart:0,effect:'none',filter:'none'}];S.transitions=[];S.texts=[];S.stickers=[];S.imageLayers=[];S.audioLayers=[];S.selectedText=null;S.selectedSticker=null;S.selectedLayer=null;S.selected=S.preview=0;S.trackState=defaultTrackState();stopProjectAudio();setPreviewSource(0,0,false);drawClips();log('manual-log','Timeline sıfırlandı.')};
     function trimSelectedVideoClip(){
@@ -1965,8 +2034,11 @@
       el('timeline-zoom').value=S.zoom;updateZoomLabel();drawClips();
       box.scrollLeft=Math.max(0,TIMELINE_GUTTER+outputAtCursor*S.zoom-cursorX);
     },{passive:false});
-    document.addEventListener('keydown',e=>{const focused=document.activeElement,tag=focused?.tagName;if(desktopUpdateFrozen||document.querySelector('dialog[open]')||el('desktop-update-dialog').open||el('timeline-name-dialog').open||el('snapshot-modal').open||!el('export-modal').classList.contains('hidden')||focused?.isContentEditable||['INPUT','SELECT','TEXTAREA'].includes(tag)||e.isComposing)return;const key=e.key.toLowerCase();if((e.metaKey||e.ctrlKey||e.altKey)&&key!=='z')return;
-      if(key==='b'){e.preventDefault();splitSelected()}else if(e.code==='Space'){e.preventDefault();!isPreviewPlaying()?playPreview():pausePreview()}else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();S.selectedSticker?deleteSelectedSticker():S.selectedText?deleteSelectedText():S.selectedLayer?deleteSelectedLayer():removeClip()}else if((e.metaKey||e.ctrlKey)&&key==='z'){e.preventDefault();undoEdit()}else if(e.key==='ArrowLeft'){e.preventDefault();e.shiftKey?seekOutputTime(currentOutputTime()-1):jumpTimelineBoundary(-1)}else if(e.key==='ArrowRight'){e.preventDefault();e.shiftKey?seekOutputTime(currentOutputTime()+1):jumpTimelineBoundary(1)}});
+    document.addEventListener('keydown',e=>{const focused=document.activeElement,tag=focused?.tagName;if(e.defaultPrevented||desktopClosing||desktopUpdateFrozen||document.querySelector('dialog[open]')||el('desktop-update-dialog').open||el('timeline-name-dialog').open||el('snapshot-modal').open||!el('export-modal').classList.contains('hidden')||focused?.isContentEditable||['INPUT','SELECT','TEXTAREA'].includes(tag)||e.isComposing)return;const key=e.key.toLowerCase();if((e.metaKey||e.ctrlKey||e.altKey)&&key!=='z')return;
+      if(key==='b'){e.preventDefault();splitSelected()}else if(e.code==='Space'){e.preventDefault();!isPreviewPlaying()?playPreview():pausePreview()}else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();S.selectedSticker?deleteSelectedSticker():S.selectedText?deleteSelectedText():S.selectedLayer?deleteSelectedLayer():removeClip()}else if((e.metaKey||e.ctrlKey)&&!e.altKey&&key==='z'){
+        if(e.shiftKey||!el('manual')?.classList.contains('active'))return;
+        e.preventDefault();undoEdit();
+      }else if(e.key==='ArrowLeft'){e.preventDefault();e.shiftKey?seekOutputTime(currentOutputTime()-1):jumpTimelineBoundary(-1)}else if(e.key==='ArrowRight'){e.preventDefault();e.shiftKey?seekOutputTime(currentOutputTime()+1):jumpTimelineBoundary(1)}});
 
     // PROJECT MEDIA LIBRARY
     const assetById=id=>S.mediaAssets.find(x=>x.id===id);
@@ -2017,13 +2089,73 @@
       const asset=assetById(id);if(!asset||desktopUpdateFrozen||desktopClosing||S.autoAnalyzing)return false;
       const before=projectPayload(),usage=projectAssetUsage(asset,before);
       if(removeUses&&usage.locked){log('manual-log','Dosyanın kullanıldığı kanal kilitli; işlem yapılmadı.','error');return false}
-      const cursor=currentOutputTime(),after=projectWithoutAsset(before,asset,removeUses),history=[...S.history,{assetRemovalProject:JSON.parse(JSON.stringify(before)),assetRemovalTime:cursor}].slice(-50);
-      if(removeUses){restoreProject(after,{keepWorkspace:true});S.history=history;seekOutputTime(Math.min(cursor,outDuration()))}
-      else{for(const clip of S.clips)retainProjectAssetMaskSource(clip,asset);S.mediaAssets=after.mediaAssets;S.timelines=after.timelines;S.history=history;drawProjectLibrary()}
+      const cursor=currentOutputTime(),after=projectWithoutAsset(before,asset,removeUses);
+      if(removeUses){restoreProject(after,{keepWorkspace:true,keepAutoCutter:before.autoCutter?.fileId!==asset.fileId});seekOutputTime(Math.min(cursor,outDuration()))}
+      else{for(const clip of S.clips)retainProjectAssetMaskSource(clip,asset);S.mediaAssets=after.mediaAssets;S.timelines=after.timelines;drawProjectLibrary()}
+      recordHistory({
+        timelineId:S.activeTimelineId,assetRemovalProject:JSON.parse(JSON.stringify(before)),
+        assetRemovalResult:JSON.parse(JSON.stringify(projectPayload())),assetRemovalId:id,assetRemovalUses:removeUses,assetRemovalTime:cursor
+      });
       scheduleAutosave();log('manual-log',asset.name+(removeUses?' projeden ve timeline kullanımlarından çıkarıldı.':' Projelerim listesinden çıkarıldı; timeline kullanımları korundu.')+' Asıl dosya silinmedi.','info');return true;
     }
-    function undoProjectAssetRemoval(entry){
-      if(!entry.assetRemovalProject)return false;if(S.autoAnalyzing){S.history.push(entry);log('manual-log','Geri almak için otomatik analizin tamamlanmasını bekleyin.','info');return true}const history=S.history;restoreProject(entry.assetRemovalProject,{keepWorkspace:true});S.history=history;seekOutputTime(Math.min(entry.assetRemovalTime||0,outDuration()));scheduleAutosave();log('manual-log','Dosyayı projeden çıkarma işlemi geri alındı.','info');return true;
+    function mergeAssetRemovalItems(current,before,after,keyFor,same){
+      const previous=new Map(before.map(item=>[keyFor(item),item]));
+      const desired=new Map(after.map(item=>[keyFor(item),item]));
+      if([...previous.keys(),...desired.keys()].some(key=>!key)||previous.size!==before.length||desired.size!==after.length)return after;
+      const result=current.filter(item=>!previous.has(keyFor(item))||desired.has(keyFor(item))).map(item=>{
+        const key=keyFor(item),old=previous.get(key),next=desired.get(key);
+        if(!old||!next)return item;
+        const copy={...item};
+        for(const field of new Set([...Object.keys(old),...Object.keys(next)])){
+          if(same(old[field],next[field]))continue;
+          if(Object.hasOwn(next,field))copy[field]=next[field];else delete copy[field];
+        }
+        return copy;
+      });
+      for(const item of after){
+        const key=keyFor(item);
+        if(previous.has(key)||result.some(existing=>keyFor(existing)===key))continue;
+        const order=after.indexOf(item);
+        const following=after.slice(order+1).map(keyFor);
+        const anchor=result.findIndex(existing=>following.includes(keyFor(existing)));
+        result.splice(anchor<0?result.length:anchor,0,item);
+      }
+      return result;
+    }
+    function applyAssetRemovalHistory(entry,redo){
+      if(S.autoAnalyzing){log('manual-log','İşlem için otomatik analizin tamamlanmasını bekleyin.','info');return false}
+      const current=projectPayload(),asset=current.mediaAssets.find(item=>item.id===entry.assetRemovalId);
+      if(redo&&entry.assetRemovalUses&&asset&&projectAssetUsage(asset,current).locked){
+        log('manual-log','Dosyanın kullanıldığı kanal kilitli; işlem yapılmadı.','error');return false;
+      }
+      const before=redo?entry.assetRemovalProject:entry.assetRemovalResult;
+      const after=redo?entry.assetRemovalResult:entry.assetRemovalProject;
+      const same=(left,right)=>JSON.stringify(left)===JSON.stringify(right);
+      const next={...current};
+      next.mediaAssets=current.mediaAssets.filter(item=>item.id!==entry.assetRemovalId);
+      const restoredIndex=after.mediaAssets.findIndex(item=>item.id===entry.assetRemovalId);
+      if(restoredIndex>=0)next.mediaAssets.splice(restoredIndex,0,after.mediaAssets[restoredIndex]);
+      const itemId=item=>item.id;
+      const keys={clips:item=>item.clipId,imageLayers:itemId,audioLayers:itemId,
+        transitions:item=>item.leftClipId&&item.rightClipId&&JSON.stringify([item.leftClipId,item.rightClipId])};
+      next.timelines=current.timelines.map(timeline=>{
+        const old=before.timelines.find(item=>item.id===timeline.id)?.state;
+        const restored=after.timelines.find(item=>item.id===timeline.id)?.state;
+        if(!old||!restored)return timeline;
+        const state={...timeline.state};
+        for(const key of new Set([...Object.keys(old),...Object.keys(restored)])){
+          if(same(old[key],restored[key]))continue;
+          if(Object.hasOwn(keys,key)&&[state[key],old[key],restored[key]].every(Array.isArray)){
+            state[key]=mergeAssetRemovalItems(state[key],old[key],restored[key],keys[key],same);
+          }else if(Object.hasOwn(restored,key))state[key]=restored[key];else delete state[key];
+        }
+        return {...timeline,state};
+      });
+      if(!same(before.autoCutter,after.autoCutter)&&same(current.autoCutter,before.autoCutter))next.autoCutter=after.autoCutter;
+      restoreProject(JSON.parse(JSON.stringify(next)),{keepWorkspace:true,keepAutoCutter:next.autoCutter===current.autoCutter});
+      seekOutputTime(Math.min(entry.assetRemovalTime||0,outDuration()));
+      log('manual-log',redo?'Dosyayı projeden çıkarma işlemi yinelendi.':'Dosyayı projeden çıkarma işlemi geri alındı.','info');
+      return true;
     }
     el('asset-remove-cancel').onclick=()=>el('asset-remove-dialog').close();
     el('asset-remove-library').onclick=()=>{const dialog=el('asset-remove-dialog');if(removeProjectAsset(dialog.dataset.assetId,false))dialog.close()};

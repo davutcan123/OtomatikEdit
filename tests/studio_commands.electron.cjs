@@ -143,8 +143,27 @@ app.whenReady().then(async () => {
   await evaluate('undoEdit()');
   assert.equal(await evaluate('S.studioTimeline.markers[0].name'), 'Giriş sahnesi');
   await cursor(2);
+  await key(process.platform === 'win32' ? 'Y' : 'Z', process.platform === 'win32' ? [mod] : [mod, 'shift']);
+  assert.equal(await evaluate('S.studioTimeline.markers.length'), 0);
+  await key('Z', [mod]);
+  assert.equal(await evaluate('S.studioTimeline.markers[0].name'), 'Giriş sahnesi');
+  await key('Z', [mod]);
+  assert.equal(await evaluate('S.studioTimeline.markers[0].name'), 'İşaretçi 1');
+  await key('Z', [mod, 'shift']);
+  assert.equal(await evaluate('S.studioTimeline.markers[0].name'), 'Giriş sahnesi');
+  assert.equal(await evaluate("el('redo').disabled"), false);
+  await key('K', [mod]);
+  await evaluate(`document.querySelector('[data-studio-run="redo"]').click()`);
+  assert.equal(await evaluate('S.studioTimeline.markers.length'), 0, 'Palette redo repeats the deletion');
+  await cursor(2);
+  await key('Z', [mod]);
+  await evaluate("el('project-name').focus()");
+  await key('Z', [mod, 'shift']);
+  assert.equal(await evaluate('S.studioTimeline.markers.length'), 1, 'Text input receives native redo');
+  await cursor(2);
   await key('X', ['alt']);
   assert.equal(await evaluate('S.studioTimeline.range'), null);
+  assert.equal(await evaluate('S.redoHistory.length'), 0, 'New edit clears later history');
   await key('K', [mod]);
   await evaluate(`document.querySelector('[data-studio-reset]').click()`);
   assert.deepEqual(await evaluate("StudioPreferences.get('shortcuts')"), {});
@@ -157,6 +176,15 @@ app.whenReady().then(async () => {
   await evaluate(`S.clips=[hydrateClip({clipId:'red',start:0,end:2,sourceDuration:6,fileId:'source.mp4',timelineStart:0}),hydrateClip({clipId:'blue',start:2,end:4,sourceDuration:6,fileId:'source.mp4',timelineStart:2})];S.transitions=[{boundary:0,type:'fade',duration:.5}];S.studioTimeline=StudioCommands.normalizeTimeline({range:{in:1.5,out:3}});drawClips();setExportModal(true)`);
   assert.equal(await evaluate("el('studio-export-range-info').textContent"),
     '00:01.500 – 00:03.000 · Çıktı 1,00 sn (geçişlerle kısalır)');
+  await evaluate('setExportModal(false);persistProjectRecovery()');
+  const loaded = new Promise(resolve => window.webContents.once('did-finish-load', resolve));
+  window.webContents.reload();
+  await loaded;
+  await evaluate('projectWorkspaceInitialization');
+  assert.deepEqual(await evaluate('S.studioTimeline.range'), { in: 1.5, out: 3 });
+  assert.deepEqual(await evaluate('[S.history.length,S.redoHistory.length]'), [0, 0]);
+  await evaluate('switchTimeline("two")');
+  assert.deepEqual(await evaluate('[S.studioTimeline,S.history.length,S.redoHistory.length]'), [null, 0, 0]);
   console.log('Native studio keys, preference conflict and reset, marker undo and per-timeline output ranges verified.');
 }).catch(error => {
   console.error(error);

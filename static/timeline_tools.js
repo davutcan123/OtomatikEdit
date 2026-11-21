@@ -235,7 +235,7 @@ function beginTimelineVideoGroupDrag(event, anchor, button) {
   const items=selectedTimelineVideos(),locked=items.some(isVideoTrackLocked);
   event.preventDefault();event.stopImmediatePropagation();pausePreview();
   const timeline=el('timeline'),startX=event.clientX,startY=event.clientY,startScroll=timeline.scrollLeft;
-  const previousHistory=[...S.history];
+  const previousHistory=[...S.history],previousRedo=S.redoHistory;
   const originals=items.map(item=>({item,start:clipTimelineStart(item),track:item.videoTrack||1,node:[...timeline.querySelectorAll('#track .clip')].find(node=>S.clips[+node.dataset.index]===item)}));
   const minimum=Math.min(...originals.map(entry=>entry.start)),maximum=Math.max(...items.map(clipTimelineEnd));
   let x=startX,y=startY,moved=false,remembered=false,frame=0,active=true,delta=0;
@@ -260,17 +260,17 @@ function beginTimelineVideoGroupDrag(event, anchor, button) {
     const tracks=ensureVideoTracks(),sourceIndices=originals.map(entry=>tracks.findIndex(track=>track.id===entry.track)),anchorIndex=tracks.findIndex(track=>track.id===(anchor.videoTrack||1)),target=videoTrackAtClientY(y),targetIndex=tracks.findIndex(track=>track.id===target);
     const shift=Math.max(-Math.min(...sourceIndices),targetIndex>=0?targetIndex-anchorIndex:0),mapping=new Map();
     for(const entry of originals){const index=tracks.findIndex(track=>track.id===entry.track)+shift;mapping.set(entry.track,tracks[index]||null);}
-    if([...mapping.values()].some(track=>track?.locked)){for(const entry of originals){entry.item.timelineStart=entry.start;entry.item.videoTrack=entry.track;}S.history=previousHistory;drawClips();log('manual-log','Hedef kanal kilitli; grup yerinde kaldı.','error');return;}
+    if([...mapping.values()].some(track=>track?.locked)){for(const entry of originals){entry.item.timelineStart=entry.start;entry.item.videoTrack=entry.track;}S.history=previousHistory;S.redoHistory=previousRedo;drawClips();log('manual-log','Hedef kanal kilitli; grup yerinde kaldı.','error');return;}
     const own=new Set(items),collides=!S.timelineRipple&&originals.some(entry=>{const track=mapping.get(entry.track);return track&&S.clips.some(other=>!own.has(other)&&(other.videoTrack||1)===track.id&&clipTimelineStart(entry.item)<clipTimelineEnd(other)-.00001&&clipTimelineEnd(entry.item)>clipTimelineStart(other)+.00001);});
     if(collides||[...mapping.values()].some(track=>!track)){
       for(const entry of originals){entry.item.timelineStart=entry.start;entry.item.videoTrack=entry.track;}
-      S.history=previousHistory;drawClips();setTimelineVideoSelection(items,anchor);
+      S.history=previousHistory;S.redoHistory=previousRedo;drawClips();setTimelineVideoSelection(items,anchor);
       log('manual-log','Hedef aralık dolu veya kanal yok; klipler eski yerinde kaldı. Önce boş bir kanal ekleyebilirsiniz.','error');return;
     }
     for(const entry of originals)entry.item.videoTrack=mapping.get(entry.track).id;
     S.clips.sort((a,b)=>clipTimelineStart(a)-clipTimelineStart(b));clampClipTransitions();setTimelineVideoSelection(items,anchor);drawClips();seekOutputTime(clipTimelineStart(anchor));setTimelineVideoSelection(items,anchor);scheduleAutosave();
   };
-  const cancel=()=>{active=false;cancelAnimationFrame(frame);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',finish);window.removeEventListener('pointercancel',cancel);window.removeEventListener('keydown',escape,true);for(const entry of originals){entry.item.timelineStart=entry.start;entry.item.videoTrack=entry.track;entry.node?.classList.remove('dragging');}if(remembered)S.history=previousHistory;clearTimelineSnapGuide();drawClips();};
+  const cancel=()=>{active=false;cancelAnimationFrame(frame);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',finish);window.removeEventListener('pointercancel',cancel);window.removeEventListener('keydown',escape,true);for(const entry of originals){entry.item.timelineStart=entry.start;entry.item.videoTrack=entry.track;entry.node?.classList.remove('dragging');}if(remembered){S.history=previousHistory;S.redoHistory=previousRedo}clearTimelineSnapGuide();drawClips();};
   const escape=event=>{if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();cancel();}};
   frame=requestAnimationFrame(tick);window.addEventListener('pointermove',move,{passive:false});window.addEventListener('pointerup',finish);window.addEventListener('pointercancel',cancel);window.addEventListener('keydown',escape,true);
 }

@@ -31,7 +31,8 @@ function fixture(){
     between('    const clipOutputDuration=','    function isPreviewPlaying'),
     line('function ensureClipTimelinePositions('),line('const clipTimelineStart='),line('const clipTimelineEnd='),line('const outDuration='),
     between('    function newClipId()','    function resolveClipTransitions('),
-    line('function emptyTimelineState('),line('function captureTimelineState('),line('function applyTimelineState('),line('function remember(){'),line('function undoEdit(){'),
+    line('function emptyTimelineState('),line('function captureTimelineState('),line('function applyTimelineState('),between('    const EDIT_HISTORY_LIMIT=', '    const selectedClip='),
+    between('    function restoreHistoryPoint(', "    el('undo').onclick"),
     between('    function timelineTrimBounds(', '    function paintTimedClipTiming('),
     between('    function splitVideoTarget','    function splitAudioLayer'),
   ].join('\n'),c);

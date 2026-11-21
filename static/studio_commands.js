@@ -1,12 +1,16 @@
 /* Studio actions share the existing editor's playhead, save and edit operations. */
 (() => {
   'use strict';
+  const platform = navigator.userAgentData?.platform || navigator.platform || '';
+  const mac = /mac/i.test(platform), windows = /win/i.test(platform);
   const commands = [
     { id: 'palette', label: 'Komut ve kısayol paneli', chord: 'Mod+KeyK', run: open },
     { id: 'save', label: 'Projeyi kaydet', chord: 'Mod+KeyS', run: () => saveNamedProject() },
     { id: 'split', label: 'Oynatma başında böl', chord: 'Mod+KeyB', alias: 'KeyB', timeline: true, run: () => splitSelected() },
     { id: 'play', label: 'Oynat / duraklat', fixed: 'Space', timeline: true, run: () => isPreviewPlaying() ? pausePreview() : playPreview() },
-    { id: 'undo', label: 'Son düzenlemeyi geri al', fixed: 'Mod+KeyZ', timeline: true, run: () => undoEdit() },
+    { id: 'undo', label: 'Son düzenlemeyi geri al', fixed: 'Mod+KeyZ', timeline: true, available: () => !!S.history.length, run: () => undoEdit() },
+    { id: 'redo', label: 'Son düzenlemeyi yinele', fixed: 'Mod+Shift+KeyZ', alias: windows ? 'Mod+KeyY' : null,
+      timeline: true, available: () => !!S.redoHistory?.length, run: () => redoEdit() },
     { id: 'frameBack', label: 'Bir kare geri', chord: 'Comma', repeat: true, timeline: true, media: true, run: () => stepFrame(-1) },
     { id: 'frameForward', label: 'Bir kare ileri', chord: 'Period', repeat: true, timeline: true, media: true, run: () => stepFrame(1) },
     { id: 'markerAdd', label: 'İşaretçi ekle', chord: 'KeyM', timeline: true, media: true, run: addMarker },
@@ -19,11 +23,10 @@
   ];
   const reserved = new Set([
     'KeyB', 'Shift+KeyB', 'Space', 'Shift+Space', 'Delete', 'Backspace', 'ArrowLeft', 'ArrowRight', 'Shift+ArrowLeft', 'Shift+ArrowRight',
-    'Mod+KeyZ', 'Mod+Shift+KeyZ', 'Mod+KeyC', 'Mod+KeyV', 'Mod+KeyX', 'Mod+KeyA',
+    'Mod+KeyZ', 'Mod+Shift+KeyZ', 'Mod+KeyY', 'Mod+KeyC', 'Mod+KeyV', 'Mod+KeyX', 'Mod+KeyA',
     'Mod+KeyW', 'Mod+KeyQ', 'Mod+KeyR', 'Mod+KeyL', 'Mod+KeyT', 'Mod+KeyN',
     'Mod+Shift+KeyI', 'Alt+ArrowLeft', 'Alt+ArrowRight',
   ]);
-  const mac = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || '');
   const state = () => S.studioTimeline || { markers: [], range: null };
   const formatTime = time => {
     const millis = Math.round(time * 1000);
@@ -55,7 +58,7 @@
     remember();
     S.studioTimeline = normalizeTimeline({ ...state(), ...patch });
     paintRuler();
-    if (el('undo')) el('undo').disabled = !S.history.length;
+    paintHistoryControls();
     scheduleAutosave();
   }
 
@@ -248,7 +251,7 @@
     if (command.timeline && !el('manual')?.classList.contains('active')) return false;
     if (command.media && !outDuration()) return false;
     if (command.markers && !state().markers.some(item => item.time <= outDuration() + .001)) return false;
-    return !command.range || !!state().range;
+    return (!command.range || !!state().range) && (!command.available || command.available());
   }
   function editorBusy() {
     return desktopClosing || desktopUpdateFrozen ||
@@ -424,6 +427,12 @@
     if (editorBusy() || typingTarget(event.target) || typingTarget(document.activeElement)) return;
     const chord = eventChord(event);
     if (!chord) return;
+    if (chord === 'Mod+Shift+KeyZ' || (windows && chord === 'Mod+KeyY')) {
+      if (!el('manual')?.classList.contains('active')) return;
+      event.preventDefault();event.stopImmediatePropagation();
+      if (!event.repeat) redoEdit();
+      return;
+    }
     const command = commands.find(entry => bindings.get(entry.id) === chord);
     if (!command || !active(command)) return;
     event.preventDefault();event.stopImmediatePropagation();

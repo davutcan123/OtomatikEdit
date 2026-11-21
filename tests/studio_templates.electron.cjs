@@ -72,6 +72,14 @@ app.whenReady().then(() => withStudioBrowser(async ({ evaluate, temporary, root 
   assert.equal(await evaluate('S.history.length'), 1);
   assert.deepEqual(await evaluate('projectPayload().timelines[0].state'), before);
 
+  await evaluate('redoEdit()');
+  assert.equal(await evaluate('S.activeTimelineId'),demoTimeline.active);
+  assert.equal(await evaluate('S.mediaAssets[0].fileId'),demoTimeline.asset.fileId);
+  assert.equal(await evaluate('S.timelines[0].state.videoTracks[0].locked'),true);
+  assert.equal(fs.readdirSync(path.join(temporary, 'uploads')).length,1,'Redo reuses the original upload');
+  assert.deepEqual(await evaluate('projectPayload().timelines[0].state'),before);
+  await evaluate('undoEdit()');
+
   for (const [template, filename] of [['product-frame','product-showcase'], ['concert-session','session-lights']]) {
     await choose('demo');
     assert.equal(await apply(template), true);

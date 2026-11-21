@@ -57,7 +57,8 @@ function fixture() {
     line('function ensureClipTimelinePositions('), line('const clipTimelineStart='), line('const clipTimelineEnd='), line('const outDuration='),
     between('    function newClipId()', '    const clipInputId='),
     line('function emptyTimelineState('), line('function captureTimelineState('), line('function applyTimelineState('),
-    line('function remember(){'), line('function undoEdit(){'),
+    between('    const EDIT_HISTORY_LIMIT=', '    const selectedClip='),
+    between('    function restoreHistoryPoint(', "    el('undo').onclick"),
     tracks.slice(tracks.indexOf('/* Automatic video ripple')), tools,
   ].join('\n'), c);
   const syncNodes = () => {clipNodes = c.S.clips.map((item, index) => {const clip = makeNode('clip-' + item.clipId); clip.dataset.index = index; clip.closest = selector => selector === '#track .clip' ? clip : null; return clip;}); return clipNodes;};
@@ -239,4 +240,26 @@ test('select-all only handles timeline focus and never intercepts text editors o
   assert.equal(consumed, 0); assert.deepEqual(plain(c.S.selectedVideoClipIds), []);
   c.document.activeElement = nodes.get('timeline'); documentEvents.get('keydown')(event);
   assert.equal(consumed, 1); assert.deepEqual(plain(c.S.selectedVideoClipIds), ['A', 'B']);
+});
+
+
+test('redo walks independent snapshots, respects timeline scope, and invalidates on a new edit', () => {
+  const {c} = fixture(); c.S.clips = [clip('A')]; c.S.selected = 0;
+  c.remember(); c.S.clips[0].brightness = 160;
+  c.remember(); c.S.clips[0].brightness = 130;
+  assert.equal(c.undoEdit(), true); assert.equal(c.S.clips[0].brightness, 160);
+  assert.equal(c.undoEdit(), true); assert.equal(c.S.clips[0].brightness, 100);
+  c.S.activeTimelineId = 'unrelated';
+  assert.equal(c.redoEdit(), false); assert.equal(c.S.clips[0].brightness, 100);
+  c.S.activeTimelineId = 'TL1';
+  assert.equal(c.redoEdit(), true); assert.equal(c.S.clips[0].brightness, 160);
+  assert.equal(c.redoEdit(), true); assert.equal(c.S.clips[0].brightness, 130);
+  assert.equal(c.undoEdit(), true);
+  c.remember(); c.S.clips[0].brightness = 145;
+  assert.equal(c.redoEdit(), false);
+  for (let number = 0; number < 55; number++) { c.remember(); c.S.clips[0].brightness++; }
+  assert.equal(c.S.history.length, 50);
+  for (let number = 0; number < 50; number++) assert.equal(c.undoEdit(), true);
+  assert.equal(c.S.redoHistory.length, 50);
+  assert.equal(c.undoEdit(), false);
 });

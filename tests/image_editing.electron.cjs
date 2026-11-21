@@ -214,6 +214,10 @@ async function checkLibraryRemoval(){
   for(const timeline of allRemoved.timelines){assert.ok(!timeline.state.imageLayers.some(x=>x.fileId==='blue.png'));assert.deepEqual(timeline.state.clips,before.timelines.find(x=>x.id===timeline.id).state.clips)}
   assert.ok(allRemoved.timelines[0].state.imageLayers.some(x=>x.fileId==='red.png'),'Other images must remain');
   await evaluate('undoEdit()');await waitForVideo();await twoFrames();const restored=await evaluate('projectPayload()');assert.deepEqual(restored,before,'Undo must restore all image uses and both timeline states');
+  await evaluate('redoEdit()');await waitForVideo();await twoFrames();
+  assert.deepEqual(await evaluate('projectPayload()'),allRemoved,'Redo reapplies removal to the same timelines');
+  await evaluate('undoEdit()');await waitForVideo();await twoFrames();
+  assert.deepEqual(await evaluate('projectPayload()'),before);
   assert.equal(JSON.stringify([...savedProjects.entries()]),storedBefore,'Removing from the working project must not rewrite an existing saved project');
   proof.removal={unusedRemoved:unusedRemoved.mediaAssets.map(x=>x.fileId),libraryOnlyRetainedUses:libraryOnly.timelines.map(x=>x.state.imageLayers.length),allRemoved:allRemoved.timelines.map(x=>x.state.imageLayers.map(y=>y.fileId)),restoredTimelines:restored.timelines.length};
 }
