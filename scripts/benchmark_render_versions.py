@@ -54,10 +54,17 @@ async def main():
                         memory=MemoryInfo(32 * GIB, 24 * GIB, "synthetic-32GB"), cpu_count=10)
                 backend.choose_render_resources = policy
             captured = []
+            graph_path = scratch / (name + "-filter.txt")
             original_create = backend.create_media_process
 
             async def capture(*args, **kwargs):
-                captured.append(list(args))
+                for index, value in enumerate(args):
+                    if value in {"-filter_complex_script", "-/filter_complex"}:
+                        graph_path.write_bytes(Path(args[index + 1]).read_bytes())
+                        command = list(args)
+                        command[index + 1] = str(graph_path)
+                        captured.append(command)
+                        break
                 return await original_create(*args, **kwargs)
             backend.create_media_process = capture
             job_id = str(uuid.uuid4())

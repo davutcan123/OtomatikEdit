@@ -71,12 +71,16 @@ class RenderExecutionTests(unittest.TestCase):
     def render(self, *, failures=(), hardware=True, quality="high", clips=None,
                request_hardware="auto", selector=None, initial_low_memory=False):
         commands = []
+        scripts = []
         actual_process = self.backend.create_media_process
         failures = list(failures)
 
         async def intercept(*args, **kwargs):
             if "[outv]" in args:
                 commands.append(tuple(args))
+                script = next(Path(args[index + 1]) for index, value in enumerate(args)
+                              if value in {"-filter_complex_script", "-/filter_complex"})
+                scripts.append(script.read_text())
                 if len(commands) <= len(failures):
                     code, diagnostic = failures[len(commands) - 1]
                     return FailedMediaProcess(code, diagnostic)
@@ -106,7 +110,7 @@ class RenderExecutionTests(unittest.TestCase):
                 job_id = response.json()["job_id"]
                 response = client.get("/stream-events/" + job_id, headers=self.headers)
                 messages = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
-            return {"commands": commands, "messages": messages, "job_id": job_id,
+            return {"commands": commands, "scripts": scripts, "messages": messages, "job_id": job_id,
                     "invalidations": invalidated.call_count, "selection": selected.call_args}
 
     @staticmethod
@@ -172,6 +176,10 @@ class RenderExecutionTests(unittest.TestCase):
         self.assertEqual(len(result["commands"]), 2)
         self.assertTrue(any(message.get("type") == "error" for message in result["messages"]))
         self.assertFalse(any(message.get("type") == "result" for message in result["messages"]))
+        first = result["commands"][0]
+        script = next(Path(first[index + 1]) for index, item in enumerate(first)
+                      if item in {"-filter_complex_script", "-/filter_complex"})
+        self.assertFalse(script.exists())
 
     def test_already_protective_gpu_memory_failure_still_gets_one_cpu_retry(self):
         result = self.render(initial_low_memory=True, failures=[(-12, "Cannot allocate memory\n")])
@@ -207,11 +215,10 @@ class RenderExecutionTests(unittest.TestCase):
             self.assertNotIn("-ss", options)
             self.assertNotIn("-t", options)
             self.assertEqual(self.option(options, "-threads"), "2")
-        graph = (Path(self.backend.OUTPUT_DIR) / f"filter_{result['job_id']}.txt")
-        # Resolve whichever script-option spelling the installed FFmpeg accepts.
-        script = next((Path(command[index + 1]) for index, item in enumerate(command)
-                       if item in {"-filter_complex_script", "-/filter_complex"}), graph)
-        text = script.read_text()
+        text = result["scripts"][0]
+        script = next(Path(command[index + 1]) for index, item in enumerate(command)
+                      if item in {"-filter_complex_script", "-/filter_complex"})
+        self.assertFalse(script.exists())
         expected_trims = [(3.0, 3.6), (1.0, 1.5), (2.0, 2.4)]
         for pattern in [r"(?<!a)trim=start=([\d.]+):end=([\d.]+)", r"atrim=start=([\d.]+):end=([\d.]+)"]:
             self.assertEqual([tuple(map(float, pair)) for pair in re.findall(pattern, text)], expected_trims)

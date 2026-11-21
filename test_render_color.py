@@ -61,7 +61,14 @@ class RenderColorTests(unittest.TestCase):
         ], check=True, timeout=20)
 
     def export(self, settings, snapshot=True):
-        with TestClient(self.backend.app) as client:
+        graphs = []
+        original = self.backend.ffmpeg_filter_script_args
+
+        def capture(script_path):
+            graphs.append(Path(script_path).read_text())
+            return original(script_path)
+
+        with patch.object(self.backend, "ffmpeg_filter_script_args", side_effect=capture), TestClient(self.backend.app) as client:
             response = client.post("/start-snapshot" if snapshot else "/start-render", headers=self.headers, data={
                 "file_id": self.file_id,
                 "segments": json.dumps([{"fileId": self.file_id, "start": 0, "end": 1.5, **settings}]),
@@ -83,7 +90,7 @@ class RenderColorTests(unittest.TestCase):
                     "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "-",
                 ], check=True, capture_output=True, timeout=20).stdout
                 image = Image.open(io.BytesIO(frame)).convert("RGB")
-            return image, Path(self.backend.OUTPUT_DIR) / f"script_{job_id}.txt"
+            return image, graphs[-1]
 
     def assert_matches_preview(self, image, settings, tolerance=4, patches=range(len(COLORS))):
         for index in patches:
@@ -151,8 +158,8 @@ class RenderColorTests(unittest.TestCase):
 
     def test_identity_adjustments_keep_fast_path(self):
         image, script = self.export({})
-        self.assertNotIn("lutrgb=", script.read_text())
-        self.assertNotIn("geq=", script.read_text())
+        self.assertNotIn("lutrgb=", script)
+        self.assertNotIn("geq=", script)
         self.assert_matches_preview(image, {}, patches=range(4))
 
 

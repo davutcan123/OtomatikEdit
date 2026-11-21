@@ -49,13 +49,11 @@ class JobRetentionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_eviction_keeps_existing_stream_and_output(self):
         output = Path(self.backend.OUTPUT_DIR) / "out_old.mp4"
-        script = Path(self.backend.OUTPUT_DIR) / "script_old.txt"
         output.write_bytes(b"completed output")
-        script.write_text("completed filter graph")
 
-        async def start(job_id, *, script_path=None):
+        async def start(job_id):
             events = self.backend.JobEvents()
-            self.backend.jobs[job_id] = {"q": events, "filter_script": script_path}
+            self.backend.jobs[job_id] = {"q": events}
 
             async def complete():
                 await events.put({"type": "result"})
@@ -64,7 +62,7 @@ class JobRetentionTests(unittest.IsolatedAsyncioTestCase):
             await self.backend.schedule_job(job_id, complete())
 
         with patch.object(self.backend, "_COMPLETED_JOB_LIMIT", 1):
-            await start("old", script_path=script)
+            await start("old")
             old_stream = await self.backend.stream_events("old")
             wait = asyncio.Event()
             self.backend.jobs["running"] = {"q": self.backend.JobEvents()}
@@ -73,7 +71,6 @@ class JobRetentionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(set(self.backend.jobs), {"running", "new"})
             self.assertEqual(len([line async for line in old_stream.body_iterator]), 1)
             self.assertEqual(output.read_bytes(), b"completed output")
-            self.assertFalse(script.exists())
             wait.set()
             await running
 

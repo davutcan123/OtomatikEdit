@@ -42,7 +42,10 @@ class RenderGraphOptimizationTests(unittest.TestCase):
         original = self.backend.create_media_process
 
         async def capture(*args, **kwargs):
-            captured.append(list(args))
+            for index, value in enumerate(args):
+                if value in {"-filter_complex_script", "-/filter_complex"}:
+                    captured.append((list(args), Path(args[index + 1]).read_text()))
+                    break
             return await original(*args, **kwargs)
 
         with patch.object(self.backend, "create_media_process", side_effect=capture):
@@ -60,12 +63,9 @@ class RenderGraphOptimizationTests(unittest.TestCase):
                 messages = [json.loads(line[6:]) for line in events.text.splitlines() if line.startswith("data: ")]
                 self.assertFalse([item for item in messages if item.get("type") == "error"], messages)
                 self.assertTrue(any(item.get("download_url") for item in messages), messages)
-        command = next(command for command in reversed(captured) if "-map" in command)
-        self.last_command = command
-        script = next(command[index + 1] for index, value in enumerate(command)
-                      if value in {"-filter_complex_script", "-/filter_complex"})
+        self.last_command, graph = captured[-1]
         output = Path(self.backend.OUTPUT_DIR) / f"out_{job_id}.mp4"
-        return Path(script).read_text(), output
+        return graph, output
 
     def green_level(self, output, time):
         result = subprocess.run([

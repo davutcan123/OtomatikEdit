@@ -608,11 +608,6 @@ def forget_completed_job(job_id):
     if job is None or "completed_at" not in job:
         return
     jobs.pop(job_id)
-    if script := job.get("filter_script"):
-        try:
-            os.remove(script)
-        except OSError:
-            pass
 
 
 def finish_job(job_id, task):
@@ -2138,6 +2133,7 @@ async def run_render_job(job_id: str):
     q = job["q"]
     render_started = time.monotonic()
     brush_assets = []
+    script_directory = None
     try:
         resolution_text = f", Boyut: {job['width']}x{job['height']}" if job.get("width") else ""
         target_fps = job.get("fps", 30)
@@ -2149,7 +2145,6 @@ async def run_render_job(job_id: str):
         if not segments and not snapshot and not job.get("timeline_duration"):
             raise Exception("Geçerli video bölümü bulunamadı!")
             
-        script_path = os.path.join(OUTPUT_DIR, f"script_{job_id}.txt")
         out_path = os.path.join(OUTPUT_DIR, f"out_{job_id}.{job['format']}")
         render_path = out_path if job["format"] not in {"gif", "mp3"} else os.path.join(OUTPUT_DIR, f"intermediate_{job_id}.mp4")
         transitions = job.get("transitions", [])
@@ -2975,7 +2970,8 @@ async def run_render_job(job_id: str):
         elif not snapshot:
             lines.append(f"{current_audio}anull[outa]")
         
-        job["filter_script"] = script_path
+        script_directory = tempfile.TemporaryDirectory(prefix="otomatik-render-", ignore_cleanup_errors=True)
+        script_path = os.path.join(script_directory.name, "filter.txt")
         with open(script_path, "w") as f:
             f.write(";\n".join(lines))
             
@@ -3142,6 +3138,8 @@ async def run_render_job(job_id: str):
     except Exception as e:
         await q.put({"type": "error", "message": f"Hata oluştu: {str(e)}"})
     finally:
+        if script_directory is not None:
+            script_directory.cleanup()
         for asset in brush_assets:
             try:
                 os.remove(asset)
