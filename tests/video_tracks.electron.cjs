@@ -26,6 +26,7 @@ async function click(selector){
   await frames();
 }
 async function outputPixels(){
+  await evaluate(`el('preview-stage').scrollIntoView({block:'center',inline:'nearest'})`);await frames();
   const rect=await evaluate(`(()=>{const r=el('preview-stage').getBoundingClientRect();return{x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)}})()`);
   const image=await window.webContents.capturePage(rect),{width,height}=image.getSize(),bytes=image.toBitmap();
   const pixel=(x,y)=>{const i=(Math.floor(y*height)*width+Math.floor(x*width))*4;return[bytes[i+2],bytes[i+1],bytes[i],bytes[i+3]]};
@@ -84,11 +85,27 @@ async function checkGapAndPlayback(){
 
 async function checkChannelsAndPersistence(){
   await click('#video-track-add');assert.equal(await evaluate('S.videoTracks.length'),4);
-  await evaluate(`el('timeline').scrollTop=S.videoLaneTops[4]-15;el('timeline').scrollLeft=0;S.timelineMagnet=false;drawMagnetButton()`);await frames();
-  const points=await evaluate(`(()=>{const clip=S.clips.find(c=>c.clipId==='green'),node=document.querySelector('#video-track-3 [data-index="'+S.clips.indexOf(clip)+'"]'),r=node.getBoundingClientRect(),lane=el('video-track-4').getBoundingClientRect();return{from:{x:r.left+r.width*.6,y:r.top+r.height*.45},to:{x:r.left+r.width*.6,y:lane.top+lane.height*.45},sourceVisible:node.contains(document.elementFromPoint(r.left+r.width*.6,r.top+r.height*.45)),view:{width:innerWidth,height:innerHeight}}})()`);
-  assert.ok(points.sourceVisible,'Cross-channel drag source must be visible '+j(points));assert.ok(points.to.y>0&&points.to.y<points.view.height);
-  for(const[type,p]of [['mouseDown',points.from],['mouseMove',{x:points.from.x,y:points.from.y-12}],['mouseMove',points.to]]){window.webContents.sendInputEvent({type,button:'left',clickCount:1,x:Math.round(p.x),y:Math.round(p.y)});await frames()}
-  window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:Math.round(points.to.x),y:Math.round(points.to.y)});await frames();
+  const source=await evaluate(`(() => {
+    const index=S.clips.findIndex(clip=>clip.clipId==='green');
+    return '#video-track-3 [data-index="'+index+'"]';
+  })()`);
+  await evaluate(`el('timeline').scrollLeft=0;S.timelineMagnet=false;drawMagnetButton();document.querySelector(${j(source)}).scrollIntoView({block:'center',inline:'nearest'})`);await frames();
+  const from=await evaluate(`(()=>{
+    const node=document.querySelector(${j(source)}),r=node.getBoundingClientRect();
+    const x=Math.round(r.left+r.width*.6),y=Math.round(r.top+r.height*.45);
+    return{x,y,reachable:node.contains(document.elementFromPoint(x,y))};
+  })()`);
+  assert.ok(from.reachable,'Cross-channel drag source must be visible '+j(from));
+  const send=(type,{x,y})=>window.webContents.sendInputEvent({type,button:'left',clickCount:1,x,y});
+  send('mouseDown',from);send('mouseMove',{x:from.x,y:from.y-12});await frames();
+  await evaluate(`el('video-track-4').scrollIntoView({block:'center',inline:'nearest'})`);await frames();
+  const to=await evaluate(`(()=>{
+    const lane=el('video-track-4'),r=lane.getBoundingClientRect(),x=${from.x},y=Math.round(r.top+r.height*.45);
+    return{x,y,reachable:lane.contains(document.elementFromPoint(x,y))};
+  })()`);
+  const points={from,to};
+  assert.ok(to.reachable,'Cross-channel drag destination must be visible '+j(points));
+  send('mouseMove',to);await frames();send('mouseUp',to);await frames();
   const moved=await evaluate('JSON.parse(JSON.stringify(S.clips.find(c=>c.clipId==="green")))');assert.equal(moved.videoTrack,4);assert.ok(Math.abs(moved.timelineStart-1.5)<.02,'Vertical drag must preserve clip time');
   await evaluate('undoEdit()');await frames();assert.equal(await evaluate('S.clips.find(c=>c.clipId==="green").videoTrack'),3);
   for(let i=0;i<3;i++)await click('#video-track-add');assert.equal(await evaluate('S.videoTracks.length'),7,'Video channel creation has no three-channel cap');

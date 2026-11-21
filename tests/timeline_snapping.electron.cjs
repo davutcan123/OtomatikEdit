@@ -56,11 +56,21 @@ async function checkAllLayers() {
 }
 async function checkScrubAndKeyboard() {
   await setup('text');await evaluate(`S.clips=[hydrateClip({clipId:'one',start:0,end:4,timelineStart:0,fileId:'source.mp4',sourceDuration:30}),hydrateClip({clipId:'two',start:8,end:12,timelineStart:8,fileId:'source.mp4',sourceDuration:30})];S.texts=[{id:'moving',text:'Between cuts',start:5.5,end:6.3,x:50,y:50,size:60}];S.zoom=40;drawClips();seekOutputTime(2);el('timeline').scrollTop=0;el('timeline').scrollLeft=0`);await readyVideo();await frames();
-  const point = await evaluate(`(()=>{const r=el('timeline-ruler').getBoundingClientRect();return{x:r.left+4.2*S.zoom,y:r.top+r.height/2}})()`);send('mouseDown', point);await frames();
-  assert.ok(Math.abs(await evaluate('currentOutputTime()') - 4) < .002);assert.equal(await evaluate('S.timelineSnapTime'), 4);await screenshot('magnetic-playhead');send('mouseUp', point);await frames();
+  const scrubPoint = async () => {
+    await evaluate(`el('timeline-ruler').scrollIntoView({block:'nearest',inline:'nearest'})`);await frames();
+    const point=await evaluate(`(()=>{
+      const ruler=el('timeline-ruler'),r=ruler.getBoundingClientRect();
+      const x=Math.round(r.left+4.2*S.zoom),y=Math.round(r.top+r.height/2);
+      return{x,y,reachable:ruler.contains(document.elementFromPoint(x,y))};
+    })()`);
+    assert.ok(point.reachable,'Playhead input must hit the visible ruler '+json(point));
+    return point;
+  };
+  const snappedPoint=await scrubPoint();send('mouseDown', snappedPoint);await frames();
+  assert.ok(Math.abs(await evaluate('currentOutputTime()') - 4) < .002);assert.equal(await evaluate('S.timelineSnapTime'), 4);await screenshot('magnetic-playhead');send('mouseUp', snappedPoint);await frames();
   await evaluate(`el('timeline').focus({preventScroll:true})`);
   for (const [key, expected] of [['Right',5.5],['Right',6.3],['Right',8],['Left',6.3]]) { window.webContents.sendInputEvent({type:'keyDown',keyCode:key});window.webContents.sendInputEvent({type:'keyUp',keyCode:key});await frames();assert.ok(Math.abs(await evaluate('currentOutputTime()') - expected) < .002, 'Arrow jumps to exact boundary '+expected); }
-  await evaluate('S.timelineMagnet=false;drawMagnetButton()');send('mouseDown', point);await frames();assert.ok(Math.abs(await evaluate('currentOutputTime()') - 4.2) < .03);send('mouseUp', point);await frames();proof.scrub={snapped:4,unsnapped:await evaluate('currentOutputTime()'),arrowBoundaries:[5.5,6.3,8,6.3]};
+  await evaluate('S.timelineMagnet=false;drawMagnetButton()');const unsnappedPoint=await scrubPoint();send('mouseDown', unsnappedPoint);await frames();assert.ok(Math.abs(await evaluate('currentOutputTime()') - 4.2) < .03);send('mouseUp', unsnappedPoint);await frames();proof.scrub={snapped:4,unsnapped:await evaluate('currentOutputTime()'),arrowBoundaries:[5.5,6.3,8,6.3]};
 }
 async function checkVideoTiming() {
   await setup('video');await evaluate(`S.clips=[hydrateClip({clipId:'moving-video',start:4,end:14,speed:2,timelineStart:5,fileId:'source.mp4',sourceDuration:30,videoTrack:1})];S.texts=[{id:'target',text:'Snap target',start:4,end:12,x:50,y:50,size:60}];S.selectedText=null;S.selected=0;S.preview=0;drawClips();seekOutputTime(7)`);await readyVideo();await frames();
