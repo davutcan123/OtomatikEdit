@@ -1,6 +1,6 @@
-# Akıllı Video Sessizlik ve Kelime Kesici (Smart Video Editor)
+# Otomatik Edit
 
-Bu proje, manuel video kurguyu ve akıllı otomatik kırpmayı aynı arayüzde birleştiren yerel bir video editörüdür. **Masaüstü sürümü kendi uygulama penceresinde açılır; tarayıcı veya ayrıca Python/FFmpeg kurulumu gerekmez.** Kaynak koddan tarayıcıda çalıştırma seçeneği de korunur. Otomatik kırpıcıda hazırlanan kesimler, video yeniden indirilip yüklenmeden tek tuşla manuel timeline'a aktarılabilir.
+Otomatik Edit, video kurguyu, altyazı düzenlemeyi ve otomatik kırpmayı birleştiren yerel bir editördür. **Hazır masaüstü paketi kendi penceresinde açılır ve Python ile FFmpeg’i içerir.** Kaynak kodu tarayıcıda çalıştırma adımları aşağıda yer alır.
 
 ## Masaüstü sürümü
 
@@ -8,22 +8,30 @@ Windows için `.exe` kurulum dosyası, Apple Silicon Mac için `.dmg` paketi haz
 
 - Projeler ve yüklenen medya otomatik oluşturulan **Belgeler / Otomatik Edit** klasöründe saklanır. Kayıtlı projeler uygulamadan açılıp silinebilir; silinen kayıtlar çöp klasörüne taşınır, medya korunur. Otomatik kurtarma dosyası uygulama yeniden açıldığında geri yüklenir.
 - **Dosya → Eski projeleri içe aktar…** ile eski `SmartVideoEditor` klasöründeki kayıtlı projeler ve bağlı medya kopyalanabilir. Eski dosyalar silinmez; mevcut kayıtların üzerine yazılmaz.
-- Render bitince **Farklı kaydet** penceresi otomatik açılır. Render düğmesinin yanındaki **Ekran görüntüsü al** ile mevcut kare, düzenlemeler dahil, HD–4K PNG olarak kaydedilebilir. Devam eden render/analiz sırasında kapatma için uyarı gösterilir.
-- Kompakt masaüstü yerleşiminde oynatıcı ve timeline aynı anda görünür; seçili klip ayarları ve düzenleme araçları kendi içinde kayar.
+- Render bitince **Farklı kaydet** penceresi otomatik açılır. Oynatıcının yanındaki **Kare yakala** ile mevcut kare, düzenlemeler dahil, HD–4K PNG olarak kaydedilebilir. Devam eden render/analiz sırasında kapatma için uyarı gösterilir.
 - Kısayollar küçük bir açılır menüde tutulur; oynatıcı görüntüsünün üstüne binmez. Render ilerlemesi geniş bir durum çubuğunda gösterilir. **Terminal ayrıntıları** ayrı bir pencerede açılır; bu oturumun son kayıtları aranıp filtrelenebilir ve kopyalanabilir.
 - Geçişler klip çiftine bağlı saklanır; klip ayarları değişince kaybolmaz. İki klip ayrılırsa geçiş korunarak beklemeye alınır, aynı uçlar yeniden birleşince etkinleşir. Proje kaydı, otomatik kurtarma ve yeniden açma bu bağlantıları korur.
 - Parlaklık, kontrast ve doygunluk ayarlarının PNG/render hesabı önizlemedeki sırayla uygulanır; parlaklık artırıldığında oluşan aşırı beyazlama giderilmiştir.
 - Arayüz ve yerel düzenleme internet olmadan çalışır. Konuşma tanıma ve çeviri model dosyaları ilk kullanımda internetten indirilir; sonraki kullanımlarda önbellekten çalışır. Bu dönüşüm pasif gösterilen harici yapay zekâ özelliklerini kendiliğinden etkinleştirmez.
 - Masaüstü güncellemeleri kaynak ZIP yerine yeni kurulum dosyasıyla yapılır. Proje kayıtları korunur.
 
-Kurulum, yedekleme ve geliştirici derleme bilgileri: [MASAUSTU.md](MASAUSTU.md).
+Ayrıntılı kurulum, yedekleme ve derleme adımlarına masaüstü kılavuzundan ulaşabilirsiniz. [Masaüstü kılavuzu](MASAUSTU.md)
+
+## Hızlı başlangıç
+
+1. **Kurgu → Medya** bölümünden dosyalarınızı ekleyin veya oynatıcıya bırakın. Varlıklar solda, oynatıcı ortada, seçili öğenin ayarları sağda ve zaman çizelgesi alttadır. **Alp vadisi** örneğiyle boş bir projede başlayabilirsiniz.
+2. Görünümleri, efektleri, geçişleri ve animasyonları varlık tarayıcısında arayın. **Ses** bölümündeki müzikleri ve ses efektlerini dinleyip oynatma noktasına ekleyin. Yıldız, desteklenen varlıkları favorilere ekler.
+3. **Şablon** bölümünden kaynaklarınızla veya verilen örnekle düzenlenebilir bir zaman çizelgesi oluşturun. **Yazı tipi** bölümünden seçili metin ya da altyazının yazı tipini değiştirin.
+4. **Altyazı** bölümünde UTF-8 SRT içe aktarın, transkriptte arayın ve satıra tıklayarak o zamana gidin. Metni veya süreyi düzenleyip **Değişiklikleri uygula** seçin. SRT dışa aktarırken **Tam video ile senkron** geçişleri ve seçili kare hızını kullanır. **Zaman çizelgesindeki gibi** özgün zamanları yazar.
+5. Üstteki **Ara** veya **Ctrl/Cmd+K** komutları açar. **M** işaretçi ekler, **I** ve **O** çıktı aralığını belirler. **Dışa aktar** penceresinden tüm video veya **İşaretli aralık** seçilebilir. **Son çıktılar** tamamlanan dosyaları yeniden kaydetmeyi sağlar.
+6. Sessizlik ya da seçilen kelimeleri çıkarmak için **Otomatik kırpıcı** bölümünde videoyu analiz edin. Sonuçta kaynak, korunan ve çıkarılan süreleri inceleyin. **Zaman çizelgesine aktar**, düzenlemeye devam etmek için kesimleri Kurgu’ya taşır.
 
 ## Özellikler
-- **İki Çalışma Alanı:** Manuel Edit ve Otomatik Kırpıcı birbirinden ayrı, tek uygulama içinde çalışır.
+- **İki çalışma alanı:** Kurgu ve Otomatik kırpıcı aynı uygulama içinde açılır.
 - **Manuel Timeline:** Sürüklenebilir oynatma kafası, gerçek klip küçük önizlemeleri, timeline yakınlaştırma, klip seçme, bölme, silme, hassas başlangıç-bitiş ayarı ve bağımsız klip zaman konumları.
 - **Gerçek Ses Dalga Formu:** Her video klibinin alt bölümünde, klibin seçili kaynak aralığından FFmpeg ile üretilen gerçek ses dalga formu gösterilir. Kesme veya kırpma sonrası dalga formu yeni sınırlara göre yenilenir.
 - **Çoklu Medya Yükleme:** “Dosya / video yükle” alanı video, resim ve ses dosyalarını kabul eder; aynı seçimde birden fazla dosya yüklenebilir.
-- **Projelerim Medya Kütüphanesi:** Projelerim alanı timeline ile yan yana durur. Yüklenen video, resim ve müzikler tür ve süre bilgileriyle listelenir. Üç dosya türü de kendi timeline kanalına sürüklenebilir; video kartlarıyla birden fazla kaynak video aynı projede birleştirilebilir.
+- **Proje medyası:** Soldaki Medya sekmesi yüklenen video, resim ve ses dosyalarını tür ve süre bilgisiyle listeler. Kartları zaman çizelgesindeki uygun kanala sürükleyebilirsiniz.
 - **Projeden Dosya Çıkarma:** Medya kartındaki × düğmesi veya sağ tık ile dosya yalnızca Projelerim listesinden ya da projenin tüm timeline kullanımlarıyla birlikte çıkarılabilir. Önce kullanım özeti ve onay gösterilir; kilitli kanallar korunur. Ctrl/Cmd+Z işlemi geri alır. Bilgisayardaki asıl dosya, paylaşılan medya ve diğer kayıtlı projeler silinmez.
 - **Ortak Sürükleme Önizlemesi:** Video, görsel, ses, metin, geçiş, video efekti, filtre ve sticker taşınırken imlecin yanında küçük ve sabit bir taşıma önizlemesi görünür; medya bu sırada oynatılmaz.
 - **Görsel ve Ses Kanalları:** Projelerim'deki resim ve sesler sürükle-bırak ile GÖRSEL ve SES kanallarına yerleştirilebilir. Timeline'a eklenen medya klipleri yatay sürüklenerek zamanı değiştirilebilir; iki kenardaki tutamaçlarla süreleri kısaltılabilir.
@@ -31,7 +39,7 @@ Kurulum, yedekleme ve geliştirici derleme bilgileri: [MASAUSTU.md](MASAUSTU.md)
 - **Görsel Keyframeleri ve Efektler:** Timeline'da bir resmi seçince kompakt **Seçili görsel** paneli açılır. Oynatma kafasında zoom, X/Y konumu ve saydamlık keyframe’i eklenebilir; 9 hareket eğrisinden biri seçilir. Elmas işaretler görsel klibinin üzerinde doğru saniyelerde görünür. Seçili keyframe önizlemede taşıma/boyutlandırma ile de düzenlenir; zoom yüzdesi görselin temel boyutuna göre uygulanır. Klip animasyonu, video efekti ve filtre kartları GÖRSEL kanalındaki resmin üzerine sürüklenebilir; yoğunluk ve animasyon süresi değiştirilebilir. Her resmin ayarları bağımsızdır, kırpma sonrası keyframe zamanları yeni sınırlara uyarlanır; proje kaydı, PNG kare ve video renderı bu ayarları içerir.
 - **Katmanlı Dışa Aktarma:** Görsel katmanlar seçilen konum ve sürelerde videoya işlenir; ek ses katmanları ana sesle karıştırılarak nihai çıktıya eklenir.
 - **Serbest Klip Taşıma ve Mıknatıs:** Kesilmiş video klipleri timeline üzerinde sağa/sola taşınabilir ve aralarında boşluk bırakılabilir. Mıknatıs açıkken yakın klip kenarları otomatik hizalanır; kapalıyken serbest konumlandırma yapılır. Boşluklar dışa aktarılan videoda da korunur.
-- **Kopyala / Yapıştır:** Seçili video, görsel, ses, metin, altyazı veya sticker Ctrl/Cmd+C ile kopyalanır; Ctrl/Cmd+V ile oynatma kafasına yapıştırılır. Aynı projenin başka timeline'ına da yapıştırılabilir. Video hedef aralığı doluysa mevcut kliplere dokunmadan yeni video kanalı açılır; ayarlar korunur, yeni öğeye bağımsız kimlik verilir.
+- **Kopyala / yapıştır:** Seçili video, görsel, ses, metin, altyazı veya çıkartma Ctrl/Cmd+C ile kopyalanır ve Ctrl/Cmd+V ile oynatma noktasına yapıştırılır. Başka bir zaman çizelgesine de yapıştırabilirsiniz. Dolu bir video hedefi için önce boş bir kanal oluşturun.
 - **Çoklu Video Kanalları:** Timeline üstündeki **＋ Video kanalı** ile Video 2, Video 3 ve daha fazla kanal eklenir. Her kanal bağımsız kilit, görünürlük ve ses kontrolüne sahiptir; klipler kanallar arasında sürüklenebilir. Büyük numaralı kanal üstte görünür; katmanlar ve sesler önizlemede, PNG karede ve renderda birleştirilir. Kullanılabilir kanal sayısına uygulama sınırı konmaz; eşzamanlı oynatma kapasitesi bilgisayara bağlıdır.
 - **Kaynak Görüntüyü Kırpma:** Mıknatısın yanındaki **Kırp** düğmesi seçili video için ayrı pencere açar. Kare üzerinde dikdörtgeni taşıyıp boyutlandırabilir veya hazır oran seçebilirsiniz. **Uygula** yalnızca o klibin kadrajını değiştirir; kaynak dosyaya dokunmaz. İptal, sıfırlama, geri alma ve proje kaydı desteklenir.
 - **Hassas Timeline Ölçeği:** Metin, altyazı, sticker, görsel, ses ve video kliplerinin genişliği gerçek süre × timeline yakınlığıdır. Kenar tutamaçları süreyi kesim oluşturmadan değiştirir. Mıknatıs, 10 ekran pikseli içindeki başlangıç/bitişleri hizalar ve çizgiyle gösterir; kapatılınca serbest hareket edilir. Kırmızı oynatma kafası da kesim ve boşluk kenarlarına oturur.
@@ -44,18 +52,16 @@ Kurulum, yedekleme ve geliştirici derleme bilgileri: [MASAUSTU.md](MASAUSTU.md)
 - **Kenar Takipli Oynatma Kafası:** Kırmızı oynatma kafası timeline'ın sol veya sağ kenarına sürüklendiğinde çizelge otomatik kayar; kafa görünür kalır.
 - **Çok Katmanlı Metin Timeline'ı:** 30 hazır metin stili tıklanarak veya sürükle-bırak ile videonun üstündeki METİN kanalına eklenebilir. Aynı zamandaki metinler ayrı satırlara ve ayrı ekran konumlarına yerleşir; seçili metin önizlemede taşınabilir, köşe tutamacıyla ölçeklendirilebilir ve dönüş tutamacıyla döndürülebilir. Yazı, renk, çerçeve, boyut, konum ve süre ayarları değiştirilebilir; metinler dışa aktarılan videoya işlenir.
 - **Otomatik Türkçe / English Altyazı:** Seçili video klibinin Video sekmesindeki Otomatik altyazı alanı konuşmayı müzik ve sessizlikten ayırır. Hedef dil Türkçe veya English seçilebilir; her cümle ALTYAZI kanalına ayrı bir timeline klibi olarak eklenir. Altyazılar hazır metin stillerinden birini kullanır, timeline üzerinde taşınıp kısaltılabilir ve seçiliyken metni, stili, rengi ve yazı boyutu değiştirilebilir. English → Türkçe çeviri yerel Argos modeliyle yapılır ve çıktı renderına işlenir.
-- **Tek Araç Paneli:** 30 metin stili, 30 geçiş, 60 klip animasyonu, 50 video efekti, 50 filtre ve 100 sticker aynı paneldeki altı ayrı sekmeyle açılır. Klip animasyonları karttan timeline’daki video klibine sürüklenir; Fade In ve Fade Out dahil kartların tam adları görünür ve taşıma sırasında küçük bir önizleme açılır.
+- **Varlık tarayıcısı:** Metin stilleri, geçişler, klip animasyonları, video efektleri, filtreler ve çıkartmalar sol panelin sekmelerinden açılır. Uygun kartları doğrudan klibe ya da kanala sürükleyebilirsiniz.
 - **Klip Bazlı Video Efektleri:** 50 ayrı video efekti karttan timeline'daki video klibinin üzerine sürüklenerek uygulanır. Efekt timeline klibinde görünür, canlı önizlemeye ve dışa aktarılan videoya işlenir.
 - **Klip Bazlı Filtreler:** 50 ayrı renk filtresi video kliplerine sürüklenir; canlı önizleme ve dışa aktarma aynı filtreyi kullanır.
 - **Gelişmiş Seçili Klip Ayarları:** Timeline'da bir video klibine tıklanınca Video, Ses, Hız, Animasyon, Ayarla ve Yapay zeka stili sekmeleri açılır. Video sekmesinde dönüşüm, çevirme, chroma key, karıştırma, sabitleme, keskinleştirme, gürültü azaltma, titreşim azaltma, optik akış, hareket bulanıklığı, otomatik kadraj ve yeniden ışıklandırma; Ses sekmesinde ses düzeyi, giriş-çıkış, normalleştirme, konuşma iyileştirme, gürültü azaltma, ses değiştirici, denge ve kanal doldurma; Ayarla sekmesinde Temel, HSL, Kavisler, Renk tekerleği ve Maske kontrolleri bulunur. Desteklenen ayarlar canlı önizlemeye ve dışa aktarılan videoya uygulanır; harici yapay zekâ modeli gerektiren seçenekler yanlış bir çalışma izlenimi vermemesi için açıkça pasif gösterilir.
-- **Yan Yana Klip Düzenleme:** Geniş ekranlarda video oynatıcı solda, seçili klip ayarları sağda ve Düzenleme Araçları klip ayarlarının hemen altında açılır. Video adı, tuval biçimi, kısayollar, süre ve proje özeti oynatıcının üstünde kalır; dışa aktarma düğmesi sağ üstte sabittir. Dar ekranlarda düzen otomatik olarak alt alta döner.
 - **Canlı Ses İşleme:** Ses normalleştirme, konuşma geliştirme ve gürültü azaltma Web Audio üzerinden canlı önizlenir; FFmpeg tarafında daha güçlü filtrelerle nihai çıktıya işlenir. Ses düzeyi %200'e kadar gerçek kazanç uygular. Fade in/fade out süreleri timeline klibinin üzerinde yeşil ve kırmızı eğimli alanlarla gösterilir.
 - **Fırçalı Arka Plan Maskesi:** Fırçalı maske açıldığında video ekranı üzerinde boyama yapılabilir. Kullanıcı boyanan alanın kalmasını veya silinmesini seçebilir; fırça boyutu, son çizgiyi geri alma ve maskeyi temizleme kontrolleri bulunur. Boyama taslak olarak kalır; **Arka planı sil** düğmesine basıldığında canlı önizlemeye ve dışa aktarılan videoya uygulanır.
 - **Konumlandırılabilir Video Maskeleri:** Daire, elips ve iç çerçeve maskelerinin boyutu, yatay/dikey konumu ve kenar yumuşatması ayarlanabilir. Projelerim alanındaki bir resim maske yuvasına sürüklenirse resim seçilen şeklin içinde önizlenir ve aynı maske dışa aktarmaya işlenir.
 - **Sticker Kanalı:** 100 farklı sticker STICKER kanalına sürüklenir. Süreleri timeline'da ayarlanabilir; önizlemede taşınabilir, ölçeklendirilebilir ve döndürülebilir; dışa aktarılan videoya işlenir.
 - **Proje Kaydı ve Çoklu Timeline:** Yeni proje oluşturulabilir, tüm medya ve düzenleme durumu adlandırılarak diske kaydedilebilir ve elektrik/kapanma durumuna karşı tarayıcıda otomatik kurtarma tutulur. Tek proje içinde “Ana video”, “Shorts” gibi birden fazla timeline oluşturulup sekmelerden geçiş yapılabilir.
 - **Sürükle-Bırak Geçişler:** 30 farklı geçiş kartı iki kesilmiş klibin arasındaki birleşme noktasına bırakılır. Mor alan geçiş süresinin tamamını video kanalında gösterir. Bir sonraki video karesi önceden hazırlanır ve ana oynatıcı kaynak değiştirirken geçiş katmanı ekranda tutulur; görüntü ile ses çapraz geçişi dışa aktarılan videoya gerçek olarak uygulanır.
-- **Tek Tıkla Aktarım:** Otomatik analiz sonucu “Manuel Editöre Gönder” düğmesiyle doğrudan timeline'a aktarılır.
 - **Geri Alma ve Sıfırlama:** Manuel timeline işlemleri geri alınabilir veya orijinal videoya döndürülebilir.
 - **Sadece Sessizlik Kesimi:** Kelime girilmezse AI modeli yüklenmez, saniyeler içinde sessizlikler tespit edilir (FFmpeg üzerinden).
 - **Kelime + Sessizlik Kesimi:** Kelime girilirse `faster-whisper` AI modeli devreye girer, kelimelerin zaman damgalarını bulur ve sessizliklerle birleştirir.
@@ -65,7 +71,7 @@ Kurulum, yedekleme ve geliştirici derleme bilgileri: [MASAUSTU.md](MASAUSTU.md)
 
 ## Kurulum ve Çalıştırma
 
-### Windows 10/11 — kolay kurulum
+### Windows’ta kaynak ZIP ile çalıştırma
 
 Windows bilgisayarda proje klasörünü ZIP'ten tamamen çıkartın. Python 3.11 64-bit kuruluysa sırasıyla:
 
@@ -91,20 +97,22 @@ Efektsiz ve varsayılan konumdaki klipler hızlı render yolunu kullanır. Sayda
 
 MP4 çıktıları Windows oynatıcı uyumluluğu için H.264 Main/High (çözünürlüğe uygun seviye), `avc1`, 8-bit `yuv420p`, sabit kare hızı ve AAC-LC 48 kHz stereo olarak hazırlanır. MP4 dosyaları doğru `video/mp4` MIME türüyle indirilir; Windows için önerilen dışa aktarma biçimi MP4'tür.
 
-> Projeyle birlikte gelen macOS/Linux `venv` klasörünü Windows'ta kullanmayın. Sanal ortamlar taşınabilir değildir; `WINDOWS_KUR.bat` Windows'a uygun ortamı yeniden oluşturur.
+> Kaynak ZIP kodu, yerel arayüz dosyalarını ve örnek varlıkları içerir. Python sanal ortamı ilk kurulumda bilgisayarınızda oluşturulur.
 
-### Gereksinimler
-- Python 3.10 veya üzeri
+### macOS ve Linux’ta kaynak kod ile çalıştırma
+
+- Python 3.11
 - Sisteminizde **FFmpeg** ve **FFprobe** kurulu ve PATH'e eklenmiş olmalıdır.
   - macOS için: `brew install ffmpeg`
-  - Windows için: [FFmpeg İndir](https://ffmpeg.org/download.html)
   - Ubuntu/Debian: `sudo apt install ffmpeg`
 
 ### 1. Kütüphanelerin Yüklenmesi
 Proje dizininde (bu README dosyasının bulunduğu dizin) terminali açın ve gerekli kütüphaneleri yükleyin:
 
 ```bash
-pip install -r requirements.txt
+python3.11 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
 *(Not: `faster-whisper` modeli CPU üzerinde çalışacak şekilde ayarlanmıştır ve ilk konuşma analizinde otomatik indirilir. Windows'ta otomatik altyazı düşük bellekli `tiny` modelle ayrı, korumalı bir işlemde çalışır; model/codec hatası editörü kapatmaz. English → Türkçe altyazı için kullanılan yerel Argos dil paketi de ilk ihtiyaçta bir kez indirilir.)*
@@ -123,12 +131,3 @@ python app.py
 2. [Resmî sürüm sayfasından](https://github.com/davutcan123/OtomatikEdit/releases) `OtomatikEdit-v<SÜRÜM>.zip` dosyasını indirip yeni bir klasöre çıkarın. Bir sürümde bu dosya yoksa önceki kaynak kurulumunuzu kullanmaya devam edebilirsiniz.
 3. Eski klasördeki `projects`, `uploads` ve `outputs` klasörlerini yeni klasöre kopyalayın. Eski klasörü yedek olarak saklayın.
 4. Yeni klasörde kurulum adımlarını uygulayın. Windows’ta `WINDOWS_KUR.bat`, ardından `WINDOWS_BASLAT.bat` dosyasını çalıştırın. Diğer sistemlerde bağımlılıkları yeni bir sanal ortamda yükleyip `python app.py` ile başlatın.
-
-### 3. Kullanım
-Tarayıcınızı açın ve **http://127.0.0.1:4242** adresine gidin.
-1. Manuel kurgu için **Manuel Edit** alanındaki **Dosya / video yükle** bölümünden ana videonuzu ve kullanacağınız resim/ses dosyalarını yükleyin.
-2. Projelerim alanındaki video, resim veya sesi kendi VİDEO/GÖRSEL/SES kanalına sürükleyin; timeline üzerinde yatay sürükleyerek zamanını değiştirin.
-3. Otomatik kesim için **Otomatik Kırpıcı** alanına geçin ve videoyu seçin.
-4. Sessizlik ve isteğe bağlı kelime ayarlarını yapıp **Videoyu Yükle ve Analiz Et** düğmesine basın.
-5. Sonucu doğrudan indirebilir veya **Manuel Editöre Gönder** ile aynı videoyu manuel timeline'da düzenlemeye devam edebilirsiniz.
-6. Manuel timeline'da bir video klibini seçip **Video → Otomatik altyazı** bölümünü açın; Türkçe veya English hedef dilini ve metin stilini seçerek konuşmaları ALTYAZI kanalına ekleyin.

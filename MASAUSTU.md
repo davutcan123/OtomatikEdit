@@ -1,10 +1,10 @@
 # Otomatik Edit — masaüstü
 
-## Kullanım
+## Kurulum
 
-Windows 10/11 64-bit için `OtomatikEdit-1.1.10-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
+Windows 10/11 64-bit için `OtomatikEdit-1.2.0-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
 
-Apple Silicon Mac için `OtomatikEdit-1.1.10-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
+Apple Silicon Mac için `OtomatikEdit-1.2.0-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
 
 Kurulum paketleri şu aşamada yayıncı sertifikasıyla imzalı/noter onaylı değildir. İşletim sistemi yayıncı doğrulama uyarısı gösterebilir. Genel dağıtım için Windows kod imzası ve Apple Developer imzalama/noter onayı ayrıca yapılandırılmalıdır.
 
@@ -23,24 +23,42 @@ Windows güncelleme dosyasının SHA-512 özeti yayımlanan metadata ile doğrul
 1. Eski tarayıcı sürümünde çalışmanızı **Projeyi kaydet** ile adlandırarak kaydedin.
 2. Masaüstünde **Dosya → Eski projeleri içe aktar…** seçin.
 3. `projects` ve `uploads` klasörlerini içeren eski `SmartVideoEditor` klasörünü seçin. Bağlı medya da kopyalanır; büyük videolarda işlem sürebilir.
-4. Uygulamayı yeniden açıp **Kayıtlı proje seçin** listesinden projenizi açın.
+4. **Projeler** menüsündeki listeden projenizi seçip **Aç** düğmesini kullanın.
 
 İçe aktarma orijinalleri değiştirmez. Yalnız tarayıcının kurtarma alanında bulunan, adlandırılarak kaydedilmemiş bir proje otomatik taşınmaz. Böyle bir projeyi önce eski sürümde kaydedin.
 
-Uygulama ilk açılışta **Belgeler / Otomatik Edit** klasörünü kendisi oluşturur. Proje çubuğundaki **Proje klasörü** veya **Dosya → Proje kayıt klasörünü aç** kesin kayıt konumunu gösterir. Varsayılan konumlar:
+Uygulama ilk açılışta **Belgeler / Otomatik Edit** klasörünü kendisi oluşturur. **Projeler → Proje klasörü** veya **Dosya → Proje kayıt klasörünü aç** kesin kayıt konumunu gösterir. Varsayılan konumlar:
 
 - Windows: Kullanıcının **Belgeler\Otomatik Edit** klasörü (OneDrive yönlendirmesi varsa sistemin Belgeler konumu)
 - macOS: `~/Documents/Otomatik Edit`
 
 Bu klasörde `projects`, `uploads`, `outputs`, `recovery.json` ve önceki kurtarma kopyası bulunur. Önceki masaüstü sürümünün uygulama veri klasöründeki kayıtlar ve bağlı medya ilk açılışta buraya kopyalanır; özgün dosyalar silinmez, mevcut Belgeler kayıtlarının üzerine yazılmaz. Yedek almak için uygulama kapalıyken klasörün tamamını başka diske kopyalayın. Kurtarma elektrik kesintisi riskini azaltır; fiziksel disk arızasına karşı ayrı yedek gerekir. Uygulama güncellemesi ve Windows kaldırma işlemi proje klasörünü silmez.
 
-Kaydedilmiş projeyi listeden seçip **Projeyi sil** kullanabilirsiniz. Onaydan sonra yalnız proje kaydı `projects/.trash` klasörüne taşınır; diğer projelerin de kullanabileceği medya dosyaları korunur. Açık çalışma silinen kayda bağlıysa kayıtsız çalışma olarak kalır; tekrar kaydetmek yeni bir proje kaydı oluşturur.
+Kaydedilmiş projeyi **Projeler** menüsünden seçip **Çöp kutusuna taşı** düğmesini kullanabilirsiniz. Onaydan sonra yalnız proje kaydı `projects/.trash` klasörüne taşınır; diğer projelerin de kullanabileceği medya dosyaları korunur. Açık çalışma silinen kayda bağlıysa kayıtsız çalışma olarak kalır; tekrar kaydetmek yeni bir proje kaydı oluşturur.
 
-**Videoyu Dışa Aktar → Render al** tamamlanınca kaydetme konumu otomatik sorulur; ikinci kez çıktı indirme düğmesine basmak gerekmez. Konum seçimini iptal ederseniz çıktı korunur ve **Kaydetme konumu seç** ile yeniden deneyebilirsiniz. İşlem devam ederken uygulamayı kapatmak render/analizi durdurur; uygulama bunu onaylatır.
+Üst çubuktaki **Kaydet** açık projenin tüm zaman çizelgelerini kaydeder. Kaydedilmemiş değişikliklerle başka bir proje açtığınızda **Vazgeç**, **Değişiklikleri at** ve **Kaydet ve devam et** seçenekleri sunulur.
 
-**Ekran görüntüsü al** oynatma kafasının bulunduğu anı, metinler, stickerlar, katmanlar ve efektlerle birlikte PNG olarak kaydeder. HD–4K çözünürlük seçimi proje en-boy oranını korur; editör tutamaçları ve oynatıcı düğmeleri görüntüye katılmaz.
+## Varlıklar ve önizleme
 
-Geniş masaüstü ekranında oynatıcı ve timeline aynı ekranda kalır; sağdaki küçük ayar/araç panelleri ve timeline kendi içinde kayar. Daha küçük pencerelerde tüm kontrollere erişim için sayfa kaydırma korunur.
+Geniş masaüstü pencerelerinde solda varlıklar, ortada oynatıcı, sağda seçili öğenin ayarları ve altta zaman çizelgesi bulunur. Küçük pencerelerde denetimlere sayfayı kaydırarak ulaşabilirsiniz. Video, görsel veya ses için **Medya** bölümünü açın. Hazır renk görünümleri **Görünüm**, ses efektleri ve müzik **Ses** bölümündedir. Sesi karttan dinleyip oynatma noktasına ekleyebilirsiniz. **Şablon** bölümünde kendi medyanızı ya da örneği kullanarak düzenlenebilir bir zaman çizelgesi oluşturabilirsiniz.
+
+Oynatıcıdaki **Önizleme** seçicisinde **Normal** ve **Hafif** seçenekleri vardır. **Hafif**, oynatım için yerel bir önizleme üretir. Dışa aktarma asıl medya ve seçili çıktı ayarlarını kullanır. **Kare yakala**, oynatma noktasındaki kareyi katmanları ve efektleriyle birlikte HD–4K PNG olarak kaydeder.
+
+## Altyazı ve transkript
+
+1. **Altyazı → SRT içe aktar** ile UTF-8 dosyanızı açın. Başlangıçtan veya oynatma noktasından ekleyebilirsiniz. **Koru ve ekle** mevcut altyazıları korur. **Değiştir** için ayrıca onay istenir. Geçersiz bir satır varsa dosya uygulanmadan hata gösterilir.
+2. Transkriptte arayın ve satıra tıklayarak o zamana gidin. Metin ve saniyeleri değiştirdikten sonra **Değişiklikleri uygula** seçin. Bir satırın fontunu ve stilini **Stili tüm altyazılara uygula** ile açık zaman çizelgesindeki altyazılara taşıyabilirsiniz.
+3. **SRT dışa aktar** açık zaman çizelgesinin altyazılarını kaydeder. **Tam video ile senkron**, görünür altyazıların tam video çıktısındaki zamanlarını yazar. **Zaman çizelgesindeki gibi** seçeneği, düzenleme zamanlarını milisaniye hassasiyetinde korur. SRT içe ve dışa aktarım için konuşma tanıma modeli gerekmez.
+
+Otomatik altyazı için önce bir video klibi seçin ve **Altyazı → Otomatik altyazı** düğmesiyle Video denetçisindeki ayarları açın. Altyazı kanalı kilitliyken içe aktarma ve düzenleme devre dışıdır.
+
+## İşaretçiler ve dışa aktarma
+
+**Ctrl/Cmd+K** veya **Ara** komut aramasını açar. **M** oynatma noktasına işaretçi ekler. İşaretçileri adlandırabilir ve zaman çizelgesinde yeniden ziyaret edebilirsiniz. **I** ve **O** giriş ve çıkış noktasını belirler. Üstteki **Dışa aktar** penceresinde **İşaretli aralık** seçildiğinde o aralık ayrı video olarak kaydedilir.
+
+Video dışa aktarma tamamlandığında etkin projede kaydetme konumu sorulur. Konum seçimini iptal ettiyseniz veya başka bir projeye geçtiyseniz **Son çıktılar** içinden dosyayı tekrar kaydedebilirsiniz. **Terminal** işlem kayıtlarını ayrı bir pencerede açar. Uygulama, devam eden bir işi durduracak kapatma işlemini onaylatır.
+
+**Otomatik kırpıcı** sonuçta kaynak, korunan ve çıkarılan süreyi ve klip sayısını gösterir. **Zaman çizelgesine aktar**, kesimler için boş ve kilitsiz çizelgeyi kullanır veya gerekirse yeni bir çizelge açar.
 
 ## Görsellerde fırça ve silgi
 
@@ -89,7 +107,7 @@ npm run dist
 
 `npm run dist`, yerel CSS'yi üretir, Python motorunu PyInstaller ile paketler ve Electron kurulumunu `dist` içine oluşturur. Python ve FFmpeg **aynı işletim sistemi/mimarisinde** paketlenmelidir; macOS'tan Windows motoru çapraz derlenmez. Windows'ta FFmpeg eksikse önce `python windows_setup.py` çalıştırılır. Gerektiğinde `SMART_EDITOR_FFMPEG` ve `SMART_EDITOR_FFPROBE` tam yolları verilebilir.
 
-GitHub Actions'taki **Build desktop installers → Run workflow**, Windows x64 ve macOS arm64 için ayrı derleme/test yapar. Kurulumları artifact olarak saklar; otomatik yayınlamaz. İsteğe bağlı **prepare_release** seçilirse iki platformun kontrolleri geçtikten sonra Windows ve Mac kurulumlarıyla kaynak ZIP’i aynı GitHub sürüm taslağına eklenir. Kaynak ZIP, doğrulanan Git revizyonundan üretilir. Aynı sürüm zaten varsa üzerine yazılmaz; yayımlama inceleme sonrası elle yapılır. `./release.sh <sürüm>` sürüm numaraları ve çalışma ağacını yerel olarak kontrol eder.
+GitHub Actions'taki **Build desktop installers → Run workflow**, Windows x64 ve macOS arm64 için ayrı derleme/test yapar. Kurulumları artifact olarak saklar; otomatik yayınlamaz. İsteğe bağlı **prepare_release** seçilirse iki platformun kontrolleri geçtikten sonra Windows ve Mac kurulumlarıyla kaynak ZIP’i aynı GitHub sürüm taslağına eklenir. Kaynak ZIP, doğrulanan Git revizyonundan üretilir. Python sanal ortamı ve Node bağımlılıkları kurulum sırasında bilgisayarınızda oluşturulur. Aynı sürüm zaten varsa üzerine yazılmaz; yayımlama inceleme sonrası elle yapılır. `./release.sh <sürüm>` sürüm numaraları ve çalışma ağacını yerel olarak kontrol eder.
 
 Windows otomatik güncellemesi için EXE, varsa ona ait blockmap ve **latest.yml** aynı sürümde bulunmalıdır. İş akışı sürüm numarasını, dosya adını ve SHA-512 özetini yüklemeden önce doğrular. Manuel Mac DMG'si ve **latest-mac.yml** de taslağa eklenir; Mac otomatik güncellemesi kapalıdır ve ZIP hedefi üretilmez. Paket içindeki güncelleme adresi `build.publish` ile sabittir; derleme `--publish never` kullanır. GitHub yazma yetkisi yalnız sürüm taslağını hazırlayan CI işinde bulunur, kurulum paketine aktarılmaz.
 
