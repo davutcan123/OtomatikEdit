@@ -214,8 +214,30 @@ async function checkLookAfterBackendReopen(id){
   await stopBackend();
   await startBackend();
   assert.notEqual(origin,storedOrigin,'Preference recovery uses another loopback port');
-  await win.loadURL(origin);
-  await evaluate('Promise.all([projectWorkspaceInitialization,StudioPreferences.ready])');
+  let releaseRead;
+  const interception=win.webContents.session.webRequest;
+  const endpoint=origin+'/api/desktop/studio-preferences';
+  interception.onBeforeRequest({urls:[endpoint]},(details,callback)=>{
+    if(details.method==='GET'&&!releaseRead)releaseRead=callback;
+    else callback({});
+  });
+  try {
+    await win.loadURL(origin);
+    await waitFor(()=>releaseRead,'cold native preferences GET');
+    assert.deepEqual(await evaluate("StudioPreferences.get('favorites',[])"),[]);
+    await click('[data-asset-tab="filter"]');
+    await click('[data-studio-favorite="look:cream-studio"]');
+    const prior=(await (await fetch(endpoint,{headers})).json()).favorites;
+    assert.ok(prior.includes('look:silver-print')&&prior.includes('look:'+id)&&!prior.includes('look:cream-studio'));
+    releaseRead({});
+    await evaluate('Promise.all([projectWorkspaceInitialization,StudioPreferences.ready])');
+    await waitFor(async()=>{
+      const saved=(await (await fetch(endpoint,{headers})).json()).favorites;
+      return prior.every(key=>saved.includes(key))&&saved.includes('look:cream-studio');
+    },'all favorites preserved when a cold first click precedes disk hydration');
+  } finally {
+    interception.onBeforeRequest(null);
+  }
   await click('[data-asset-tab="filter"]');
   await search('kisisel mono');
   assert.equal(await evaluate(`document.querySelector('[data-studio-look="${id}"] strong').textContent`),'Kişisel Mono');

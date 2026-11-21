@@ -283,10 +283,9 @@
   async function toggleFavorite(id, button) {
     if (!preferences) return;
     const key = 'template:' + id;
-    const value = favorites();
     button.disabled = true;
     try {
-      await preferences.set('favorites', value.includes(key) ? value.filter(item => item !== key) : [...value, key]);
+      await preferences.update('favorites', [], value => value.includes(key) ? value.filter(item => item !== key) : [...value, key]);
       renderLibrary();
       (library.results.querySelector('[data-template-favorite="' + id + '"]') || library.favoriteOnly).focus();
     } catch {

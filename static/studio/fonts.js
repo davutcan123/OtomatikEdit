@@ -143,10 +143,9 @@
   async function toggleFavorite(id, button) {
     if (!preferences) return;
     const key = 'font:' + id;
-    const current = favorites();
     button.disabled = true;
     try {
-      await preferences.set('favorites', current.includes(key) ? current.filter(value => value !== key) : [...current, key]);
+      await preferences.update('favorites', [], current => current.includes(key) ? current.filter(value => value !== key) : [...current, key]);
       renderLibrary();
       const refreshed = library.results.querySelector('[data-font-favorite="' + id + '"]');
       (refreshed || library.favoriteOnly).focus();

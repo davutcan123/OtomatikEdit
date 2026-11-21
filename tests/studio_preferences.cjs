@@ -128,3 +128,55 @@ test('subscriber-triggered writes are queued after the value being announced', a
   assert.deepEqual(writes,[['text:first'],['text:second']]);
   assert.deepEqual(Array.from(api.get('favorites')),['text:second']);
 });
+
+test('cold native updates merge against disk and then the immediately preceding optimistic edit', async () => {
+  let completeHydration;
+  const writes = [];
+  const { api } = preferences(async (url, options) => {
+    if (options.method !== 'PUT') return new Promise(resolve => { completeHydration = resolve; });
+    writes.push([url.split('/').at(-1), JSON.parse(options.body)]);
+    return { ok: true };
+  });
+  const work = [
+    api.update('favorites', [], current => [...current, 'look:new']),
+    api.update('favorites', [], current => [...current, 'font:new']),
+    api.update('savedLooks', [], current => [...current, { id: 'third' }]),
+    api.update('shortcuts', {}, current => ({ ...current, save: 'Mod+S' })),
+    api.update('layout', {}, current => ({ ...current, previewQuality: 'light' })),
+  ];
+  await immediate();
+  assert.deepEqual(writes, []);
+  completeHydration({ ok: true, json: async () => ({
+    favorites: ['font:first', 'font:second'],
+    savedLooks: [{ id: 'first' }, { id: 'second' }],
+    shortcuts: { split: 'Mod+B', cut: 'Mod+X' },
+    layout: { sidebar: 'open' },
+  }) });
+  await Promise.all(work);
+  assert.deepEqual(writes, [
+    ['favorites', ['font:first', 'font:second', 'look:new']],
+    ['favorites', ['font:first', 'font:second', 'look:new', 'font:new']],
+    ['savedLooks', [{ id: 'first' }, { id: 'second' }, { id: 'third' }]],
+    ['shortcuts', { split: 'Mod+B', cut: 'Mod+X', save: 'Mod+S' }],
+    ['layout', { sidebar: 'open', previewQuality: 'light' }],
+  ]);
+});
+
+test('failed native hydration cannot replace disk state and the next gesture retries the read', async () => {
+  let reads = 0;
+  const writes = [];
+  const { api } = preferences(async (_url, options) => {
+    if (options.method === 'PUT') {
+      writes.push(JSON.parse(options.body));
+      return { ok: true };
+    }
+    if (++reads === 1) return { ok: false, status: 500 };
+    return { ok: true, json: async () => ({ favorites: ['look:first', 'font:second'] }) };
+  });
+  const append = value => api.update('favorites', [], current => [...current, value]);
+  await assert.rejects(append('look:unread'), /okunamadı/);
+  assert.deepEqual(writes, []);
+  await append('look:third');
+  assert.equal(reads, 2);
+  assert.deepEqual(writes, [['look:first', 'font:second', 'look:third']]);
+});

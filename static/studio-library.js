@@ -50,9 +50,12 @@
     const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?=_|$)/i.exec(fileId)?.[0];
     return 'media:'+(uuid ? uuid.toLowerCase() : fileId);
   }
-  function syncFavorites(data) {
+  function favoriteValues(data) {
     const ids = Array.isArray(data) ? data.filter(item=>typeof item==='string') : [];
-    favorites = new Set(ids.map(key=>key.startsWith('media:')?mediaFavoriteKey(key.slice('media:'.length)):key));
+    return new Set(ids.map(key=>key.startsWith('media:')?mediaFavoriteKey(key.slice('media:'.length)):key));
+  }
+  function syncFavorites(data) {
+    favorites = favoriteValues(data);
     renderFavorites();
   }
   function restoreFavorites(data, save) {
@@ -91,7 +94,7 @@
         if (key === 'savedLooks') syncLooks(value);
       });
       Promise.resolve(prefs.ready).then(() => {
-        restoreFavorites(prefs.get(preferenceKey,[]),value=>prefs.set(preferenceKey,value));
+        restoreFavorites(prefs.get(preferenceKey,[]),()=>prefs.update(preferenceKey,[],current=>[...favoriteValues(current)]));
         syncLooks(prefs.get('savedLooks',[]));
       }).catch(() => {});
       return;
@@ -102,15 +105,20 @@
     } catch {}
   }
   async function toggleFavorite(key) {
-    const before = favorites, next = new Set(before);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    favorites = next;renderFavorites();
+    const update = current => {
+      const next = favoriteValues(current);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return [...next];
+    };
     try {
       const prefs = window.StudioPreferences;
-      if (prefs) await prefs.set(preferenceKey,[...next]);
-      else localStorage.setItem('otamatik-edit:studio:favorites',JSON.stringify([...next]));
+      if (prefs) await prefs.update(preferenceKey,[],update);
+      else {
+        const next = update([...favorites]);
+        localStorage.setItem('otamatik-edit:studio:favorites',JSON.stringify(next));
+        syncFavorites(next);
+      }
     } catch (error) {
-      if (favorites === next) { favorites = before;renderFavorites(); }
       log('manual-log','Favori kaydedilemedi: '+error.message,'error');
     }
   }
@@ -357,7 +365,7 @@
     const controls=[...lookForm.querySelectorAll('button,input')];
     controls.forEach(control=>control.disabled=true);
     try{
-      await window.StudioPreferences.set('savedLooks',next);
+      await window.StudioPreferences.update('savedLooks',[],next);
       lookEditor.close();
       lookMessage(success);
       return true;
@@ -373,12 +381,15 @@
     event.preventDefault();
     const name=lookName.value.trim();
     if(!editLook||!name||/[\x00-\x1f\x7f]/.test(name))return;
-    if(personalLooks.some(item=>item.id!==editLook.id&&simplify(item.name)===simplify(name))){
-      lookStatus.textContent='Bu adla bir görünüm zaten var.';lookName.select();return;
-    }
-    const updated={...editLook,id:editLook.id||timelineFreshId('personal-'),name};
-    const next=editLook.id?personalLooks.map(item=>item.id===updated.id?updated:item):[...personalLooks,updated];
-    void writeLooks(next,editLook.id?'Görünüm adı güncellendi.':'Görünüm kaydedildi.');
+    const previousId=editLook.id,updated={...editLook,id:editLook.id||timelineFreshId('personal-'),name};
+    void writeLooks(current=>{
+      if(current.some(item=>item.id!==previousId&&simplify(item.name)===simplify(name))){
+        throw new Error('Bu adla bir görünüm zaten var.');
+      }
+      if(!previousId&&current.length>=maxSavedLooks)throw new Error('En fazla '+maxSavedLooks+' kişisel görünüm saklanabilir.');
+      if(previousId&&!current.some(item=>item.id===previousId))throw new Error('Bu görünüm artık bulunamadı.');
+      return previousId?current.map(item=>item.id===previousId?updated:item):[...current,updated];
+    },previousId?'Görünüm adı güncellendi.':'Görünüm kaydedildi.');
   };
   deleteLook.onclick=async()=>{
     if(!editLook?.id)return;
@@ -387,10 +398,10 @@
       lookStatus.textContent='Bu kişisel görünüm kitaplıktan silinecek.';
       return;
     }
-    const key='look:'+editLook.id,remaining=personalLooks.filter(item=>item.id!==editLook.id);
-    if(await writeLooks(remaining,'Görünüm silindi.')&&favorites.has(key)){
-      const next=window.StudioPreferences.get(preferenceKey,[]).filter(item=>item!==key);
-      try{await window.StudioPreferences.set(preferenceKey,next)}catch{lookMessage('Favori kaydı güncellenemedi.','error')}
+    const id=editLook.id,key='look:'+id;
+    if(await writeLooks(current=>current.filter(item=>item.id!==id),'Görünüm silindi.')){
+      try{await window.StudioPreferences.update(preferenceKey,[],current=>current.includes(key)?current.filter(item=>item!==key):current)}
+      catch{lookMessage('Favori kaydı güncellenemedi.','error')}
     }
   };
   lookEditor.querySelector('[data-look-cancel]').onclick=()=>lookEditor.close();

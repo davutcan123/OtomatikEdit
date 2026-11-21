@@ -152,8 +152,9 @@
     panel.node.hidden = false;
     panel.select.value = mode;
     panel.select.onchange = async () => {
-      try { await preferences.set('layout', { ...preferences.get('layout', {}), previewQuality: panel.select.value }); }
-      catch { panel.status.textContent = 'Önizleme tercihi kaydedilemedi.'; }
+      const quality = panel.select.value;
+      try { await preferences.update('layout', {}, current => ({ ...current, previewQuality: quality })); }
+      catch { panel.select.value = mode; panel.status.textContent = 'Önizleme tercihi kaydedilemedi.'; }
     };
     panel.retry.onclick = () => {
       for (const video of panel.media) {

@@ -392,7 +392,7 @@
   palette.addEventListener('close', () => { recording = null; });
   palette.querySelector('[data-studio-reset]').onclick = async () => {
     recording = null;
-    try { await preferences.set('shortcuts', {}); feedback.textContent = 'Varsayılan kısayollar geri yüklendi.'; }
+    try { await preferences.update('shortcuts', {}, () => ({})); feedback.textContent = 'Varsayılan kısayollar geri yüklendi.'; }
     catch (error) { feedback.textContent = error.message; }
   };
 
@@ -405,17 +405,25 @@
     const chord = eventChord(event);
     if (!chord) return;
     event.preventDefault();event.stopImmediatePropagation();
-    if (reserved.has(chord) || [...bindings].some(([id, assigned]) => id !== recording && assigned === chord)) {
+    if (reserved.has(chord)) {
       feedback.textContent = bindingLabel(chord) + ' başka bir komuta ayrılmış.';
       return;
     }
     const action = recording;
     recording = null;
-    const overrides = preferences.get('shortcuts', {});
-    if (chord === commands.find(command => command.id === action).chord) delete overrides[action];
-    else overrides[action] = chord;
-    try { await preferences.set('shortcuts', overrides); feedback.textContent = bindingLabel(chord) + ' kaydedildi.'; }
-    catch (error) { feedback.textContent = error.message; }
+    try {
+      await preferences.update('shortcuts', {}, overrides => {
+        const current = configuredBindings(overrides);
+        if ([...current].some(([id, assigned]) => id !== action && assigned === chord)) {
+          if (palette.open && !recording) recording = action;
+          throw new Error(bindingLabel(chord) + ' başka bir komuta ayrılmış.');
+        }
+        if (chord === commands.find(command => command.id === action).chord) delete overrides[action];
+        else overrides[action] = chord;
+        return {...overrides};
+      });
+      feedback.textContent = bindingLabel(chord) + ' kaydedildi.';
+    } catch (error) { feedback.textContent = error.message; }
   }
   window.addEventListener('keydown', event => {
     if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.getModifierState?.('AltGraph')) return;
