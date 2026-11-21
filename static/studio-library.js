@@ -38,20 +38,33 @@
   const pending = new Set();
   const simplify = value => value.toLocaleLowerCase('tr-TR').normalize('NFD').replace(/\p{Diacritic}/gu,'').replace(/ı/g,'i').trim();
 
-  function favoriteIds(data) {
-    return new Set(Array.isArray(data) ? data.filter(item => typeof item === 'string') : []);
+  function mediaFavoriteKey(fileId) {
+    const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?=_|$)/i.exec(fileId)?.[0];
+    return 'media:'+(uuid ? uuid.toLowerCase() : fileId);
   }
   function syncFavorites(data) {
-    favorites = favoriteIds(data);renderFavorites();
+    const ids = Array.isArray(data) ? data.filter(item=>typeof item==='string') : [];
+    favorites = new Set(ids.map(key=>key.startsWith('media:')?mediaFavoriteKey(key.slice('media:'.length)):key));
+    renderFavorites();
+  }
+  function restoreFavorites(data, save) {
+    syncFavorites(data);
+    const canonical = [...favorites];
+    if (Array.isArray(data)&&JSON.stringify(canonical)!==JSON.stringify(data)) {
+      Promise.resolve().then(()=>save(canonical)).catch(()=>{});
+    }
   }
   function connectPreferences() {
     const prefs = window.StudioPreferences;
     if (prefs) {
       prefs.subscribe((key,value) => { if (key === preferenceKey) syncFavorites(value); });
-      Promise.resolve(prefs.ready).then(() => syncFavorites(prefs.get(preferenceKey,[]))).catch(() => {});
+      Promise.resolve(prefs.ready).then(() => restoreFavorites(prefs.get(preferenceKey,[]),value=>prefs.set(preferenceKey,value))).catch(() => {});
       return;
     }
-    try { syncFavorites(JSON.parse(localStorage.getItem('otamatik-edit:studio:favorites') || '[]')); } catch {}
+    try {
+      const storageKey='otamatik-edit:studio:favorites';
+      restoreFavorites(JSON.parse(localStorage.getItem(storageKey)||'[]'),value=>localStorage.setItem(storageKey,JSON.stringify(value)));
+    } catch {}
   }
   async function toggleFavorite(key) {
     const before = favorites, next = new Set(before);
@@ -126,7 +139,7 @@
       const asset = byId.get(button.dataset.assetId);
       if (!asset) continue;
       const kind = {video:'video',image:'görsel resim',audio:'ses müzik'}[asset.kind] || '';
-      addCardMetadata(button.parentElement,'media:'+asset.fileId,asset.name,kind);
+      addCardMetadata(button.parentElement,mediaFavoriteKey(asset.fileId),asset.name,kind);
     }
     el('studio-demo-card').classList.toggle('studio-demo-loaded',S.mediaAssets.some(item=>item.studioSource===demo.id));
     renderFavorites();

@@ -195,6 +195,48 @@ async function checkAudioAndRecovery() {
   return {effectDuration:layer.end-layer.start,audioCount:3,isolatedRepeatedLayerId:true,recoveredZoom:37};
 }
 
+async function checkMediaFavoritePersistence() {
+  await evaluate(`(async()=>{
+    const asset=S.mediaAssets.find(item=>item.studioSource==='alpine-tour');
+    const legacy='media:'+asset.fileId;
+    if(window.StudioPreferences){
+      await StudioPreferences.ready;
+      await StudioPreferences.set('favorites',[...StudioPreferences.get('favorites',[]),legacy]);
+    }else{
+      const key='otamatik-edit:studio:favorites',saved=JSON.parse(localStorage.getItem(key)||'[]');
+      localStorage.setItem(key,JSON.stringify([...saved,legacy]));
+    }
+  })()`);
+  await evaluate('persistProjectRecovery()');
+  await win.loadURL(origin);await evaluate('projectWorkspaceInitialization');
+  const shortId=await evaluate(`'media:'+S.mediaAssets.find(item=>item.studioSource==='alpine-tour').fileId.split('_')[0]`);
+  const selected=key=>evaluate(`document.querySelector('[data-studio-favorite="'+${JSON.stringify(key)}+'"]')?.getAttribute('aria-pressed')==='true'`);
+  await waitFor(()=>selected(shortId),'legacy media favorite mapped to compact ID');
+  await evaluate(`(async()=>{
+    const response=await fetch('/static/studio/demo/alpine-tour.mp4');
+    await importProjectFiles([new File([await response.blob()],'long-'+('a'.repeat(145))+'.mp4',{type:'video/mp4'})]);
+  })()`);
+  const asset=await evaluate('S.mediaAssets.find(item=>item.name.startsWith("long-"))');
+  assert.ok(('media:'+asset.fileId).length>150,'Reproduce the previous backend ID limit');
+  const compact='media:'+asset.fileId.split('_')[0];
+  assert.equal(compact.length,42);
+  await click(`[data-studio-favorite="${compact}"]`);
+  const hasDiskPreferences=await evaluate('!!window.StudioPreferences');
+  if(hasDiskPreferences){
+    const file=path.join(artifacts,'data','studio-preferences.json');
+    await waitFor(()=>{
+      if(!fs.existsSync(file))return false;
+      const ids=JSON.parse(fs.readFileSync(file,'utf8')).favorites||[];
+      return ids.includes(compact)&&ids.includes(shortId)&&!ids.includes('media:'+asset.fileId);
+    },'long-name favorite persisted on disk');
+    await evaluate("localStorage.removeItem('otamatik-edit:studio-preferences:v1')");
+  }
+  await evaluate('persistProjectRecovery()');
+  await win.loadURL(origin);await evaluate('projectWorkspaceInitialization');
+  await waitFor(()=>selected(compact),'long filename favorite reopened');
+  return {fullLength:('media:'+asset.fileId).length,storedLength:compact.length,disk:hasDiskPreferences};
+}
+
 async function checkDelayedExampleLane() {
   await evaluate(`(() => {
     restoreProject({name:'Gecikmeli örnek',timelines:[{id:'TL1',name:'Çizelge',state:emptyTimelineState()}]});
@@ -217,15 +259,22 @@ async function checkDelayedExampleLane() {
 
 app.whenReady().then(async()=>{
   await startBackend();
+  const preload=path.join(artifacts,'preload.cjs');
+  fs.writeFileSync(preload,`require('electron').contextBridge.exposeInMainWorld('desktopApp',{
+    isDesktop:true,loadRecovery:async()=>null,saveRecovery:async()=>{},
+    onBeforeClose(){},onCloseCancelled(){},getStorageInfo:async()=>({path:'fixture'}),
+    onUpdateState(){},onPrepareUpdate(){},onUpdateCancelled(){},getUpdateState:async()=>({mode:'disabled',status:'idle'})
+  });`);
   win = new BrowserWindow({show:false,width:1440,height:900,useContentSize:true,
-    webPreferences:{contextIsolation:true,sandbox:true,backgroundThrottling:false,partition:'studio-library-'+token}});
+    webPreferences:{contextIsolation:true,sandbox:true,preload,backgroundThrottling:false,partition:'studio-library-'+token}});
   win.webContents.session.webRequest.onBeforeSendHeaders({urls:[origin+'/*']},(details,callback)=>{
     callback({requestHeaders:{...details.requestHeaders,...headers}});
   });
   await win.loadURL(origin);await evaluate('projectWorkspaceInitialization');win.showInactive();
   const looks=await checkPlayerAndLooks(), audio=await checkAudioAndRecovery();
+  const favorites=await checkMediaFavoritePersistence();
   await checkDelayedExampleLane();
-  console.log(JSON.stringify({ok:true,looks,audio,delayedExampleLanePreserved:true,artifacts}));
+  console.log(JSON.stringify({ok:true,looks,audio,favorites,delayedExampleLanePreserved:true,artifacts}));
 }).catch(error=>{
   console.error(error);
   console.error(backendLines.join('').split('\n').slice(-12).join('\n'));
