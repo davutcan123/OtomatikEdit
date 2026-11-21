@@ -276,7 +276,7 @@
   }
   function editorBusy() {
     return desktopClosing || desktopUpdateFrozen ||
-      !!document.querySelector('dialog[open]') || !el('export-modal').classList.contains('hidden');
+      !!document.querySelector('dialog[open]');
   }
   function typingTarget(node) {
     return !!node?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])');

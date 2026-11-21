@@ -16,7 +16,7 @@ function harness() {
   const nodes = new Map(), acknowledgements = [], listeners = {}, hooks = {}, calls = [];
   function node(id) {
     if (nodes.has(id)) return nodes.get(id);
-    const classes = new Set(id === 'export-modal' ? ['hidden'] : []);
+    const classes = new Set();
     const value = { id, tagName: 'DIV', inert: false, open: false, style: {}, hidden: false, textContent: '',
       classList: { add: x => classes.add(x), remove: x => classes.delete(x), contains: x => classes.has(x), toggle: (x, on) => on ? classes.add(x) : classes.delete(x) },
       setAttribute(key, val) { this[key] = val; }, querySelector: () => node(id + '-child'),
@@ -38,7 +38,7 @@ function harness() {
     desktopBridge: bridge, desktopOperations: new Map(), desktopInertState: new Map(), desktopUpdateFrozen: false, desktopUpdateAttempt: null, desktopClosing: false, desktopPointerActive: false,
     S: {}, recoveryWrite: Promise.resolve(), projectWorkspaceInitialization: Promise.resolve(), persistProjectRecovery: async () => calls.push('saved'), scheduleAutosave: () => calls.push('autosave'),
     outputJobs: { draw() {} }, el: node, clearTimeout, stopProjectAudio() {}, drawAuto() {}, log() {},
-    document: { body: { children: [node('workbench'), node('desktop-update-dialog')] }, activeElement: { blur() {} }, querySelector: () => null, querySelectorAll: () => [media] },
+    document: { body: { children: [node('workbench'), node('desktop-update-dialog')] }, activeElement: { blur() {} }, querySelector: selector => selector.startsWith('dialog[open]') && node('export-modal').open ? node('export-modal') : null, querySelectorAll: () => [media] },
     window: { addEventListener(type, callback) { (listeners[type] ||= []).push(callback); } },
   });
   vm.runInContext(tracker + updater, context);
@@ -125,7 +125,7 @@ test('close, active pointer gestures and open edit dialogs postpone the update',
   const { context: c, acknowledgements, node } = harness();
   c.desktopClosing = true;await c.prepareDesktopUpdate(7);c.desktopClosing = false;
   c.desktopPointerActive = true;await c.prepareDesktopUpdate(8);c.desktopPointerActive = false;
-  node('export-modal').classList.remove('hidden');await c.prepareDesktopUpdate(9);
+  node('export-modal').showModal();await c.prepareDesktopUpdate(9);
   assert.deepEqual(acknowledgements.map(item => item[2]), [true, true, true]);assert.equal(c.desktopUpdateFrozen, false);
 });
 

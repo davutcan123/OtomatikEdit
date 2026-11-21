@@ -7,8 +7,7 @@ function timelineToolsBlocked({allowCrop = false} = {}) {
   if (typeof desktopUpdateFrozen !== 'undefined' && desktopUpdateFrozen) return true;
   if (typeof desktopClosing !== 'undefined' && desktopClosing) return true;
   if (!el('manual')?.classList.contains('active')) return true;
-  if (document.querySelector(allowCrop ? 'dialog[open]:not(#timeline-crop-dialog)' : 'dialog[open]')) return true;
-  return !!el('export-modal') && !el('export-modal').classList.contains('hidden');
+  return !!document.querySelector(allowCrop ? 'dialog[open]:not(#timeline-crop-dialog)' : 'dialog[open]');
 }
 
 function timelineFreshId(prefix) {

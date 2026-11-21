@@ -329,3 +329,21 @@
 }
 #studio-look-editor [role="status"] { margin-block: 6px; font-size: 11px; color: var(--studio-muted); min-height: 1lh; }
 #studio-look-editor footer { display: flex; justify-content: flex-end; gap: 6px; }
+
+.studio-shell :is(#clip-inspector-title,#text-presets .text-preset > small,#export-modal .text-slate-500) {
+  color: var(--studio-muted);
+}
+.studio-shell #text-delete { background: #a72242; }
+.studio-shell #text-delete:hover { background: #bc274c; }
+#export-modal {
+  position: fixed;
+  inset: 0;
+  width: min(680px, calc(100vw - 32px));
+  margin: auto;
+  background: transparent;
+  color: var(--studio-ink);
+  overflow: visible;
+}
+#export-modal::backdrop { background: #000b; backdrop-filter: blur(4px); }
+#export-render-start { color: #10271e; background: var(--studio-mint); }
+#export-render-start:hover { background: #b4f4d8; }

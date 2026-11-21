@@ -28,7 +28,7 @@ async function checkEditorStatus() {
   for (const [width,height] of [[1366,768],[1100,700]]) {
     window.setContentSize(width,height);await twoFrames();await seek(2.5);
     await evaluate(`{const job=outputJobs.begin('manual','mp4','Render hazırlanıyor');outputJobs.update(job,43,'Video işleniyor');outputJobs.finish(job)};log('manual-log','Render denetimi: <img src=x onerror="window.unsafeLog=true">','info')`);
-    const layout=await evaluate(`(()=>{const bounds=id=>{const node=el(id),r=node.getBoundingClientRect();return{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height,reachable:node.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))}};return{width:innerWidth,height:innerHeight,scrollHeight:document.documentElement.scrollHeight,scrollWidth:document.documentElement.scrollWidth,preview:bounds('preview-shell'),stage:bounds('preview-stage'),timeline:bounds('timeline'),snapshot:bounds('snapshot-open'),render:bounds('manual-render-top'),dock:bounds('manual-status-dock'),terminal:bounds('manual-log-open'),progress:bounds('manual-progress-top'),barHeight:el('manual-progress-top').querySelector('.render-progress-track').getBoundingClientRect().height,percentageFont:parseFloat(getComputedStyle(el('manual-progress-top').querySelector('p')).fontSize),progressValue:el('manual-progress-top').getAttribute('aria-valuenow'),exportClosed:el('export-modal').classList.contains('hidden')}})()`);
+    const layout=await evaluate(`(()=>{const bounds=id=>{const node=el(id),r=node.getBoundingClientRect();return{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height,reachable:node.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))}};return{width:innerWidth,height:innerHeight,scrollHeight:document.documentElement.scrollHeight,scrollWidth:document.documentElement.scrollWidth,preview:bounds('preview-shell'),stage:bounds('preview-stage'),timeline:bounds('timeline'),snapshot:bounds('snapshot-open'),render:bounds('manual-render-top'),dock:bounds('manual-status-dock'),terminal:bounds('manual-log-open'),progress:bounds('manual-progress-top'),barHeight:el('manual-progress-top').querySelector('.render-progress-track').getBoundingClientRect().height,percentageFont:parseFloat(getComputedStyle(el('manual-progress-top').querySelector('p')).fontSize),progressValue:el('manual-progress-top').getAttribute('aria-valuenow'),exportClosed:!el('export-modal').open}})()`);
     assert.ok(layout.scrollHeight<=height+1&&layout.scrollWidth<=width+1,'Editor and status must fit the window');
     assert.ok(layout.preview.height>=220&&layout.timeline.height>=200,'Preview and timeline must remain usable during render');
     assert.ok(Math.abs(layout.stage.width/layout.stage.height-16/9)<.01,'Video aspect ratio must remain intact');
@@ -40,7 +40,7 @@ async function checkEditorStatus() {
     assert.ok(layout.exportClosed);
     await fs.promises.writeFile(path.join(artifacts,`editor-progress-${width}x${height}.png`),(await window.webContents.capturePage()).toPNG());
     await clickButton('snapshot-open');
-    const snapshot=await evaluate(`({open:el('snapshot-modal').open,exportClosed:el('export-modal').classList.contains('hidden'),time:S.snapshotTime,paused:mv.paused})`);
+    const snapshot=await evaluate(`({open:el('snapshot-modal').open,exportClosed:!el('export-modal').open,time:S.snapshotTime,paused:mv.paused})`);
     assert.ok(snapshot.open&&snapshot.exportClosed&&snapshot.paused);assert.ok(Math.abs(snapshot.time-2.5)<.03);
     await clickButton('snapshot-cancel');await clickButton('manual-log-open');
     assert.ok(await evaluate(`el('logs-modal').open&&!el('logs-content').querySelector('img')&&!window.unsafeLog`));
@@ -66,19 +66,60 @@ async function clickButton(id) {
   await twoFrames();
 }
 
+async function checkEditorContrast() {
+  const ratios=await evaluate(`(() => {
+    const luminance=color=>{
+      const [r,g,b]=color.match(/\\d+/g).map(n=>{
+        const value=Number(n)/255;
+        return value<=.04045?value/12.92:((value+.055)/1.055)**2.4;
+      });
+      return .2126*r+.7152*g+.0722*b;
+    };
+    const selectors=['#clip-inspector-title','#text-presets .text-preset > small','#text-delete','#export-description','#export-render-start'];
+    return Object.fromEntries(selectors.map(selector=>{
+      const node=document.querySelector(selector);
+      let surface=node, background=getComputedStyle(surface).backgroundColor;
+      while(background==='rgba(0, 0, 0, 0)'){
+        surface=surface.parentElement;
+        background=getComputedStyle(surface).backgroundColor;
+      }
+      const colors=[luminance(getComputedStyle(node).color),luminance(background)].sort((a,b)=>b-a);
+      return [selector,(colors[0]+.05)/(colors[1]+.05)];
+    }));
+  })()`);
+  for(const [selector,ratio] of Object.entries(ratios)){
+    assert.ok(ratio>=4.5,`${selector} needs at least 4.5:1 contrast, got ${ratio.toFixed(2)}:1`);
+  }
+  return ratios;
+}
+
 async function checkExportModal() {
   const checks = [];
   window.setContentSize(1366, 768);await twoFrames();
   await clickButton('manual-render-top');
-  const defaults = await evaluate(`({open:!el('export-modal').classList.contains('hidden'),hardware:el('export-hardware').value,choices:[...el('export-hardware').options].map(option=>option.value),fps:el('export-fps').value,quality:el('export-quality').value})`);
+  const contrast = await checkEditorContrast();
+  const defaults = await evaluate(`({open:el('export-modal').open,hardware:el('export-hardware').value,choices:[...el('export-hardware').options].map(option=>option.value),fps:el('export-fps').value,quality:el('export-quality').value})`);
   assert.deepEqual(defaults, { open: true, hardware: 'auto', choices: ['auto', 'cpu'], fps: '30', quality: 'standard' });
   await fs.promises.writeFile(path.join(artifacts, 'export-default-1366x768.png'), (await window.webContents.capturePage()).toPNG());
-  await clickButton('export-cancel');
+  assert.equal(await evaluate('document.activeElement.id'),'export-format');
+  await evaluate("el('project-name').focus()");
+  assert.equal(await evaluate('document.activeElement.id'),'export-format','Modal blocks background focus');
+  const key = (keyCode,modifiers=[]) => {
+    window.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});
+    window.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});
+  };
+  await evaluate("el('export-render-start').focus()");
+  key('Tab');await twoFrames();
+  assert.equal(await evaluate('document.activeElement.id'),'export-close');
+  key('Tab',['shift']);await twoFrames();
+  assert.equal(await evaluate('document.activeElement.id'),'export-render-start');
+  key('Escape');await twoFrames();
+  assert.ok(await evaluate("!el('export-modal').open && document.activeElement.id==='manual-render-top'"));
   // Choose resolution through the existing canvas control, then exercise the
   // same settings and FormData builder used by the real render action. Never
   // start an encoder or send a render request from this browser fixture.
   await evaluate(`el('canvas-preset-top').value='1280x720';el('canvas-preset-top').dispatchEvent(new Event('change',{bubbles:true}))`);
-  for (const [width, height] of [[1366, 768], [1100, 700]]) {
+  for (const [width, height] of [[1366, 740], [1100, 700]]) {
     window.setContentSize(width, height);await twoFrames();
     await clickButton('manual-render-top');
     await evaluate(`for(const [id,value] of [['export-hardware','cpu'],['export-fps','60'],['export-quality','high'],['export-format','mp4']]){el(id).value=value;el(id).dispatchEvent(new Event('change',{bubbles:true}))}`);
@@ -98,9 +139,9 @@ async function checkExportModal() {
     await fs.promises.writeFile(path.join(artifacts, `export-cpu-${width}x${height}.png`), (await window.webContents.capturePage()).toPNG());
     checks.push({ layout, requested: { hardware: payload.hardware, fps: payload.fps, quality: payload.quality, width: payload.width, height: payload.height } });
     await clickButton('export-cancel');
-    assert.ok(await evaluate(`el('export-modal').classList.contains('hidden')`));
+    assert.ok(await evaluate(`!el('export-modal').open`));
   }
-  return { defaults, checks };
+  return { defaults, contrast, checks };
 }
 
 app.whenReady().then(async () => {
