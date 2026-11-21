@@ -1944,7 +1944,7 @@
       const update=()=>{if(!moved||locked())return;autoScrollTimelinePointer(box,pointerX);const delta=(pointerX-startX+box.scrollLeft-startScroll)/S.zoom,raw=(edge==='left'?bounds.start:bounds.end)+delta,min=edge==='left'?bounds.minimum:bounds.start+.05,max=edge==='left'?bounds.end-.05:bounds.maximum,next=type==='video'&&edge==='left'&&S.timelineRipple&&raw<0?Math.max(min,raw):snapTimelineTime(raw,{excludeItem:item,min,max});if(!remembered){if(Math.abs(next-(edge==='left'?bounds.start:bounds.end))<.00001)return;remember();remembered=true}
         if(type==='video'){if(edge==='left'){item.timelineStart=S.timelineRipple?bounds.start:next;if(original.reverse)item.end=original.end-(next-bounds.start)*original.speed;else item.start=original.start+(next-bounds.start)*original.speed}else if(original.reverse)item.start=original.start-(next-bounds.end)*original.speed;else item.end=original.end+(next-bounds.end)*original.speed}
         else if(edge==='left'){item.start=next;if(type==='audio')item.sourceStart=original.sourceStart+next-original.start}else item.end=next;
-        paintTimedClipTiming(node,type,item);if(type==='text'||type==='subtitle'){el('text-start').value=item.start.toFixed(2);el('text-end').value=item.end.toFixed(2)}
+        paintTimedClipTiming(node,type,item);if(type==='text'||type==='subtitle')showTextTiming(item)
       };
       const tick=()=>{if(!active)return;update();frame=requestAnimationFrame(tick)};
       const move=e=>{e.preventDefault();pointerX=e.clientX;if(Math.abs(pointerX-startX)>2)moved=true;update()};
@@ -2474,7 +2474,7 @@
       else if(type==='sticker'){S.selectedSticker=id;S.selectedText=null;S.selectedLayer=null}
       else{if(!layerSelected(type,id))S.selectedImageKeyframe=null;S.selectedLayer={type,id};S.selectedText=null;S.selectedSticker=null}
       const update=()=>{if(!moved||isTrackLocked(type))return;autoScrollTimelinePointer(box,pointerX);if(!remembered){remember();remembered=true}const delta=(pointerX-startX+box.scrollLeft-startScroll)/S.zoom,newStart=snapTimelinePosition(originalStart+delta,duration,item,{max:maximum});item.start=newStart;item.end=newStart+duration;paintTimedClipTiming(button,type,item);
-        if(type==='text'||type==='subtitle'){el('text-start').value=item.start.toFixed(2);el('text-end').value=item.end.toFixed(2)}
+        if(type==='text'||type==='subtitle')showTextTiming(item)
         if(type==='image')el('image-track').querySelectorAll('[data-image-kf]').forEach(marker=>{if(marker.dataset.imageId===id){const keyframe=(item.transformKeyframes||[]).find(value=>value.id===marker.dataset.imageKf);if(keyframe)marker.style.left=((item.start+keyframe.time)*S.zoom)+'px'}});
       };
       const tick=()=>{if(!active)return;update();frame=requestAnimationFrame(tick)};
@@ -2655,7 +2655,7 @@
     }
     function beginTextClipDrag(event,id,button){const item=S.texts.find(value=>value.id===id);if(item)return beginTimedLayerDrag(event,item.kind==='subtitle'?'subtitle':'text',id,button)}
     function escapeHtml(value){const node=document.createElement('span');node.textContent=value;return node.innerHTML}
-    function selectText(id,seek=true){S.selectedText=id;S.selectedTextKeyframe=null;S.selectedSticker=null;S.selectedLayer=null;drawTexts();showTextProperties();const item=selectedText();if(seek&&item)seekOutputTime(Math.min(item.end-.01,item.start+.01));if(item?.kind==='subtitle'){switchClipInspectorTab('video');el('subtitle-section').open=true}drawTextOverlay()}
+    function selectText(id,seek=true){S.selectedText=id;S.selectedTextKeyframe=null;S.selectedSticker=null;S.selectedLayer=null;drawTexts();showTextProperties();const item=selectedText();if(seek&&item)seekOutputTime(item.start+Math.min(.01,(item.end-item.start)/2));if(item?.kind==='subtitle'){switchClipInspectorTab('video');el('subtitle-section').open=true}drawTextOverlay()}
     function writeInspectorValue(id,value,editedControl=null){
       const input=el(id);
       if(input!==editedControl&&input.value!==String(value))input.value=value;
@@ -2666,10 +2666,12 @@
       fields.classList.toggle('hidden',!item);empty.classList.toggle('hidden',!!item);
       if(!item)return;
       hydrateText(item);
+      const precision=item.kind==='subtitle'?3:2;
+      el('text-start').step=el('text-end').step=10**-precision;
       for(const [id,value] of Object.entries({
         'text-content':item.text,'text-color':item.color,'text-outline':item.outlineColor,
-        'text-size':item.size,'text-x':item.x,'text-y':item.y,'text-start':item.start.toFixed(2),
-        'text-end':item.end.toFixed(2),'text-bg-opacity':item.backgroundOpacity
+        'text-size':item.size,'text-x':item.x,'text-y':item.y,'text-start':item.start.toFixed(precision),
+        'text-end':item.end.toFixed(precision),'text-bg-opacity':item.backgroundOpacity
       }))writeInspectorValue(id,value,editedControl);
       el('text-size-value').textContent=Math.round(item.size);
       drawSubtitleEditor(editedControl);drawTextKeyframeEditor();

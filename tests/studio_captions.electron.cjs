@@ -180,6 +180,14 @@ async function checkEditingAndReplacement() {
   assert.deepEqual(await rendererCues(),original);
   await editFirstCue();
   assert.deepEqual(await rendererCues(),edited);
+  await evaluate('showTextProperties()');
+  assert.deepEqual(await evaluate("['start','end'].map(edge=>el('text-'+edge).value)"),['0.315','1.205']);
+  await updateControl('text-color','#9A943C','input');
+  assert.deepEqual(await rendererCues(),edited,'The shared text inspector does not round subtitle times during an appearance edit');
+  await updateControl('text-start',.316);
+  assert.equal((await rendererCues())[0].start,.316);
+  await evaluate('undoEdit()');
+  assert.deepEqual(await rendererCues(),edited);
   await updateControl('studio-caption-text','Geçici metin','input');
   await updateControl('studio-caption-start',.325,'input');
   await updateControl('studio-caption-end',1.225,'input');
@@ -359,7 +367,9 @@ function checkPixels(label,baseline,withCaptions,expectations) {
     evidence.push({frame,time:frame/30,visible,changed});
   }
   console.log(label+' CPU render cue boundaries',JSON.stringify(evidence));
-  for(const {frame,visible,changed} of evidence)assert.ok(visible?changed>=20:changed<20,`Frame ${frame} visibility ${visible} with ${changed} changed pixels`);
+  // Re-encoding the overlay run changes a few background pixels even on blank frames.
+  const subtitlePixelThreshold=70;
+  for(const {frame,visible,changed} of evidence)assert.ok(visible?changed>=subtitlePixelThreshold:changed<subtitlePixelThreshold,`Frame ${frame} visibility ${visible} with ${changed} changed pixels`);
 }
 
 async function checkRenderedTiming() {
@@ -384,6 +394,8 @@ async function checkCrossfadeSidecar() {
   })()`);
   assert.equal(await evaluate('manualExportData().options.timelineComposite'),false);
   assert.match(await importAndWait(codec.serialize(timelineCues)),/6 altyazı eklendi/);
+  await evaluate(`selectText(S.texts.find(cue=>cue.text==='Kısa').id)`);
+  await waitUI('!mv.seeking && currentOutputTime()>2.041 && currentOutputTime()<2.054','selection seeks inside a 13ms subtitle');
   assert.equal(await evaluate('el("studio-caption-export-clock").value'),'video');
   const read=file=>codec.parse(fs.readFileSync(file,'utf8')).map(toObject);
   const synced=read(await downloadSrt('crossfade-video-clock'));
