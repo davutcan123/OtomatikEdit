@@ -123,7 +123,79 @@ app.whenReady().then(() => withStudioBrowser(async ({ evaluate, win, temporary, 
     fixtureLabel===document.querySelector('[data-extra-video-label="2"]')`), true);
   assert.equal(await evaluate('projectPayload().timelines[0].state.clips.length'), 192);
 
-  console.log('Timeline seek preserved 192 clip nodes, 24 text layers, ruler marks, and edit handles');
+  const delayedMedia=[];
+  for(const [name,color] of [['delayed','red'],['abandoned','blue']]){
+    const bytes=fs.readFileSync(path.join(temporary,color+'.mp4')).toString('base64');
+    const uploaded=await evaluate(`upload(new File([Uint8Array.from(atob(${JSON.stringify(bytes)}),c=>c.charCodeAt(0))],${JSON.stringify(name+'.mp4')},{type:'video/mp4'}))`);
+    delayedMedia.push({id:name==='delayed'?'red':name,name:name+'.mp4',kind:'video',fileId:uploaded.file_id,duration:uploaded.duration});
+  }
+  const [delayed,abandoned]=delayedMedia;
+  const holds=new Map(delayedMedia.map(asset=>['/preview/'+encodeURIComponent(asset.fileId),[]]));
+  const network=win.webContents.session.webRequest;
+  network.onBeforeRequest((details,callback)=>{
+    const pending=holds.get(new URL(details.url).pathname);
+    if(pending)pending.push(callback);
+    else callback({cancel:false});
+  });
+  const release=asset=>{
+    const pathname='/preview/'+encodeURIComponent(asset.fileId), waits=holds.get(pathname);
+    holds.delete(pathname);
+    for(const callback of waits||[])callback({cancel:false});
+  };
+  const layout={
+    name:'Delayed preview',mediaAssets:delayedMedia.concat(media[1]),activeTimelineId:'delayed',
+    timelines:[
+      {id:'delayed',name:'Delayed',state:{selected:0,preview:0,clips:[
+        {...clips[0],fileId:delayed.fileId,assetId:delayed.id,clipId:'delayed',start:.8,end:4.8,speed:2,timelineStart:0},
+        {...clips[1],fileId:abandoned.fileId,assetId:abandoned.id,clipId:'abandoned',start:1,end:3,timelineStart:2},
+      ]}},
+      {id:'alternate',name:'Alternate',state:{selected:0,preview:0,clips:[{...clips[1],timelineStart:0}]}},
+    ],
+  };
+  try{
+    await evaluate(`restoreProject(${JSON.stringify(layout)})`);
+    await waitFor(()=>holds.get('/preview/'+encodeURIComponent(delayed.fileId)).length,'delayed proxy request');
+    const key=(keyCode)=>{
+      win.webContents.sendInputEvent({type:'keyDown',keyCode});
+      win.webContents.sendInputEvent({type:'keyUp',keyCode});
+    };
+    await evaluate("seekOutputTime(.5);el('timeline').focus()");
+    key('I');
+    await waitFor(()=>evaluate('S.studioTimeline?.range.in===.5'),'I while metadata is blocked');
+    await evaluate('seekOutputTime(1.5)');
+    key('O');key('M');
+    await waitFor(()=>evaluate('S.studioTimeline.range.out===1.5 && S.studioTimeline.markers[0]?.time===1.5'),'O and marker while metadata is blocked');
+    assert.deepEqual(await evaluate('[mv.readyState,mv.currentTime,currentOutputTime()]'),[0,0,1.5]);
+    await evaluate('openSnapshotModal()');
+    assert.equal(await evaluate('S.snapshotTime'),1.5);
+    await evaluate("el('snapshot-modal').close()");
+    assert.equal(await evaluate('saveNamedProject()'),true);
+    const saved=await evaluate(`fetch('/projects/'+S.projectId).then(response=>response.json())`);
+    assert.deepEqual(saved.timelines[0].state.studioTimeline.range,{in:.5,out:1.5});
+    assert.equal(saved.timelines[0].state.studioTimeline.markers[0].time,1.5);
+
+    await evaluate('setPreviewSource(0,3.8,true)');
+    release(delayed);
+    await waitFor(()=>evaluate('!mv.paused&&mv.readyState>=2&&!mv.seeking&&currentOutputTime()>1.53'),'playAfter uses the newest requested source time');
+    assert.equal(await evaluate('S.timelineCursor'),null,'Ready playback hands the clock back to media');
+    await evaluate('pausePreview();seekOutputTime(.5)');
+    await frame(delayed,1.8);
+    await evaluate('playPreview()');
+    await waitFor(()=>evaluate('!mv.paused&&currentOutputTime()>.56'),'manual playback follows the media clock');
+    await evaluate('pausePreview();seekOutputTime(2.6);setPreviewSource(1,1.6,true)');
+    await waitFor(()=>holds.get('/preview/'+encodeURIComponent(abandoned.fileId)).length,'second clip proxy request');
+    assert.ok(await evaluate('Math.abs(currentOutputTime()-2.6)<.001'));
+    await evaluate("switchTimeline('alternate');seekOutputTime(.7)");
+    release(abandoned);
+    await frame(media[1],1.7);
+    assert.deepEqual(await evaluate('[S.activeTimelineId,mv.paused]'),['alternate',true],'Abandoned clip cannot start playback in another timeline');
+    assert.ok(await evaluate('Math.abs(currentOutputTime()-.7)<.01'));
+  }finally{
+    release(delayed);release(abandoned);
+    network.onBeforeRequest(null);
+  }
+
+  console.log('Timeline seek preserved edit controls and kept requested I/O, marker and snapshot times until delayed media was ready');
 })).then(() => app.exit(0), error => {
   console.error(error);
   app.exit(1);

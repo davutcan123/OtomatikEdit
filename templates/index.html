@@ -1948,8 +1948,10 @@
         return;
       }
       const raw=S.clips[index];if(!raw)return;
-      S.timelineCursor=null;S.previewGap=false;
+      S.previewGap=false;
       const clip=hydrateClip(raw),target=Math.max(clip.start,Math.min(clip.end-.001,time??clip.start)),original=clip.src||('/video/'+encodeURIComponent(clip.fileId||S.manualId));
+      // The video element can report a previous source or zero until metadata arrives.
+      S.timelineCursor=clipTimelineStart(clip)+(target-clip.start)/(+clip.speed||1);
       const src=window.StudioMediaPreview?.source(mv,original,'manual')??original;
       const sameSource=S.activeVideoFileId===(clip.fileId||S.manualId)&&mv.getAttribute('src')===src;
       S.duration=clip.sourceDuration||S.duration;S.seeking=true;mv.playbackRate=+clip.speed||1;
@@ -1957,7 +1959,8 @@
       const cleanup=()=>{mv.removeEventListener('loadedmetadata',ready);mv.removeEventListener('canplay',resume);if(S.cancelPreviewSource===cleanup)S.cancelPreviewSource=null};
       const ready=()=>{
         cleanup();
-        S.duration=clip.sourceDuration||mv.duration;mv.playbackRate=+clip.speed||1;mv.currentTime=target;applyVideoEffectPreview();
+        S.duration=clip.sourceDuration||mv.duration;mv.playbackRate=+clip.speed||1;mv.currentTime=target;
+        S.timelineCursor=null;S.seeking=mv.seeking;applyVideoEffectPreview();
         if(playAfter){
           if(mv.readyState>=3)resume();
           else{S.cancelPreviewSource=cleanup;mv.addEventListener('canplay',resume,{once:true})}
@@ -2126,7 +2129,7 @@
       const total=outDuration(),wanted=Math.max(0,Math.min(Math.max(0,total-.001),value));
       const index=S.clips.findIndex(clip=>wanted>=clipTimelineStart(clip)-.001&&wanted<=clipTimelineEnd(clip)+.001);
       if(index<0){
-        pausePreview();S.timelineCursor=wanted;S.previewGap=true;
+        S.cancelPreviewSource?.();pausePreview();S.seeking=false;S.timelineCursor=wanted;S.previewGap=true;
         drawPlayhead();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();
         const valueText=ft(wanted)+' / '+ft(total);
         el('timecode').textContent=valueText;el('timecode-top').textContent=valueText;
