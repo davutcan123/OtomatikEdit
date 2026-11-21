@@ -34,18 +34,24 @@ from render_resources import choose_render_resources
 from render_encoder import select_video_encoder, invalidate_nvenc, is_nvenc_failure
 from render_overlays import compact_overlay
 from brush_masks import normalize_brush_strokes, brush_mask, create_brushed_image, brush_video_filter
-from render_image_animation import image_animation_expressions
+from render_layer_graph import (
+    append_animated_image, append_sticker_overlay, append_text_overlay, freeze_snapshot_expressions,
+    image_effect_chain, image_visibility_expression, layer_time_expression, snapshot_time_expression,
+    zoom_keyframe_easing_expression, zoom_keyframe_focus_expression, zoom_keyframe_opacity_expression,
+    zoom_keyframe_scale_expression,
+)
+from render_snapshot import prepare_snapshot_job
 from render_video_tracks import (normalize_video_track, normalize_source_crop, source_crop_filter,
                                  video_track_groups, next_track_clip, shift_clip_filter_time,
                                  compose_video_tracks, fit_video_frame_count, sample_source_frames, shift_fade_time,
                                  video_grid)
 from studio_fonts import bundled_font_path, font_face_css, normalize_font_family
 from render_audio import atempo_chain, clip_audio_filter, join_audio, mix_audio_layers
-from render_timing import (ClipClock, MICROSECONDS_PER_SECOND, align_output_frame_timestamps, crossfade_boundaries,
-                           displayed_output_frame, first_output_frame, gif_clock_filters,
-                           normalize_zoom_cadence, output_frame_time_us, plan_render_timing,
-                           plan_video_frames, resolve_export_range, snapshot_source_window,
-                           source_frame_samples, subtitle_frame_interval)
+from render_timing import (
+    align_output_frame_timestamps, crossfade_boundaries, first_output_frame, gif_clock_filters,
+    normalize_zoom_cadence, plan_render_timing, plan_video_frames, resolve_export_range,
+    source_frame_samples, subtitle_frame_interval,
+)
 
 RUNTIME_PATHS = resolve_runtime_paths(__file__)
 BASE_DIR = str(RUNTIME_PATHS.source_dir)
@@ -1147,91 +1153,6 @@ def normalize_zoom_keyframes(items, output_duration: float) -> list[dict]:
     return [by_time[key] for key in sorted(by_time)]
 
 
-def zoom_keyframe_easing_expression(progress: str, easing: str) -> str:
-    p = f"({progress})"
-    if easing == "linear":
-        return p
-    if easing == "smooth":
-        return f"({p}*{p}*(3-2*{p}))"
-    if easing == "easeIn":
-        return f"({p}*{p}*{p})"
-    if easing == "easeOut":
-        return f"(1-(1-{p})*(1-{p})*(1-{p}))"
-    if easing == "easeInOut":
-        return f"if(lt({p},.5),4*{p}*{p}*{p},1-pow(-2*{p}+2,3)/2)"
-    if easing == "cinematic":
-        return f"(.5-.5*cos(PI*{p}))"
-    if easing == "gentle":
-        return f"({p}*{p}*(2-{p}))"
-    if easing == "responsive":
-        return f"(1-pow(1-{p},4))"
-    return f"({p}*{p}*{p}*({p}*({p}*6-15)+10))"
-
-
-def zoom_keyframe_scale_expression(base_scale: float, keyframes: list[dict]) -> str:
-    anchors = [{"time": 0.0, "scale": max(25.0, min(300.0, base_scale)) / 100.0, "easing": "smoother"}]
-    for frame in keyframes:
-        anchor = {"time": frame["time"], "scale": frame["scale"] / 100.0, "easing": frame.get("easing", "smoother")}
-        if anchor["time"] <= 0.0001:
-            anchors[0] = anchor
-        else:
-            anchors.append(anchor)
-    if len(anchors) == 1:
-        return f"{anchors[0]['scale']:.8f}"
-    expression = f"{anchors[-1]['scale']:.8f}"
-    for left, right in reversed(list(zip(anchors, anchors[1:]))):
-        span = max(0.0001, right["time"] - left["time"])
-        progress = f"((t-{left['time']:.8f})/{span:.8f})"
-        eased = zoom_keyframe_easing_expression(progress, right.get("easing", "smoother"))
-        value = f"({left['scale']:.8f}+({right['scale'] - left['scale']:.8f})*({eased}))"
-        expression = f"if(lt(t,{right['time']:.8f}),{value},{expression})"
-    return expression
-
-def zoom_keyframe_focus_expression(
-    keyframes: list[dict], axis: str, base_value: float = 50
-) -> str:
-    anchors = [{"time": 0.0, "value": max(0.0, min(100.0, base_value)) / 100.0, "easing": "smoother"}]
-    for frame in keyframes:
-        anchor = {"time": frame["time"], "value": frame.get(axis, 50) / 100.0, "easing": frame.get("easing", "smoother")}
-        if anchor["time"] <= 0.0001:
-            anchors[0] = anchor
-        else:
-            anchors.append(anchor)
-    if len(anchors) == 1:
-        return f"{anchors[0]['value']:.8f}"
-    expression = f"{anchors[-1]['value']:.8f}"
-    for left, right in reversed(list(zip(anchors, anchors[1:]))):
-        span = max(0.0001, right["time"] - left["time"])
-        progress = f"((t-{left['time']:.8f})/{span:.8f})"
-        eased = zoom_keyframe_easing_expression(progress, right.get("easing", "smoother"))
-        value = f"({left['value']:.8f}+({right['value'] - left['value']:.8f})*({eased}))"
-        expression = f"if(lt(t,{right['time']:.8f}),{value},{expression})"
-    return expression
-
-
-def zoom_keyframe_opacity_expression(base_opacity: float, keyframes: list[dict]) -> str:
-    anchors = [{"time": 0.0, "value": max(0.0, min(100.0, base_opacity)) / 100.0, "easing": "smoother"}]
-    for frame in keyframes:
-        anchor = {
-            "time": frame["time"],
-            "value": frame.get("opacity", 100) / 100.0,
-            "easing": frame.get("easing", "smoother"),
-        }
-        if anchor["time"] <= 0.0001:
-            anchors[0] = anchor
-        else:
-            anchors.append(anchor)
-    if len(anchors) == 1:
-        return f"{anchors[0]['value']:.8f}"
-    expression = f"{anchors[-1]['value']:.8f}"
-    for left, right in reversed(list(zip(anchors, anchors[1:]))):
-        span = max(0.0001, right["time"] - left["time"])
-        progress = f"((t-{left['time']:.8f})/{span:.8f})"
-        eased = zoom_keyframe_easing_expression(progress, right.get("easing", "smoother"))
-        value = f"({left['value']:.8f}+({right['value'] - left['value']:.8f})*({eased}))"
-        expression = f"if(lt(t,{right['time']:.8f}),{value},{expression})"
-    return expression
-
 def normalize_transition_items(items, segments: list[dict]) -> list[dict]:
     if not isinstance(items, list) or len(items) > max(0, len(segments) - 1):
         raise HTTPException(400, "Geçersiz geçiş listesi")
@@ -1948,265 +1869,6 @@ def manual_color_adjustment_filter(clip):
                 coefficients.append(f"{output_channel}{input_channel}={value:.8f}")
         filters.append("colorchannelmixer=" + ":".join(coefficients))
     return ",".join(filters)
-
-
-def snapshot_time_expression(expression, elapsed, fps):
-    return re.sub(
-        r"\b(t|it|T|on)\b",
-        lambda match: f"{elapsed * fps if match.group(0) == 'on' else elapsed:.8f}",
-        expression,
-    )
-
-
-def freeze_snapshot_expressions(filters, elapsed, fps):
-    # Only quoted FFmpeg expressions contain time variables. Bare t=in (fade)
-    # and format/option names must remain untouched.
-    return re.sub(r"'([^']*)'", lambda match: "'" + snapshot_time_expression(match.group(1), elapsed, fps) + "'", filters)
-
-
-def layer_time_expression(expression, item, fps, snapshot, variable="t"):
-    if snapshot:
-        return snapshot_time_expression(expression, item["snapshot_elapsed"], fps)
-    return re.sub(r"\bt\b", f"max(0,{variable}-{item['start']:.8f})", expression)
-
-
-def image_effect_chain(lines, source, label, effect, intensity):
-    """Apply existing color presets without discarding an imported PNG's alpha.
-
-    eq/hue and several other FFmpeg filters negotiate formats without alpha.
-    Keep the original channel separate and reattach it after RGB processing.
-    Intensity blends color only; transparent pixels cannot turn into a box.
-    """
-    if not effect or intensity <= 0:
-        return source
-    amount = max(0.0, min(1.0, intensity / 100))
-    lines.append(f"{source}format=rgba,split=2[{label}color][{label}alpha0]")
-    lines.append(f"[{label}alpha0]alphaextract[{label}alpha]")
-    if amount < .99999:
-        lines.append(f"[{label}color]format=gbrp,split=2[{label}original][{label}process]")
-        lines.append(f"[{label}process]{effect},format=gbrp[{label}effect]")
-        lines.append(f"[{label}original][{label}effect]blend=all_expr='A*(1-{amount:.8f})+B*{amount:.8f}'[{label}rgb]")
-    else:
-        lines.append(f"[{label}color]{effect},format=gbrp[{label}rgb]")
-    lines.append(f"[{label}rgb][{label}alpha]alphamerge,format=rgba[{label}]")
-    return f"[{label}]"
-
-
-def image_visibility_expression(item):
-    start, end = item["start"], item["end"]
-    if item.get("_gif"):
-        start_us = round(start * MICROSECONDS_PER_SECOND)
-        end_us = round(end * MICROSECONDS_PER_SECOND)
-        return f"between(round(t*{MICROSECONDS_PER_SECOND}),{start_us},{end_us})"
-    return f"between(t,{start},{end})"
-
-
-def append_animated_image(lines, source, destination, item, index, width, height,
-                          base_width, base_height, fps, snapshot):
-    """Compose an image object on a fixed RGBA surface at its own local time.
-
-    Variable-size scale outputs must not reach overlay framesync: that can reset
-    its frame queue and cause stutter. rotate centers into a fixed transparent
-    surface, bounded by the largest visible portion of this image object.
-    """
-    frames = item.get("transformKeyframes", [])
-    animation = image_animation_expressions(
-        item.get("animation", "none"),
-        item.get("snapshot_layer_duration", item["end"] - item["start"]),
-        item.get("animationDuration", 1),
-    )
-
-    def local(expression, variable="t"):
-        return layer_time_expression(expression, item, fps, snapshot, variable)
-
-    scale = zoom_keyframe_scale_expression(100, frames)
-    opacity = zoom_keyframe_opacity_expression(item.get("opacity", 100), frames)
-    focus_x = zoom_keyframe_focus_expression(frames, "x", item.get("x", 50))
-    focus_y = zoom_keyframe_focus_expression(frames, "y", item.get("y", 50))
-    sx = f"({scale})*({animation['scale_x']})"
-    sy = f"({scale})*({animation['scale_y']})"
-    if item.get("effect") == "mirror":
-        sx += f"*(1-2*{item.get('effectIntensity', 100) / 100:.8f})"
-    angle = f"{item.get('rotation', 0) * math.pi / 180:.8f}+({animation['angle']})"
-    opacity = f"({opacity})*({animation['opacity']})"
-    # Slide percentages are local image-box distances. The keyframe transform
-    # scales this inner animation, as in the preview's nested CSS transforms.
-    dx = f"({animation['x']})*{base_width}*({scale})"
-    dy = f"({animation['y']})*{base_height}*({scale})"
-    base_angle = item.get("rotation", 0) * math.pi / 180
-    x = f"W*({focus_x})-w/2+({dx})*{math.cos(base_angle):.8f}-({dy})*{math.sin(base_angle):.8f}"
-    y = f"H*({focus_y})-h/2+({dx})*{math.sin(base_angle):.8f}+({dy})*{math.cos(base_angle):.8f}"
-    # Keep small objects compact. Very large objects need only the portion that
-    # can reach the canvas, including the extra off-center travel of slide cards.
-    maximum_scale = max([1.0] + [frame["scale"] / 100 for frame in frames])
-    maximum_width, maximum_height = base_width * maximum_scale * 1.25, base_height * maximum_scale * 1.25
-    rotated = item.get("rotation", 0) != 0 or animation["angle"] != "0"
-    bound_width = bound_height = math.hypot(maximum_width, maximum_height)
-    if not rotated:
-        bound_width, bound_height = maximum_width, maximum_height
-    movement = 1.1 if animation["x"] != "0" or animation["y"] != "0" else 0
-    extra_travel = movement * maximum_scale * math.hypot(base_width, base_height)
-    stage_width = max(4, 2 * math.ceil(min(bound_width, 2 * (width + extra_travel)) / 2) + 4)
-    stage_height = max(4, 2 * math.ceil(min(bound_height, 2 * (height + extra_travel)) / 2) + 4)
-    filters = ["format=rgba"]
-    needs_opacity = (item.get("opacity", 100) != 100 or animation["opacity"] != "1"
-                     or any(frame.get("opacity", 100) != 100 for frame in frames))
-    if needs_opacity or animation["brightness"] != "1" or animation["contrast"] != "1":
-        brightness = local(animation["brightness"], "T")
-        contrast = local(animation["contrast"], "T")
-        channels = [f"{ch}='clip(clip({ch}(X,Y)*({brightness}),0,255)*({contrast})+127.5*(1-({contrast})),0,255)'"
-                    for ch in "rgb"]
-        filters.append("geq=" + ":".join(channels) + f":a='alpha(X,Y)*({local(opacity, 'T')})'")
-    # Evaluate opacity/color on the compact image before expanding it. A pure
-    # position/zoom animation needs no per-pixel geq operation at all.
-    filters.extend([
-        f"hflip=enable='lt({local(sx)},0)'",
-        f"vflip=enable='lt({local(sy)},0)'",
-        f"scale=w='max(2,trunc({base_width}*abs({local(sx)})/2)*2)':"
-        f"h='max(2,trunc({base_height}*abs({local(sy)})/2)*2)':eval=frame",
-        f"rotate='{local(angle)}':ow={stage_width}:oh={stage_height}:c=none",
-    ])
-    label = f"imageanimated{index}"
-    lines.append(f"{source}{','.join(filters)},setsar=1[{label}]")
-    if animation["blur"] != "0":
-        # A continuous blend avoids stepped radius changes and preserves alpha
-        # around the image edge. This approximates CSS's variable Gaussian blur.
-        blur_amount = local(f"min(1,({animation['blur']})/10)", "T")
-        lines.append(f"[{label}]split=2[{label}sharp][{label}blur0]")
-        lines.append(f"[{label}blur0]gblur=sigma=5[{label}blur]")
-        lines.append(f"[{label}sharp][{label}blur]blend=all_expr='A*(1-({blur_amount}))+B*({blur_amount})'[{label}soft]")
-        label += "soft"
-    lines.append(f"{destination}[{label}]overlay=x='{local(x)}':y='{local(y)}':eval=frame:"
-                 f"enable='{image_visibility_expression(item)}':eof_action=pass:shortest=1[imagev{index}]")
-    return f"[imagev{index}]"
-
-
-def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
-    """Select at most two active video inputs per track and a short window.
-
-    Snapshot time is the editor's original timeline (including gaps), not the
-    transition-shortened video export. The active transition occupies the final
-    `duration` seconds of the outgoing clip, matching preview playback.
-    """
-    fps = job["fps"]
-    segments = job["segments"]
-    multitrack = job.get("multitrack", False)
-    transitions = job["transitions"]
-    # The legacy single-track export shortens overlaps. Its snapshots stay on
-    # the editor ruler, while multitrack transitions have actual source handles.
-    ruler_transitions = transitions if multitrack else []
-    layer_duration = job.get("snapshot_timeline_duration", 0)
-    timing = plan_render_timing(segments, ruler_transitions, multitrack=multitrack, layer_duration=layer_duration)
-    spans = plan_video_frames(segments, timing, ruler_transitions, fps, multitrack=multitrack)
-    final_frame = max(0, first_output_frame(timing.output_duration, fps) - 1)
-    frame = displayed_output_frame(min(max(0.0, timeline_time), final_frame / fps), fps)
-    # Source sampling, transition progress and overlays share the displayed tick.
-    time_at = frame / fps
-    sources = {source["fileId"]: source for source in job["video_inputs"]}
-
-    def track_selection(indices):
-        for transition in transitions:
-            left = transition["boundary"]
-            if left not in indices:
-                continue
-            right = next_track_clip(segments, left)
-            if multitrack:
-                first = spans[right].join_start
-            else:
-                end_time = segments[left]["timelineStart"] + timing.clips[left].clock.duration
-                first = first_output_frame(end_time - transition["duration"], fps)
-            if first <= frame < spans[left].end:
-                progress = (frame - first) / fps
-                overlap = (spans[left].end - first) / fps
-                right_frame = frame - (spans[right].picture_start if multitrack else first)
-                chosen = [(left, frame - spans[left].picture_start), (right, right_frame)]
-                return chosen, {**transition, "duration": overlap}, progress
-        return ([
-            (index, frame - spans[index].picture_start)
-            for index in indices if spans[index].picture_start <= frame < spans[index].end
-        ], None, 0.0)
-
-    selected, snapshot_tracks = [], []
-    transition_at, transition_elapsed = None, 0.0
-    if multitrack:
-        for track, indices in video_track_groups(segments).items():
-            chosen, transition, progress = track_selection(indices)
-            if chosen:
-                positions = list(range(len(selected), len(selected) + len(chosen)))
-                snapshot_tracks.append({"track": track, "indices": positions,
-                                        "transition": transition, "transition_elapsed": progress})
-                selected.extend(chosen)
-    else:
-        selected, transition_at, transition_elapsed = track_selection(range(len(segments)))
-    snapshot_segments = []
-    snapshot_sources = []
-    for index, (original_index, body_frame) in enumerate(selected):
-        seg = segments[original_index]
-        clip_timing = timing.clips[original_index]
-        span = spans[original_index]
-        source = sources[seg["fileId"]]
-        decoded_duration = source.get("duration", seg["end"])
-        # Seek to bounded context, but retain the original PTS after seeking.
-        # Resetting to the first decoded packet shifts VFR and off-grid trims.
-        sampling_elapsed = body_frame / fps - clip_timing.preroll
-        window = snapshot_source_window(
-            clip_timing.clock, sampling_elapsed, decoded_duration, allow_preroll=multitrack,
-        )
-        first = max(0, body_frame - math.ceil(.5 * fps))
-        last = max(body_frame, min(span.pictures - 1, body_frame + math.ceil(.25 * fps)))
-        samples = source_frame_samples(
-            clip_timing.clock, fps, clip_timing.preroll, first, last, snapshot=True,
-        )
-        source_trim = clip_timing.source_trim(decoded_duration)
-        window_end = min(source_trim.end, window.source_start + window.source_duration + 1e-7)
-        identifier = f"snapshot-{index}"
-        snapshot_sources.append({
-            **source, "fileId": identifier, "snapshot_seek": window.source_start,
-            "snapshot_duration": window.source_duration, "snapshot_end": window_end,
-            "snapshot_samples": samples, "snapshot_frame": body_frame - first, "snapshot_preroll": clip_timing.preroll,
-        })
-        snapshot_segments.append({**seg, "fileId": identifier, "timelineStart": 0,
-                                  "snapshot_elapsed": max(0, sampling_elapsed)})
-    selected_clip_frames = {segments[index].get("clipId"): local_frame for index, local_frame in selected}
-    frame_us = output_frame_time_us(frame, fps)
-
-    def prepare_layer(item):
-        return {**item, "start": 0, "end": 1, "snapshot_elapsed": time_at - item["start"],
-                "snapshot_layer_duration": item["end"] - item["start"], "_reference_height": canvas_height}
-
-    for kind in ("texts", "stickers"):
-        job[kind] = [
-            prepare_layer(item) for item in job[kind]
-            if item["start"] <= time_at <= item["end"]
-            and (item.get("kind") != "subtitle" or time_at < item["end"])
-        ]
-    snapshot_images = []
-    for item in job["images"]:
-        owner = item.get("ownerClipId") if multitrack else None
-        visible = item["start"] <= time_at <= item["end"]
-        start_us = round(item["start"] * MICROSECONDS_PER_SECOND)
-        end_us = round(item["end"] * MICROSECONDS_PER_SECOND)
-        frame_visible = start_us <= frame_us <= end_us
-        active = owner in selected_clip_frames if owner else visible or frame_visible
-        if not active:
-            continue
-        elapsed_us = (output_frame_time_us(selected_clip_frames[owner], fps)
-                      if owner else frame_us - start_us)
-        snapshot_images.append({
-            **prepare_layer(item), "_snapshot_visible": bool(owner) or visible,
-            "_snapshot_frame_visible": bool(owner) or frame_visible,
-            "_snapshot_frame_elapsed_us": elapsed_us,
-        })
-    job["images"] = snapshot_images
-    job.update({"type": "snapshot", "format": "png", "segments": snapshot_segments,
-                "video_inputs": snapshot_sources, "audio_layers": [], "transitions": [],
-                "snapshot": {"timeline_time": time_at, "transition": transition_at,
-                             "transition_elapsed": transition_elapsed, "tracks": snapshot_tracks}})
-    width = job["width"] or job["source_width"] or 1920
-    height = job["height"] or job["source_height"] or 1080
-    ratio = min(1.0, 3840 / max(width, height))
-    job["width"] = max(2, int(width * ratio) // 2 * 2)
-    job["height"] = max(2, int(height * ratio) // 2 * 2)
 
 
 async def run_render_job(job_id: str):
@@ -2926,59 +2588,15 @@ async def run_render_job(job_id: str):
             current_video = "[captionclock]"
 
         for index, text_item in enumerate(text_items):
-            input_index = len(video_inputs) + index
-            next_label = f"[textv{index}]"
-            overlay_input = f"[textcached{index}]"
-            lines.append(f"[{input_index}:v]loop=loop=-1:size=1:start=0,setpts=N/({target_fps}*TB){overlay_input}")
-            frames = text_item.get("transformKeyframes", [])
-            x_expr, y_expr = map(str, text_overlay_positions[index])
-            if frames:
-                text_scale = zoom_keyframe_scale_expression(100, frames)
-                text_opacity = zoom_keyframe_opacity_expression(100, frames)
-                text_scale = layer_time_expression(text_scale, text_item, target_fps, snapshot)
-                text_opacity = layer_time_expression(text_opacity, text_item, target_fps, snapshot, "T")
-                source_width, source_height = text_overlay_sizes[index]
-                maximum_scale = max(1.0, max(frame.get("scale", 100) for frame in frames) / 100)
-                padded_width = max(4, int(math.ceil(source_width * maximum_scale / 2) * 2 + 4))
-                padded_height = max(4, int(math.ceil(source_height * maximum_scale / 2) * 2 + 4))
-                text_x = zoom_keyframe_focus_expression(frames, "x", text_item.get("x", 50))
-                text_y = zoom_keyframe_focus_expression(frames, "y", text_item.get("y", 50))
-                text_x = layer_time_expression(text_x, text_item, target_fps, snapshot)
-                text_y = layer_time_expression(text_y, text_item, target_fps, snapshot)
-                animated_label = f"[textasset{index}]"
-                # Evaluate opacity on fixed-size input pixels and center the
-                # changing scale on a constant canvas for overlay framesync.
-                lines.append(
-                    f"{overlay_input}format=rgba,"
-                    "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-                    f"a='alpha(X,Y)*({text_opacity})',"
-                    f"scale=w='max(2,trunc(iw*({text_scale})/2)*2)':"
-                    f"h='max(2,trunc(ih*({text_scale})/2)*2)':eval=frame,"
-                    f"rotate=0:ow={padded_width}:oh={padded_height}:c=none,setsar=1{animated_label}"
-                )
-                overlay_input = animated_label
-                x_expr = f"W*({text_x})-w/2"
-                y_expr = f"H*({text_y})-h/2"
-            start, end = text_item["start"], text_item["end"]
-            visibility = f"between(t,{start},{end})"
-            if not snapshot and text_item["kind"] == "subtitle":
-                visibility = f"gte(t,{start})*lt(t,{end})"
-            lines.append(
-                f"{current_video}{overlay_input}overlay=x='{x_expr}':y='{y_expr}':"
-                f"enable='{visibility}':eof_action=pass:shortest=1{next_label}"
+            current_video = append_text_overlay(
+                lines, current_video, index, len(video_inputs) + index, text_item,
+                text_overlay_positions[index], text_overlay_sizes[index], target_fps, snapshot,
             )
-            current_video = next_label
         for index, sticker_item in enumerate(sticker_items):
-            input_index = len(video_inputs) + len(text_overlay_paths) + index
-            next_label = f"[stickerv{index}]"
-            x, y = sticker_overlay_positions[index]
-            lines.append(f"[{input_index}:v]loop=loop=-1:size=1:start=0,setpts=N/({target_fps}*TB)[stickercached{index}]")
-            lines.append(
-                f"{current_video}[stickercached{index}]overlay={x}:{y}:"
-                f"enable='between(t,{sticker_item['start']},{sticker_item['end']})':"
-                f"eof_action=pass:shortest=1{next_label}"
+            current_video = append_sticker_overlay(
+                lines, current_video, index, len(video_inputs) + len(text_overlay_paths) + index,
+                sticker_item, sticker_overlay_positions[index], target_fps,
             )
-            current_video = next_label
         lines.append(f"{current_video}null[outv]")
 
         if not snapshot:
