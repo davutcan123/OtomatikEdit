@@ -1,10 +1,10 @@
-function createEditorOutputJobs({el, document, currentScope, canStart, save, desktop}) {
+function createEditorOutputJobs({el, document, currentScope, canStart, save, stop, desktop}) {
   const channels = {
-    manual: {buttons: ['manual-render', 'manual-render-top', 'export-render-start'], links: ['manual-download', 'manual-download-top'], progress: 'manual-progress-top', label: 'Video'},
-    snapshot: {buttons: ['snapshot-open', 'snapshot-save'], links: ['snapshot-download'], label: 'Ekran görüntüsü'},
-    auto: {buttons: ['auto-render'], links: ['auto-download'], progress: 'auto-progress', label: 'Otomatik kesim'}
+    manual: {buttons: ['manual-render', 'manual-render-top', 'export-render-start'], links: ['manual-download', 'manual-download-top'], progress: 'manual-progress-top', stop: 'manual-stop', label: 'Video'},
+    snapshot: {buttons: ['snapshot-open', 'snapshot-save'], links: ['snapshot-download'], stop: 'snapshot-stop', label: 'Ekran görüntüsü'},
+    auto: {buttons: ['auto-render'], links: ['auto-download'], progress: 'auto-progress', stop: 'auto-stop', label: 'Otomatik kesim'}
   };
-  const active = new Map(), latest = new Map();
+  const active = new Map(), latest = new Map(), activeRows = new Map();
   const recentLimit = 20;
   let recent = [];
 
@@ -28,6 +28,86 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, des
     } : null;
   }
 
+  const isRunning = job => !!job && active.get(job.kind) === job && job.phase === 'running';
+  const canStop = job => isRunning(job) && job.cancelCredentials !== null && typeof stop === 'function';
+  function displayMessage(job) {
+    if (!isRunning(job)) return job.message;
+    return job.stopping ? 'Durduruluyor…' : job.stopError || job.message;
+  }
+
+  function paintStopButton(button, job) {
+    button.hidden = !canStop(job);
+    button.disabled = !canStop(job) || !!job.stopping;
+    button.textContent = job?.stopping && isRunning(job) ? 'Durduruluyor…' : 'Durdur';
+    button.onclick = canStop(job) ? () => requestStop(job) : null;
+  }
+
+  function paintActiveRow(job) {
+    const entry = activeRows.get(job);
+    if (!entry) return;
+    const detail = [job.projectName, job.timelineName, displayMessage(job)].filter(Boolean).join(' · ');
+    if (entry.detail.textContent !== detail) entry.detail.textContent = detail;
+    paintStopButton(entry.button, job);
+  }
+
+  function drawActive() {
+    const section = el('active-output-section'), list = el('active-output-list');
+    if (!section || !list) return;
+    for (const [job, entry] of activeRows) {
+      if (isRunning(job)) continue;
+      entry.row.remove();
+      activeRows.delete(job);
+    }
+    for (const job of active.values()) {
+      if (!isRunning(job)) continue;
+      if (!activeRows.has(job)) {
+        const row = document.createElement('li'), label = document.createElement('b');
+        const detail = document.createElement('small'), button = document.createElement('button');
+        label.textContent = channels[job.kind].label + ' · ' + job.format.toUpperCase();
+        detail.setAttribute('role', 'status');
+        button.type = 'button';
+        button.className = 'project-action';
+        button.dataset.outputStop = job.kind;
+        row.append(label, detail, button);
+        list.append(row);
+        activeRows.set(job, {row, detail, button});
+      }
+      paintActiveRow(job);
+    }
+    section.hidden = activeRows.size === 0;
+    el('recent-outputs-open').textContent = activeRows.size ? 'Çıktılar · ' + activeRows.size + ' sürüyor' : 'Son çıktılar';
+  }
+
+  async function sendStopRequest(job) {
+    try {
+      await stop(job.cancelCredentials);
+    } catch (error) {
+      if (!isRunning(job)) return;
+      job.stopping = false;
+      job.stopError = error.message || 'Durdurma isteği gönderilemedi. Tekrar deneyin.';
+      if (visible(job)) draw(job.kind);
+      paintActiveRow(job);
+    }
+  }
+
+  function requestStop(job) {
+    if (!canStop(job) || job.stopping) return;
+    job.stopping = true;
+    job.stopError = null;
+    if (visible(job)) draw(job.kind);
+    paintActiveRow(job);
+    if (job.cancelCredentials) void sendStopRequest(job);
+  }
+
+  function attach(job, id, token) {
+    job.cancelCredentials = typeof id === 'string' && typeof token === 'string' && token
+      ? {id, token} : null;
+    if (job.stopping && job.cancelCredentials) void sendStopRequest(job);
+    else if (!job.cancelCredentials) job.stopping = false;
+    if (visible(job)) draw(job.kind);
+    paintActiveRow(job);
+  }
+
   function draw(kind) {
     const channel = channels[kind], output = latest.get(scopeKey(currentScope(kind)));
     const disabled = !available(kind), busy = active.has(kind);
@@ -37,11 +117,12 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, des
       if (busy) button.setAttribute('aria-description', 'Bu türde bir çıktı hazırlanıyor.');
       else button.removeAttribute('aria-description');
     }
+    paintStopButton(el(channel.stop), output);
     const file = output?.url && !output.saved ? output : null;
     for (const id of channel.links) setLink(el(id), file, desktop ? 'Kaydetme konumu seç' : 'Çıktıyı indir');
     if (kind === 'snapshot') {
       el('snapshot-status').textContent = output
-        ? output.message + (output.phase === 'running' && output.percent ? ' '+output.percent+'%' : '')
+        ? displayMessage(output) + (output.phase === 'running' && output.percent ? ' '+output.percent+'%' : '')
         : '';
       return;
     }
@@ -55,11 +136,11 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, des
     }
     progress.dataset.state = output.phase;
     progress.setAttribute('aria-valuenow', String(output.percent));
-    progress.setAttribute('aria-valuetext', output.message+' · '+output.percent+'%');
+    progress.setAttribute('aria-valuetext', displayMessage(output)+' · '+output.percent+'%');
     progress.querySelector('.h-full').style.width = output.percent+'%';
     progress.querySelector('p').textContent = output.percent+'%';
     const label = progress.querySelector('.render-progress-label');
-    label.textContent = label.title = output.message;
+    label.textContent = label.title = displayMessage(output);
   }
 
   function begin(kind, format, message) {
@@ -74,6 +155,7 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, des
       if (active.get(oldJob.kind) !== oldJob) latest.delete(oldKey);
     }
     draw(kind);
+    drawActive();
     return job;
   }
 
@@ -82,6 +164,8 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, des
     job.message = message;
     job.phase = phase;
     if (visible(job)) draw(job.kind);
+    if (phase === 'running') paintActiveRow(job);
+    else drawActive();
   }
 
   function drawRecent() {
@@ -125,10 +209,11 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, des
   function finish(job) {
     if (active.get(job.kind) === job) active.delete(job.kind);
     draw(job.kind);
+    drawActive();
   }
 
   return {
-    available, visible, begin, update, complete, finish, markSaved, restoreRecent,
+    available, visible, begin, attach, update, complete, finish, markSaved, restoreRecent,
     recent: () => recent,
     draw: kind => kind ? draw(kind) : Object.keys(channels).forEach(draw)
   };

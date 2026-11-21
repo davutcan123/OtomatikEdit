@@ -443,22 +443,24 @@ async def create_media_process(*args, **kwargs):
     return process
 
 
-async def stop_media_processes():
-    processes = [process for process in _active_media_processes if process.returncode is None]
-    for process in processes:
+async def terminate_media_process(process):
+    if process.returncode is None:
         try:
             process.terminate()
         except ProcessLookupError:
             pass
-    for process in processes:
+    try:
+        await asyncio.wait_for(process.wait(), timeout=2)
+    except asyncio.TimeoutError:
         try:
-            await asyncio.wait_for(process.wait(), timeout=2)
-        except asyncio.TimeoutError:
-            try:
-                process.kill()
-            except ProcessLookupError:
-                pass
-            await process.wait()
+            process.kill()
+        except ProcessLookupError:
+            pass
+        await process.wait()
+
+
+async def stop_media_processes():
+    await asyncio.gather(*(terminate_media_process(process) for process in tuple(_active_media_processes)))
 
 
 @asynccontextmanager
@@ -622,7 +624,7 @@ class JobEvents:
         else:
             self._events.append(message)
             self._next += 1
-            self._terminal = message.get("type") in {"result", "error"}
+            self._terminal = message.get("type") in {"result", "error", "cancelled"}
         signal = self._changed
         self._changed = asyncio.Event()
         signal.set()
@@ -1871,13 +1873,60 @@ def manual_color_adjustment_filter(clip):
     return ",".join(filters)
 
 
+class RenderCancelled(Exception):
+    pass
+
+
+def check_render_cancelled(job):
+    if job.get("cancel_requested"):
+        raise RenderCancelled
+
+
+def stop_render_child(job):
+    process = job.get("process")
+    if process is not None and "stop_task" not in job:
+        job["stop_task"] = asyncio.create_task(terminate_media_process(process))
+
+
+async def run_render_process(job, command, read_stderr):
+    check_render_cancelled(job)
+    process = await create_media_process(
+        *command, stderr=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
+    )
+    job["process"] = process
+    # A request may have arrived while the OS was starting this child.
+    if job.get("cancel_requested"):
+        stop_render_child(job)
+    try:
+        diagnostic = await read_stderr(process)
+        await process.wait()
+        check_render_cancelled(job)
+        return process.returncode, diagnostic
+    finally:
+        job.pop("process", None)
+        stop_task = job.pop("stop_task", None)
+        if stop_task is not None:
+            await stop_task
+        elif process.returncode is None:
+            # Drain pipes and reap the child even if the diagnostic reader fails.
+            await asyncio.gather(terminate_media_process(process), process.communicate())
+
+
 async def run_render_job(job_id: str):
     job = jobs[job_id]
     q = job["q"]
     render_started = time.monotonic()
-    brush_assets = []
-    script_directory = None
+    staging = None
+    cancelled = False
+
+    async def prepare(work, *args, **kwargs):
+        check_render_cancelled(job)
+        result = await asyncio.to_thread(work, *args, **kwargs)
+        check_render_cancelled(job)
+        return result
+
     try:
+        check_render_cancelled(job)
         resolution_text = f", Boyut: {job['width']}x{job['height']}" if job.get("width") else ""
         target_fps = job.get("fps", 30)
         quality = job.get("quality", "standard")
@@ -1888,8 +1937,11 @@ async def run_render_job(job_id: str):
         if not segments and not snapshot and not job.get("timeline_duration"):
             raise Exception("Geçerli video bölümü bulunamadı!")
             
-        out_path = os.path.join(OUTPUT_DIR, f"out_{job_id}.{job['format']}")
-        render_path = out_path if job["format"] not in {"gif", "mp3"} else os.path.join(OUTPUT_DIR, f"intermediate_{job_id}.mp4")
+        staging = tempfile.TemporaryDirectory(prefix=".render-", dir=OUTPUT_DIR, ignore_cleanup_errors=True)
+        scratch = staging.name
+        delivery_path = os.path.join(OUTPUT_DIR, f"out_{job_id}.{job['format']}")
+        out_path = os.path.join(scratch, f"output.{job['format']}")
+        render_path = out_path if job["format"] not in {"gif", "mp3"} else os.path.join(scratch, "intermediate.mp4")
         transitions = job.get("transitions", [])
         transition_map = {item["boundary"]: item for item in transitions}
         render_timing = plan_render_timing(
@@ -1906,7 +1958,7 @@ async def run_render_job(job_id: str):
         sticker_items = job.get("stickers", [])
         image_items = []
         for item in job.get("images", []):
-            gif = await asyncio.to_thread(is_gif_image, item["path"])
+            gif = await prepare(is_gif_image, item["path"])
             visibility = "_snapshot_frame_visible" if gif else "_snapshot_visible"
             if item.get(visibility, True):
                 image_items.append({**item, "_gif": gif})
@@ -1927,29 +1979,29 @@ async def run_render_job(job_id: str):
         text_overlay_sizes = []
         text_overlay_positions = []
         for index, text_item in enumerate(text_items):
-            overlay_path = os.path.join(OUTPUT_DIR, f"text_{job_id}_{index}.png")
+            overlay_path = os.path.join(scratch, f"text_{job_id}_{index}.png")
             overlay_item = text_item
             if text_item.get("transformKeyframes"):
                 overlay_item = {**text_item, "x": 50, "y": 50, "_compact": True}
-            overlay_size = await asyncio.to_thread(
+            overlay_size = await prepare(
                 create_text_overlay, overlay_path, overlay_item, render_width, render_height
             )
             text_overlay_paths.append(overlay_path)
             text_overlay_sizes.append(overlay_size)
             position = (0, 0)
             if not text_item.get("transformKeyframes"):
-                x, y, _, _ = await asyncio.to_thread(compact_overlay, overlay_path)
+                x, y, _, _ = await prepare(compact_overlay, overlay_path)
                 position = (x, y)
             text_overlay_positions.append(position)
         sticker_overlay_paths = []
         sticker_overlay_positions = []
         for index, sticker_item in enumerate(sticker_items):
-            overlay_path = os.path.join(OUTPUT_DIR, f"sticker_{job_id}_{index}.png")
-            await asyncio.to_thread(
+            overlay_path = os.path.join(scratch, f"sticker_{job_id}_{index}.png")
+            await prepare(
                 create_sticker_overlay, overlay_path, sticker_item, render_width, render_height
             )
             sticker_overlay_paths.append(overlay_path)
-            x, y, _, _ = await asyncio.to_thread(compact_overlay, overlay_path)
+            x, y, _, _ = await prepare(compact_overlay, overlay_path)
             sticker_overlay_positions.append((x, y))
         
         # Prepare static selections once, without modifying imported assets.
@@ -1957,9 +2009,8 @@ async def run_render_job(job_id: str):
         animated_brush_images = []
         for index, item in enumerate(image_items):
             if item.get("backgroundMode") == "brush" and item.get("brushStrokes"):
-                masked_path = os.path.join(OUTPUT_DIR, f"brush_image_{job_id}_{index}.png")
-                brush_assets.append(masked_path)
-                prepared = await asyncio.to_thread(create_brushed_image, item["path"], masked_path, item)
+                masked_path = os.path.join(scratch, f"brush_image_{job_id}_{index}.png")
+                prepared = await prepare(create_brushed_image, item["path"], masked_path, item)
                 if prepared:
                     item["path"] = masked_path
                     gif_inputs.discard(index)
@@ -1974,7 +2025,7 @@ async def run_render_job(job_id: str):
                 item = image_items[index]
                 path = item["path"]
                 if path not in stream_durations:
-                    stream_durations[path] = await asyncio.to_thread(get_video_duration, path)
+                    stream_durations[path] = await prepare(get_video_duration, path)
                 item["_streamDuration"] = stream_durations[path]
 
         brush_video_paths = []
@@ -1983,19 +2034,17 @@ async def run_render_job(job_id: str):
                              + len(sticker_overlay_paths) + len(image_items) + len(audio_items))
         for index, segment in enumerate(segments):
             if segment.get("backgroundMode") == "brush" and segment.get("brushStrokes"):
-                mask_path = os.path.join(OUTPUT_DIR, f"brush_video_{job_id}_{index}.png")
-                brush_assets.append(mask_path)
-                mask_image = await asyncio.to_thread(brush_mask, segment, render_width, render_height)
-                await asyncio.to_thread(mask_image.save, mask_path, "PNG")
+                mask_path = os.path.join(scratch, f"brush_video_{job_id}_{index}.png")
+                mask_image = await prepare(brush_mask, segment, render_width, render_height)
+                await prepare(mask_image.save, mask_path, "PNG")
                 brush_video_indices[index] = brush_input_start + len(brush_video_paths)
                 brush_video_paths.append(mask_path)
         brush_image_indices = {}
         for index, item in animated_brush_images:
-            mask_path = os.path.join(OUTPUT_DIR, f"brush_animation_{job_id}_{index}.png")
-            brush_assets.append(mask_path)
-            source_size = await asyncio.to_thread(get_video_dimensions, item["path"])
-            mask_image = await asyncio.to_thread(brush_mask, item, *source_size)
-            await asyncio.to_thread(mask_image.save, mask_path, "PNG")
+            mask_path = os.path.join(scratch, f"brush_animation_{job_id}_{index}.png")
+            source_size = await prepare(get_video_dimensions, item["path"])
+            mask_image = await prepare(brush_mask, item, *source_size)
+            await prepare(mask_image.save, mask_path, "PNG")
             brush_image_indices[index] = brush_input_start + len(brush_video_paths)
             brush_video_paths.append(mask_path)
 
@@ -2542,7 +2591,7 @@ async def run_render_job(job_id: str):
             else:
                 target_width = max(2, int(render_width * image_item["scale"] / 100))
                 lines.append(f"[{input_index}:v]{background_prefix},scale={target_width}:-2,format=rgba{scaled_label}")
-                source_width, source_height = await asyncio.to_thread(get_video_dimensions, image_item["path"])
+                source_width, source_height = await prepare(get_video_dimensions, image_item["path"])
                 base_width = target_width
                 base_height = max(2, round(source_height * target_width / max(1, source_width) / 2) * 2)
                 # Image coordinates name its center, including edge positions
@@ -2615,8 +2664,7 @@ async def run_render_job(job_id: str):
             lines.append(f"[outa]atrim=start={first:.8f}:end={last:.8f},asetpts=PTS-STARTPTS{audio_output}")
             progress_duration = last - first
 
-        script_directory = tempfile.TemporaryDirectory(prefix="otomatik-render-", ignore_cleanup_errors=True)
-        script_path = os.path.join(script_directory.name, "filter.txt")
+        script_path = os.path.join(scratch, "filter.txt")
         with open(script_path, "w") as f:
             f.write(";\n".join(lines))
             
@@ -2629,8 +2677,8 @@ async def run_render_job(job_id: str):
             heavy_filter_graph=any(seg.get("opticalFlow") or seg.get("backgroundMode") == "brush"
                                    or seg.get("reverse") for seg in segments),
         )
-        resources = await asyncio.to_thread(choose_render_resources, render_width, render_height, **resource_options)
-        encoder = await asyncio.to_thread(
+        resources = await prepare(choose_render_resources, render_width, render_height, **resource_options)
+        encoder = await prepare(
             select_video_encoder, FFMPEG_BIN, fmt, quality,
             hardware="cpu" if snapshot else job.get("hardware", "auto"),
         )
@@ -2718,11 +2766,10 @@ async def run_render_job(job_id: str):
         use_hardware = encoder.hardware
         safe_retry_used = resources.low_memory
         while True:
-            proc = await create_media_process(*render_command(use_hardware, resources),
-                                             stderr=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
-            ffmpeg_stderr_tail = await collect_ffmpeg_stderr(proc, q, progress_duration)
-            await proc.wait()
-            final_returncode = proc.returncode
+            final_returncode, ffmpeg_stderr_tail = await run_render_process(
+                job, render_command(use_hardware, resources),
+                lambda process: collect_ffmpeg_stderr(process, q, progress_duration),
+            )
             if final_returncode == 0:
                 break
             signed_code = final_returncode if final_returncode < 0x80000000 else final_returncode - 0x100000000
@@ -2730,12 +2777,12 @@ async def run_render_job(job_id: str):
             if memory_error and (use_hardware or not safe_retry_used):
                 safe_retry_used = True
                 use_hardware = False
-                resources = await asyncio.to_thread(choose_render_resources, render_width, render_height,
+                resources = await prepare(choose_render_resources, render_width, render_height,
                     **resource_options, environ={**os.environ, "SMART_EDITOR_LOW_MEMORY_RENDER": "1"})
                 await q.put({"type": "log", "message": "Bellek baskısı algılandı; aynı kalite korunarak koruyucu işlemci ayarlarıyla yeniden deneniyor."})
             elif use_hardware and is_nvenc_failure(final_returncode, ffmpeg_stderr_tail):
                 use_hardware = False
-                await asyncio.to_thread(invalidate_nvenc, FFMPEG_BIN, "Kodlama sırasında ekran kartı kullanılamadı.")
+                await prepare(invalidate_nvenc, FFMPEG_BIN, "Kodlama sırasında ekran kartı kullanılamadı.")
                 await q.put({"type": "log", "message": "Ekran kartı kodlaması tamamlanamadı; aynı proje ve kaliteyle işlemci üzerinden yeniden deneniyor."})
             else:
                 break
@@ -2753,23 +2800,17 @@ async def run_render_job(job_id: str):
                     f"{128 if quality == 'draft' else 256}[p];[s1][p]paletteuse=dither=bayer"
                 )
                 convert_cmd = [FFMPEG_BIN, "-y", "-i", render_path, "-vf", gif_filter, "-loop", "0", out_path]
-            convert_proc = await create_media_process(
-                *convert_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            final_returncode, conversion_errors = await run_render_process(
+                job, convert_cmd, lambda process: collect_ffmpeg_stderr(process, q, progress_duration),
             )
-            _, convert_error = await convert_proc.communicate()
-            if convert_proc.returncode != 0:
-                conversion_detail = convert_error.decode("utf-8", errors="ignore")
-                ffmpeg_stderr_tail.extend(conversion_detail.splitlines()[-40:])
-                await q.put({"type": "log", "message": conversion_detail[-1200:]})
-                final_returncode = convert_proc.returncode
-            try:
-                os.remove(render_path)
-            except OSError:
-                pass
+            ffmpeg_stderr_tail.extend(conversion_errors)
 
+        check_render_cancelled(job)
         if final_returncode == 0:
-            if snapshot and (not os.path.isfile(out_path) or os.path.getsize(out_path) == 0):
-                raise RuntimeError("Seçilen zamanda görüntü karesi oluşturulamadı")
+            if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+                raise RuntimeError("Seçilen zamanda görüntü karesi oluşturulamadı" if snapshot else "Çıktı dosyası oluşturulamadı")
+            os.replace(out_path, delivery_path)
+            job["published"] = True
             await q.put({"type": "progress", "percent": 100})
             await q.put({"type": "log", "message": "Ekran görüntüsü PNG olarak hazır!" if snapshot else "Render başarıyla tamamlandı!"})
             if not snapshot:
@@ -2782,16 +2823,18 @@ async def run_render_job(job_id: str):
                 "message": format_ffmpeg_error(final_returncode, ffmpeg_stderr_tail),
             })
             
+    except RenderCancelled:
+        cancelled = True
     except Exception as e:
-        await q.put({"type": "error", "message": f"Hata oluştu: {str(e)}"})
+        if job.get("cancel_requested"):
+            cancelled = True
+        else:
+            await q.put({"type": "error", "message": f"Hata oluştu: {str(e)}"})
     finally:
-        if script_directory is not None:
-            script_directory.cleanup()
-        for asset in brush_assets:
-            try:
-                os.remove(asset)
-            except OSError:
-                pass
+        if staging is not None:
+            staging.cleanup()
+        if cancelled:
+            await q.put({"type": "cancelled", "message": "Dışa aktarma durduruldu."})
         await q.put(None)
 
 @app.get("/", response_class=HTMLResponse)
@@ -3551,8 +3594,10 @@ async def start_render(
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
 
+    cancel_token = secrets.token_urlsafe(32)
     jobs[job_id] = {
         "type": "render",
+        "cancel_token": cancel_token,
         "file_id": file_id,
         "filepath": filepath,
         "format": fmt,
@@ -3581,7 +3626,21 @@ async def start_render(
         jobs[job_id]["snapshot_timeline_duration"] = layer_duration
         prepare_snapshot_job(jobs[job_id], timeline_time, canvas_height or 1080)
     schedule_job(job_id, run_render_job(job_id))
-    return {"job_id": job_id}
+    return {"job_id": job_id, "cancel_token": cancel_token}
+
+
+@app.post("/cancel-render/{job_id}")
+async def cancel_render(job_id: str, x_render_cancel_token: typing.Annotated[str, Header()] = ""):
+    job = jobs.get(job_id)
+    if (not job or job.get("type") not in {"render", "snapshot"} or not job.get("cancel_token")
+            or not secrets.compare_digest(job["cancel_token"].encode(), x_render_cancel_token.encode())):
+        raise HTTPException(404, "Dışa aktarma işi bulunamadı veya süresi doldu.")
+    if job.get("published") or job["task"].done():
+        return {"status": "cancelled" if job.get("cancel_requested") else "finished"}
+    job["cancel_requested"] = True
+    stop_render_child(job)
+    return JSONResponse(status_code=202, content={"status": "cancelling"})
+
 
 @app.get("/stream-events/{job_id}")
 async def stream_events(

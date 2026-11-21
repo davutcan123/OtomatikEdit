@@ -626,7 +626,9 @@
         </div>
         <div id="manual-status-dock" class="panel">
           <div id="manual-progress-top" class="render-progress hidden" role="progressbar" aria-label="Video render ilerlemesi" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><b class="render-progress-label">Render hazırlanıyor</b><div class="render-progress-track"><div class="h-full" style="width:0"></div></div><p>0%</p></div>
+          <button id="manual-stop" type="button" class="project-action output-stop" aria-label="Video dışa aktarmayı durdur" hidden>Durdur</button>
           <span id="snapshot-status" role="status"></span>
+          <button id="snapshot-stop" type="button" class="project-action output-stop" aria-label="Ekran görüntüsü hazırlamayı durdur" hidden>Durdur</button>
           <a id="manual-download-top" class="output-save-link hidden" download>Çıktıyı İndir</a><a id="snapshot-download" class="output-save-link hidden" download>Fotoğrafı kaydet</a>
           <button id="manual-log-open" type="button" class="terminal-launch" title="Ayrıntılı işlem kayıtlarını ayrı pencerede aç"><b>⌘ Terminal</b><span id="manual-log-summary">Manuel editör hazır.</span><span aria-hidden="true">↗</span></button>
           <div id="manual-log" class="hidden" aria-hidden="true"><div class="info">&gt; Manuel editör hazır.</div></div>
@@ -658,6 +660,7 @@
             <button id="auto-render" class="rounded p-2 text-sm font-bold">Çıktı al</button>
           </div>
           <div id="auto-progress" class="render-progress hidden" role="progressbar" aria-label="Video render ilerlemesi" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><b class="render-progress-label">Render hazırlanıyor</b><div class="render-progress-track"><div class="h-full" style="width:0"></div></div><p>0%</p></div>
+          <button id="auto-stop" type="button" class="project-action output-stop" aria-label="Otomatik kesim dışa aktarmayı durdur" hidden>Durdur</button>
           <a id="auto-download" class="hidden block bg-indigo-600 rounded p-3 text-center text-sm font-bold" download>Videoyu İndir</a>
         </div>
       </aside>
@@ -722,6 +725,10 @@
       <h2 id="recent-outputs-title" class="font-bold">Son çıktılar</h2>
       <form method="dialog"><button class="project-action">Kapat</button></form>
     </div>
+    <section id="active-output-section" hidden class="mt-3" aria-labelledby="active-output-title">
+      <h3 id="active-output-title" class="text-xs font-bold">Süren dışa aktarmalar</h3>
+      <ul id="active-output-list"></ul>
+    </section>
     <p id="recent-output-empty" class="text-xs text-slate-400 mt-4">Henüz tamamlanmış bir çıktı yok.</p>
     <ul id="recent-output-list" class="mt-3"></ul>
   </dialog>
@@ -780,7 +787,7 @@
     const pendingProjectDeletes=new Set();
     let nativeOutputSaving=false;
     const outputJobs=createEditorOutputJobs({
-      el,document,desktop:!!desktopBridge,save:output=>saveCompletedOutput(output),
+      el,document,desktop:!!desktopBridge,save:output=>saveCompletedOutput(output),stop:stopOutputRender,
       currentScope:kind=>({
         kind,generation:workspaceGeneration,timelineId:kind==='auto'?null:S.activeTimelineId,
         projectName:el('project-name').value.trim()||'Adsız proje',
@@ -1356,7 +1363,7 @@
             refreshDeadline();
             if(eventId)lastEventId=eventId;
             handle(message);
-            if(message.type==='result')finish(null,message);
+            if(message.type==='result'||message.type==='cancelled')finish(null,message);
             else if(message.type==='error')finish(new Error(message.message||'İşlem tamamlanamadı.'));
           }catch(error){finish(error)}
         };
@@ -1393,17 +1400,30 @@
         return {saved:false};
       }finally{nativeOutputSaving=false}
     }
+    async function stopOutputRender({id,token}){
+      const response=await fetch('/cancel-render/'+encodeURIComponent(id),{
+        method:'POST',headers:{'X-Render-Cancel-Token':token},signal:AbortSignal.timeout(8000)
+      });
+      if(!response.ok)throw new Error((await response.json().catch(()=>({}))).detail||'Durdurma isteği gönderilemedi. Tekrar deneyin.');
+    }
     async function render(job,endpoint,buildForm){
       const snapshot=job.kind==='snapshot',logId=job.kind==='auto'?'auto-log':'manual-log';
       const errorMessage=snapshot?'Fotoğraf alınamadı':'Render tamamlanamadı · Terminali açın';
       try{
         const response=await fetch(endpoint,{method:'POST',body:buildForm()});
         if(!response.ok)throw new Error((await response.json().catch(()=>({}))).detail||(snapshot?'Fotoğraf hazırlanamadı':'Render başlatılamadı'));
-        const {job_id}=await response.json();
+        const {job_id,cancel_token}=await response.json();
+        outputJobs.attach(job,job_id,cancel_token);
         const result=await events(job_id,event=>{
           if(event.type==='log'&&outputJobs.visible(job))log(logId,event.message);
           if(event.type==='progress')outputJobs.update(job,event.percent,snapshot?'Fotoğraf hazırlanıyor…':event.message||'Video işleniyor');
         });
+        if(result.type==='cancelled'){
+          const message=result.message||'Dışa aktarma durduruldu.';
+          outputJobs.update(job,job.percent,message,'cancelled');
+          if(outputJobs.visible(job))log(logId,message,'info');
+          return;
+        }
         outputJobs.complete(job,result.download_url,snapshot?'Fotoğraf hazır':'Çıktı hazır');
         try{await persistProjectRecovery()}catch(error){
           if(outputJobs.visible(job))log(logId,'Son çıktılar kurtarma kaydına yazılamadı.','error');

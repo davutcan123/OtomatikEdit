@@ -7,7 +7,7 @@ const html = fs.readFileSync(path.join(__dirname,'../templates/index.html'),'utf
 const manager = fs.readFileSync(path.join(__dirname,'../static/editor_outputs.js'),'utf8');
 const transport = html.slice(html.indexOf('    async function render('),html.indexOf('    // MANUAL EDITOR'));
 
-function fixture({failure=null,percent=38,saved=false}={}) {
+function fixture({failure=null,percent=38,saved=false,stop,cancelled=false}={}) {
   const nodes = new Map(), messages = [];
   function makeNode() {
     const attributes = {}, bar = {style:{}}, label = {}, percentage = {};
@@ -17,7 +17,8 @@ function fixture({failure=null,percent=38,saved=false}={}) {
       classList:{toggle:(key,on)=>on?classes.add(key):classes.delete(key), contains:key=>classes.has(key)},
       setAttribute:(key,value)=>attributes[key]=value, removeAttribute(key){delete this[key]},
       querySelector:key=>key==='.h-full'?bar:key==='p'?percentage:label,
-      replaceChildren(){this.children=[]},append(...children){this.children.push(...children)}
+      replaceChildren(){this.children=[]},append(...children){this.children.push(...children);for(const child of children)child.parent=this},
+      remove(){this.parent.children=this.parent.children.filter(child=>child!==this)}
     };
   }
   const el = id => {
@@ -25,20 +26,20 @@ function fixture({failure=null,percent=38,saved=false}={}) {
     return nodes.get(id);
   };
   const context = vm.createContext({
-    el, generation:1, timelineId:'T1', projectName:'Project A',
+    el, stop, generation:1, timelineId:'T1', projectName:'Project A',
     document:{createElement:makeNode},persistProjectRecovery:async()=>{},
     fetch:async()=>failure==='start'?{ok:false,json:async()=>({detail:'Disk dolu'})}:{ok:true,json:async()=>({job_id:'render'})},
     events:async(id,handle)=>{
       handle({type:'progress',percent,message:'Video işleniyor'});
       if(failure==='stream')throw new Error('Bağlantı kesildi');
-      return {download_url:'/download/movie/mp4'};
+      return cancelled ? {type:'cancelled',message:'Dışa aktarma durduruldu.'} : {download_url:'/download/movie/mp4'};
     },
     log:(...args)=>messages.push(args),saveCompletedOutput:async()=>({saved})
   });
   vm.runInContext(manager+transport+`
     outputJobs=createEditorOutputJobs({
       el,document,currentScope:kind=>({kind,generation,timelineId,projectName,timelineName:'Timeline A'}),
-      canStart:()=>true,save:saveCompletedOutput,desktop:true
+      canStart:()=>true,save:saveCompletedOutput,stop,desktop:true
     });
   `,context);
   return {context,el,messages,begin:()=>context.outputJobs.begin('manual','mp4','Hazırlanıyor')};
@@ -96,4 +97,55 @@ test('redraw cannot start a duplicate job and late completions stay in recent ou
   assert.equal(el('manual-render-top').disabled,false);
   assert.equal(context.outputJobs.recent()[0].projectName,'Project A');
   assert.equal(context.outputJobs.recent()[0].timelineName,'Timeline A');
+});
+
+
+test('a stop clicked before launch acknowledgement is sent with the originating job capability', async ()=>{
+  const calls=[];
+  const {context,el,begin}=fixture({stop:async credentials=>calls.push(credentials)});
+  const job=begin();
+  assert.equal(el('manual-stop').hidden,false);
+  el('manual-stop').onclick();
+  assert.equal(el('manual-stop').disabled,true);
+  assert.equal(calls.length,0);
+  context.timelineId='T2';
+  context.outputJobs.draw();
+  assert.equal(el('manual-stop').hidden,true);
+  assert.equal(el('active-output-list').children[0].children[1].textContent,'Project A · Timeline A · Durduruluyor…');
+  context.outputJobs.attach(job,'own-job','specific-secret');
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].id,'own-job');assert.equal(calls[0].token,'specific-secret');
+  context.outputJobs.update(job,10,'Dışa aktarma durduruldu.','cancelled');
+  context.outputJobs.finish(job);
+  assert.equal(el('active-output-section').hidden,true);
+  assert.equal(context.outputJobs.recent().length,0);
+});
+
+test('failure to send stop allows retry, and a completed output wins a late stop', async ()=>{
+  let attempts=0;
+  const {context,el,begin}=fixture({stop:async()=>{if(++attempts===1)throw new Error('Bağlantı yok')}});
+  const job=begin();
+  context.outputJobs.attach(job,'own-job','specific-secret');
+  el('manual-stop').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(el('manual-stop').disabled,false);
+  assert.equal(el('manual-progress-top').label.textContent,'Bağlantı yok');
+  el('manual-stop').onclick();
+  context.outputJobs.complete(job,'/download/movie/mp4','Çıktı hazır');
+  context.outputJobs.finish(job);
+  assert.equal(attempts,2);
+  assert.equal(el('manual-stop').hidden,true);
+  assert.equal(el('manual-download-top').href,'/download/movie/mp4');
+  assert.equal(context.outputJobs.recent().length,1);
+});
+
+test('cancelled SSE leaves a distinct stopped state and no download or recent output',async()=>{
+  const {context,el,begin,messages}=fixture({cancelled:true});
+  await context.render(begin(),'/start-render',()=>({}));
+  assert.equal(el('manual-progress-top').dataset.state,'cancelled');
+  assert.equal(el('manual-progress-top').label.textContent,'Dışa aktarma durduruldu.');
+  assert.equal(messages.at(-1)[2],'info');
+  assert.equal(el('manual-render-top').disabled,false);
+  assert.equal(el('manual-download-top').href,undefined);
+  assert.equal(context.outputJobs.recent().length,0);
 });
