@@ -76,7 +76,11 @@ class MultiTrackCropTests(unittest.TestCase):
         return (Image.open(output).convert("RGB") if at is not None else output), self.backend.jobs[job_id]
 
     def frame(self, output, at):
-        result = subprocess.run([self.backend.FFMPEG_BIN, "-v", "error", "-ss", str(at), "-i", str(output),
+        # The preview displays the most recent 30 fps frame at or before
+        # the playhead. Timestamp seeking can select the following frame.
+        index = int(at * 30 + 1e-7)
+        result = subprocess.run([self.backend.FFMPEG_BIN, "-v", "error", "-i", str(output),
+                                 "-vf", f"select='eq(n,{index})'", "-fps_mode", "passthrough",
                                  "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
                                 check=True, capture_output=True, timeout=20)
         return Image.open(io.BytesIO(result.stdout)).convert("RGB")
