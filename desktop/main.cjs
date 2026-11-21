@@ -34,7 +34,7 @@ const note = value => { log.write(`[${new Date().toISOString()}] ${value}\n`); l
 const token = crypto.randomBytes(32).toString('hex');
 let backend, mainWindow, origin = '', exiting = false, allowClose = false, closePending = false;
 let backendFailed = false, recoveryQueue = Promise.resolve();
-let closeAttempt = 0;
+let closeAttempt = 0, closePreparing = 0, closeInterruptRender = false;
 let nativeSaveQueue = Promise.resolve(), activeNativeSaves = 0, lastSaveDirectory = '';
 let updates, updateHandoff, updateTimer, backendStopping = false;
 let activeDesktopTasks = 0, activeDownloads = 0;
@@ -44,12 +44,23 @@ function trusted(event) {
 }
 function requireTrusted(event) { if (!trusted(event)) throw new Error('Yetkisiz uygulama isteği.'); }
 logWindow = new LogWindow({ BrowserWindow, ipcMain, clipboard, parent: () => mainWindow, trustedEditor: trusted });
+function desktopWorkActive() {
+  return activeNativeSaves > 0 || activeDesktopTasks > 0 || activeDownloads > 0;
+}
 function cancelPendingClose() {
   if (!closePending) return;
   const attempt = closeAttempt;
   closePending = false;
   closeAttempt++;
+  if (closePreparing === attempt && !backendFailed) {
+    backendRequest(`/api/desktop/cancel-close?attempt=${attempt}`, { method: 'POST' })
+      .catch(error => note(`Close cancellation: ${error.message}`));
+  }
   mainWindow.webContents.send('desktop:close-cancelled', attempt);
+}
+async function deferClose(detail, type = 'info') {
+  cancelPendingClose();
+  await dialog.showMessageBox(mainWindow, { type, message: 'Kapatma durduruldu.', detail });
 }
 async function saveRecovery(snapshot) {
   validateRecovery(snapshot);
@@ -119,13 +130,39 @@ ipcMain.handle('desktop:save-output', (event, relativeURL) => {
   nativeSaveQueue = save;
   return save.finally(() => { activeNativeSaves--; });
 });
-ipcMain.on('desktop:ready-to-close', (event, attempt) => {
-  if (!trusted(event) || !closePending || attempt !== closeAttempt) return;
-  recoveryQueue.then(() => {
+ipcMain.on('desktop:ready-to-close', async (event, attempt, error) => {
+  if (!trusted(event) || !closePending || attempt !== closeAttempt || closePreparing === attempt) return;
+  if (typeof error === 'string' && error) {
+    await deferClose(error.slice(0, 500));
+    return;
+  }
+  closePreparing = attempt;
+  try {
+    await recoveryQueue;
     if (!closePending || attempt !== closeAttempt) return;
-    if (activeNativeSaves > 0) { cancelPendingClose(); return; }
-    allowClose = true; mainWindow?.close();
-  }).catch(error => note(error.message));
+    if (desktopWorkActive()) {
+      await deferClose('Dosya işlemi tamamlandıktan sonra kapatmayı tekrar deneyin.');
+      return;
+    }
+    if (!backendFailed) {
+      const result = await backendRequest(
+        `/api/desktop/prepare-close?attempt=${attempt}&interrupt_render=${closeInterruptRender}`,
+        { method: 'POST' },
+      );
+      if (result.close_ready !== true) throw new Error('Motorun kapanışa hazır olduğu doğrulanamadı.');
+    }
+    if (!closePending || attempt !== closeAttempt) return;
+    if (desktopWorkActive()) {
+      await deferClose('Dosya işlemi tamamlandıktan sonra kapatmayı tekrar deneyin.');
+      return;
+    }
+    allowClose = true;
+    mainWindow?.close();
+  } catch (failure) {
+    if (!closePending || attempt !== closeAttempt) return;
+    note(`Close preparation: ${failure.message}`);
+    await deferClose('Kayıt veya düzenleme motoru doğrulanamadı. Devam eden işlemler bitince kapatmayı tekrar deneyin.', 'warning');
+  }
 });
 
 async function freePort() {
@@ -224,32 +261,42 @@ async function requestClose(event) {
   if (!isLocalURL(mainWindow.webContents.getURL(), origin)) { allowClose = true; return; }
   event.preventDefault();
   if (closePending) return;
-  if (activeNativeSaves > 0) {
-    await dialog.showMessageBox(mainWindow, { type: 'info', message: 'Dosyanız kaydediliyor.', detail: 'Kayıt işlemi tamamlandıktan sonra uygulamayı kapatabilirsiniz.' });
+  if (desktopWorkActive()) {
+    await deferClose('Dosya kaydı, indirme veya içe aktarma tamamlandıktan sonra kapatabilirsiniz.');
     return;
   }
   closePending = true;
+  closeInterruptRender = false;
   const attempt = ++closeAttempt;
   let health;
-  try { health = await backendRequest('/api/health'); } catch { /* Save recovery even after backend failure. */ }
-  if (!closePending || attempt !== closeAttempt) return;
-  if (health?.active_jobs > 0) {
-    const { response } = await dialog.showMessageBox(mainWindow, { type: 'warning', buttons: ['Düzenlemeye dön', 'İşlemi durdur ve kapat'], defaultId: 0, cancelId: 0, message: 'Render veya analiz hâlâ devam ediyor.', detail: 'Kapatırsanız işlem durur; projeniz kurtarma kaydında korunur.' });
-    if (!closePending || attempt !== closeAttempt) return;
-    if (response === 0) { closePending = false; return; }
+  try { health = await backendRequest('/api/health'); }
+  catch (error) {
+    if (!backendFailed && closePending && attempt === closeAttempt) {
+      note(`Close health: ${error.message}`);
+      await deferClose('Düzenleme motorunun durumu doğrulanamadı. Kapatmayı tekrar deneyin.', 'warning');
+      return;
+    }
   }
-  mainWindow.webContents.send('desktop:before-close', attempt);
+  if (!closePending || attempt !== closeAttempt) return;
+  if (health?.active_requests > 0 || health?.active_non_render_jobs > 0) {
+    await deferClose('Yükleme, kayıt veya analiz tamamlandıktan sonra kapatmayı tekrar deneyin.');
+    return;
+  }
+  if (health?.active_jobs > 0) {
+    const { response } = await dialog.showMessageBox(mainWindow, { type: 'warning', buttons: ['Düzenlemeye dön', 'Renderı durdur ve kapat'], defaultId: 0, cancelId: 0, message: 'Render hâlâ devam ediyor.', detail: 'Kapatırsanız render durur. Projenizin kurtarma kaydı yazıldıktan sonra uygulama kapanır.' });
+    if (!closePending || attempt !== closeAttempt) return;
+    if (response === 0) { cancelPendingClose(); return; }
+    closeInterruptRender = true;
+  }
+  mainWindow.webContents.send('desktop:before-close', attempt, closeInterruptRender);
   setTimeout(async () => {
     if (allowClose || exiting || !closePending || attempt !== closeAttempt || mainWindow.isDestroyed()) return;
-    const { response } = await dialog.showMessageBox(mainWindow, { type: 'warning', buttons: ['Bekle / düzenlemeye dön', 'Yine de kapat'], defaultId: 0, cancelId: 0, message: 'Son proje kaydı henüz doğrulanamadı.', detail: 'Yine de kapatırsanız son değişiklikler kaybolabilir.' });
-    if (allowClose || exiting || !closePending || mainWindow.isDestroyed() || attempt !== closeAttempt) return;
-    if (activeNativeSaves > 0) { cancelPendingClose(); return; }
-    if (response === 1) { allowClose = true; mainWindow.close(); }
-    else { closePending = false; mainWindow.webContents.send('desktop:close-cancelled', attempt); }
+    await deferClose('Kurtarma kaydı zamanında doğrulanamadı. Kayıt tamamlandıktan sonra tekrar deneyin.', 'warning');
   }, 10000).unref();
 }
 async function importLegacy() {
-  if (updateHandoff?.active) return;
+  if (allowClose || exiting || updateHandoff?.active) return;
+  cancelPendingClose();
   activeDesktopTasks++;
   try {
   const result = await dialog.showOpenDialog(mainWindow, { title: 'Eski Otomatik Edit klasörünü seçin (uploads ve projects içeren klasör)', properties: ['openDirectory'] });
@@ -379,7 +426,8 @@ async function launch() {
   });
   session.defaultSession.on('will-download', (event, item) => {
     if (!isLocalURL(item.getURL(), origin)) { event.preventDefault(); return; }
-    if (updateHandoff?.committed) { event.preventDefault(); return; }
+    if (allowClose || exiting || updateHandoff?.committed) { event.preventDefault(); return; }
+    cancelPendingClose();
     updateHandoff?.interrupt();
     activeDownloads++;
     item.setSaveDialogOptions({ title: 'Dışa aktarılan dosyayı kaydet', defaultPath: path.join(app.getPath('downloads'), path.basename(item.getFilename())) });

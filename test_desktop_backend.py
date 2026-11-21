@@ -42,7 +42,7 @@ class DesktopBackendTests(unittest.TestCase):
             response = client.get("/api/health", headers={"X-Desktop-Token": "test-desktop-token"})
             self.assertEqual(response.status_code, 200)
             self.assertEqual(set(response.json()), {"status", "version", "desktop", "active_jobs",
-                                                    "active_requests", "preparing", "update_ready"})
+                                                    "active_non_render_jobs", "active_requests", "preparing", "update_ready"})
             self.assertEqual(response.json()["active_jobs"], 0)
             self.assertIs(response.json()["desktop"], True)
             self.assertEqual(Path(self.backend.DATA_DIR), Path(self.temporary.name).resolve())

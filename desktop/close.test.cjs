@@ -15,7 +15,7 @@ function section(start, end) {
 // Execute the production close/save handlers, never Electron imports, app
 // startup, real dialogs, project paths, timers, or backend subprocesses.
 const handlers = [
-  section('function cancelPendingClose()', 'async function saveRecovery('),
+  section('function desktopWorkActive()', 'async function saveRecovery('),
   section("ipcMain.handle('desktop:save-output'", 'async function freePort('),
   section('async function requestClose(event)', 'async function importLegacy('),
 ].join('\n');
@@ -33,7 +33,8 @@ function harness() {
   let closes = 0, prevented = 0, copies = 0;
   const event = {};
   const context = {
-    closePending: false, closeAttempt: 0, allowClose: false, exiting: false,
+    closePending: false, closeAttempt: 0, closePreparing: 0, closeInterruptRender: false,
+    allowClose: false, exiting: false, backendFailed: false, activeDesktopTasks: 0, activeDownloads: 0,
     updateHandoff: null,
     activeNativeSaves: 0, nativeSaveQueue: Promise.resolve(), recoveryQueue: Promise.resolve(),
     lastSaveDirectory: '', origin: 'http://127.0.0.1:4567', dataDir: '/test-library', smoke: false,
@@ -45,7 +46,7 @@ function harness() {
     outputFile: () => ({ source: '/test-library/outputs/render.mp4', extension: 'mp4' }),
     requireOutput: async () => {},
     copyOutput: async () => { copies++; },
-    backendRequest: () => health.promise,
+    backendRequest: route => route === '/api/health' ? health.promise : Promise.resolve({ close_ready: true }),
     dialog: {
       showSaveDialog: () => saveDialog.promise,
       showMessageBox: async (_window, options) => { messageBoxes.push(options); return { response: 0 }; },
@@ -68,7 +69,7 @@ function harness() {
     get closes() { return closes; }, get prevented() { return prevented; }, get copies() { return copies; },
     requestClose: () => context.requestClose({ preventDefault() { prevented++; } }),
     save: () => ipc.get('desktop:save-output')(event, '/download/generated/mp4'),
-    ready: attempt => ipc.get('desktop:ready-to-close')(event, attempt),
+    ready: (attempt, error) => ipc.get('desktop:ready-to-close')(event, attempt, error),
   };
 }
 
@@ -105,7 +106,7 @@ test('native save starting during recovery await resumes editing and allows a la
   h.health.resolve({ active_jobs: 0 });
   await h.requestClose();
   const attempt = h.context.closeAttempt;
-  assert.deepEqual(h.notifications, [['desktop:before-close', attempt]]);
+  assert.deepEqual(h.notifications, [['desktop:before-close', attempt, false]]);
   const recovery = deferred();
   h.context.recoveryQueue = recovery.promise;
   h.ready(attempt);
@@ -130,24 +131,24 @@ test('native save starting during recovery await resumes editing and allows a la
   await h.requestClose();
   const nextAttempt = h.context.closeAttempt;
   assert.ok(nextAttempt > attempt);
-  assert.deepEqual(h.notifications.at(-1), ['desktop:before-close', nextAttempt]);
+  assert.deepEqual(h.notifications.at(-1), ['desktop:before-close', nextAttempt, false]);
   h.ready(nextAttempt);
   await settle();
   assert.equal(h.context.allowClose, true);
   assert.equal(h.closes, 1);
 });
 
-test('native save cancels forced close even while its confirmation dialog is awaiting a choice', async () => {
+test('recovery timeout cancels close and permits a native save while the warning is open', async () => {
   const h = harness();
   h.health.resolve({ active_jobs: 0 });
   await h.requestClose();
   const attempt = h.context.closeAttempt;
   const confirmation = deferred();
   h.context.dialog.showMessageBox = () => confirmation.promise;
-  const forcedClose = h.timers[0]();
+  const warning = h.timers[0]();
   const save = h.save();
   confirmation.resolve({ response: 1 });
-  await forcedClose;
+  await warning;
   assert.equal(h.closes, 0);
   assert.equal(h.context.allowClose, false);
   assert.deepEqual(h.notifications.at(-1), ['desktop:close-cancelled', attempt]);
@@ -178,4 +179,60 @@ test('committed close or shutdown rejects new native saves without opening a dia
     assert.equal(h.context.closeAttempt, 0);
     assert.equal(h.notifications.length, 0);
   }
+});
+
+
+test('active uploads, analysis, imports and downloads prevent close', async () => {
+  for (const blocked of [{ active_requests: 1 }, { active_jobs: 1, active_non_render_jobs: 1 }]) {
+    const h = harness();
+    h.health.resolve(blocked);
+    await h.requestClose();
+    assert.equal(h.messageBoxes.length, 1);
+    assert.equal(h.notifications.some(([name]) => name === 'desktop:before-close'), false);
+  }
+  for (const active of ['activeDesktopTasks', 'activeDownloads']) {
+    const h = harness();
+    h.context[active] = 1;
+    await h.requestClose();
+    assert.equal(h.messageBoxes.length, 1);
+    assert.equal(h.notifications.length, 0);
+  }
+});
+
+test('confirmed render interruption still requires recovery and an atomic backend gate', async () => {
+  const h = harness();
+  const prepare = deferred();
+  const requested = [];
+  h.context.backendRequest = route => {
+    requested.push(route);
+    if (route === '/api/health') return Promise.resolve({ active_jobs: 1, active_non_render_jobs: 0 });
+    if (route.includes('prepare-close')) return prepare.promise;
+    return Promise.resolve({ closing: false });
+  };
+  h.context.dialog.showMessageBox = async () => ({ response: 1 });
+  await h.requestClose();
+  assert.deepEqual(h.notifications.at(-1), ['desktop:before-close', 1, true]);
+  const openGate = h.ready(1);
+  await settle();
+  assert.match(requested.at(-1), /prepare-close\?attempt=1&interrupt_render=true/);
+  assert.equal(h.closes, 0);
+  prepare.resolve({ close_ready: true });
+  await openGate;
+  assert.equal(h.closes, 1);
+});
+
+test('close is cancelled when the backend becomes busy after the renderer snapshot', async () => {
+  const h = harness();
+  const requested = [];
+  h.context.backendRequest = async route => {
+    requested.push(route);
+    if (route.includes('prepare-close')) throw new Error('HTTP 409');
+    return {};
+  };
+  await h.requestClose();
+  await h.ready(1);
+  assert.equal(h.closes, 0);
+  assert.equal(h.context.closePending, false);
+  assert.match(requested.at(-1), /cancel-close\?attempt=1/);
+  assert.deepEqual(h.notifications.at(-1), ['desktop:close-cancelled', 1]);
 });

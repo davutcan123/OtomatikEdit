@@ -30,7 +30,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
   openProjectsFolder: () => ipcRenderer.invoke('desktop:open-projects-folder'),
   saveOutput: relativeURL => ipcRenderer.invoke('desktop:save-output', relativeURL),
   onBeforeClose: callback => {
-    const listener = (_event, attempt) => callback(attempt);
+    const listener = (_event, attempt, interruptRender) => callback(attempt, interruptRender);
     ipcRenderer.on('desktop:before-close', listener);
     return () => ipcRenderer.removeListener('desktop:before-close', listener);
   },
@@ -39,5 +39,5 @@ contextBridge.exposeInMainWorld('desktopApp', {
     ipcRenderer.on('desktop:close-cancelled', listener);
     return () => ipcRenderer.removeListener('desktop:close-cancelled', listener);
   },
-  readyToClose: attempt => ipcRenderer.send('desktop:ready-to-close', attempt),
+  readyToClose: (attempt, error) => ipcRenderer.send('desktop:ready-to-close', attempt, error),
 });

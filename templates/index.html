@@ -1788,20 +1788,32 @@
       }finally{projectWorkspaceReady=true}
     }
     const projectWorkspaceInitialization=initializeProjectWorkspace();
-    if(desktopBridge)desktopBridge.onBeforeClose(async attemptId=>{
+    if(desktopBridge)desktopBridge.onBeforeClose(async (attemptId,interruptRender)=>{
       if(desktopClosing&&desktopCloseAttempt===attemptId)return;
-      desktopCloseAttempt=attemptId;desktopClosing=true;clearTimeout(S.autosaveTimer);
+      const pending=[...new Set(desktopOperations.values())].filter(label=>!(interruptRender&&label==='Render'));
+      let busy=desktopUpdateFrozen?'Güncelleme hazırlığı sürüyor.':pending.length?'Devam eden işlem: '+pending.join(', ')+'. İşlem tamamlandıktan sonra kapatmayı deneyin.':'';
+      if(!busy&&S.autoPendingSelection)busy='Otomatik Kırpıcı’daki dosyayı analiz edin veya seçimi temizleyin.';
+      if(!busy&&(desktopPointerActive||document.querySelector('dialog[open]:not(#desktop-update-dialog)')||!el('export-modal').classList.contains('hidden')))busy='Açık düzenleme işlemini tamamladıktan sonra tekrar deneyin.';
+      if(busy){desktopBridge.readyToClose(attemptId,busy);return}
+      desktopCloseAttempt=attemptId;desktopClosing=true;
       try{
+        setDesktopEditorInert(true,false);
         await projectWorkspaceInitialization;
         if(!desktopClosing||desktopCloseAttempt!==attemptId)return;
         await persistProjectRecovery();
         if(desktopClosing&&desktopCloseAttempt===attemptId)desktopBridge.readyToClose(attemptId);
-      }catch(error){if(desktopCloseAttempt!==attemptId)return;desktopClosing=false;el('project-save-state').textContent='Kapatmadan önce kurtarma kaydı yazılamadı';log('manual-log','Son değişiklikler kurtarılamadı. Projeyi kaydetmeyi deneyin.','error')}
+      }catch(error){
+        if(desktopCloseAttempt!==attemptId)return;
+        resumeAfterCloseCancelled(attemptId);
+        el('project-save-state').textContent='Kapatmadan önce kurtarma kaydı yazılamadı';
+        desktopBridge.readyToClose(attemptId,'Son değişiklikler kaydedilemedi. Depolama alanını kontrol edip kapatmayı tekrar deneyin.');
+      }
     });
-    if(desktopBridge)desktopBridge.onCloseCancelled(attemptId=>{
+    function resumeAfterCloseCancelled(attemptId){
       if(desktopCloseAttempt!==attemptId)return;
-      desktopCloseAttempt=null;desktopClosing=false;scheduleAutosave();
-    });
+      desktopCloseAttempt=null;desktopClosing=false;setDesktopEditorInert(false);scheduleAutosave();
+    }
+    if(desktopBridge)desktopBridge.onCloseCancelled(resumeAfterCloseCancelled);
 
     /* ═══════════════════════════════════════════════════════
        Güncelleme Sistemi
@@ -1815,13 +1827,17 @@
       if(document.querySelector('dialog[open]:not(#desktop-update-dialog)')||!el('export-modal').classList.contains('hidden'))return 'Açık düzenleme penceresini tamamlayın veya kapatın.';
       return '';
     }
-    function freezeDesktopEditor(frozen){
-      desktopUpdateFrozen=frozen;
+    function setDesktopEditorInert(frozen,allowUpdateDialog=true){
       if(frozen){
+        if(desktopInertState.size)return;
         clearTimeout(S.autosaveTimer);document.activeElement?.blur?.();
         document.querySelectorAll('video,audio').forEach(media=>media.pause());stopProjectAudio();
-        for(const node of document.body.children){if(node.id==='desktop-update-dialog'||node.tagName==='SCRIPT')continue;desktopInertState.set(node,node.inert);node.inert=true}
+        for(const node of document.body.children){if((allowUpdateDialog&&node.id==='desktop-update-dialog')||node.tagName==='SCRIPT')continue;desktopInertState.set(node,node.inert);node.inert=true}
       }else{for(const [node,inert] of desktopInertState)node.inert=inert;desktopInertState.clear()}
+    }
+    function freezeDesktopEditor(frozen){
+      desktopUpdateFrozen=frozen;
+      setDesktopEditorInert(frozen);
     }
     function drawDesktopUpdate(state){
       const previous=desktopUpdateState;desktopUpdateState={...state};
@@ -1876,7 +1892,7 @@
       el('desktop-update-later').onclick=()=>{if(desktopUpdateFrozen)return;desktopUpdateDismissed=true;dialog.close()};
       dialog.addEventListener('cancel',event=>{if(desktopUpdateFrozen||['preparing','installing'].includes(desktopUpdateState.status)){event.preventDefault();return}desktopUpdateDismissed=true});
       let receivedState=false;desktopBridge.onUpdateState(state=>{receivedState=true;drawDesktopUpdate(state)});desktopBridge.onPrepareUpdate(prepareDesktopUpdate);desktopBridge.onUpdateCancelled(cancelDesktopUpdate);
-      const guard=event=>{if(desktopUpdateFrozen&&!dialog.contains(event.target)){event.preventDefault();event.stopImmediatePropagation()}};
+      const guard=event=>{if(desktopClosing||(desktopUpdateFrozen&&!dialog.contains(event.target))){event.preventDefault();event.stopImmediatePropagation()}};
       ['pointerdown','pointermove','click','dblclick','keydown','beforeinput','input','change','drop','dragstart','wheel'].forEach(type=>window.addEventListener(type,guard,{capture:true,passive:false}));
       window.addEventListener('pointerdown',event=>{if(!dialog.contains(event.target))desktopPointerActive=true},true);
       ['pointerup','pointercancel'].forEach(type=>window.addEventListener(type,()=>{desktopPointerActive=false},true));

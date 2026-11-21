@@ -36,6 +36,8 @@ class DesktopUpdateTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend.jobs.clear()
         self.backend.desktop_update_state.preparing = False
+        self.backend.desktop_update_state.close_attempt = 0
+        self.backend.desktop_update_state.closing = False
         self.assertEqual(self.backend.desktop_update_state.active_requests, 0)
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.backend.app), base_url="http://editor", headers=self.headers,
@@ -43,6 +45,8 @@ class DesktopUpdateTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         self.backend.desktop_update_state.preparing = False
+        self.backend.desktop_update_state.close_attempt = 0
+        self.backend.desktop_update_state.closing = False
         tasks = [job["task"] for job in self.backend.jobs.values() if job.get("task") is not None]
         for task in tasks:
             if not task.done():
@@ -53,6 +57,33 @@ class DesktopUpdateTests(unittest.IsolatedAsyncioTestCase):
 
     async def prepare(self):
         return await self.client.post("/api/desktop/prepare-update")
+
+    async def test_close_gate_accepts_only_an_explicit_render_interrupt(self):
+        blocked_render = asyncio.Event()
+        self.backend.jobs["render"] = {"type": "render", "q": asyncio.Queue()}
+        self.backend.schedule_job("render", blocked_render.wait())
+
+        result = await self.client.post("/api/desktop/prepare-close?attempt=1")
+        self.assertEqual(result.status_code, 409)
+        result = await self.client.post("/api/desktop/prepare-close?attempt=1&interrupt_render=true")
+        self.assertEqual(result.json(), {"close_ready": True})
+        self.assertEqual((await self.client.post("/upload")).json()["code"], "desktop_close_preparing")
+        self.assertEqual((await self.client.get("/download/example/png")).json()["code"], "desktop_close_preparing")
+        self.assertEqual((await self.prepare()).status_code, 409)
+        await self.client.post("/api/desktop/cancel-close?attempt=1")
+        self.assertEqual((await self.client.post("/upload")).status_code, 422)
+        self.assertEqual((await self.client.post("/api/desktop/prepare-close?attempt=1&interrupt_render=true")).status_code, 409)
+
+    async def test_close_gate_refuses_other_jobs_and_ignores_stale_cancellation(self):
+        self.backend.jobs["analysis"] = {"type": "analysis", "q": asyncio.Queue()}
+        task = self.backend.schedule_job("analysis", asyncio.Event().wait())
+        result = await self.client.post("/api/desktop/prepare-close?attempt=1&interrupt_render=true")
+        self.assertEqual(result.status_code, 409)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await self.client.post("/api/desktop/cancel-close?attempt=1")
+        self.assertEqual((await self.client.post("/api/desktop/prepare-close?attempt=2")).json(), {"close_ready": True})
+        self.assertEqual((await self.client.post("/api/desktop/cancel-close?attempt=1")).json(), {"closing": True})
 
     async def test_prepared_gate_blocks_writes_before_body_and_cancel_reopens(self):
         response = await self.prepare()
@@ -195,7 +226,7 @@ class DesktopUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 403)
         self.assertTrue(self.backend.desktop_update_state.preparing)
         self.backend.jobs["new"] = {"q": asyncio.Queue()}
-        with self.assertRaisesRegex(RuntimeError, "Güncelleme"):
+        with self.assertRaisesRegex(RuntimeError, "yeni iş başlatılamaz"):
             self.backend.schedule_job("new", asyncio.sleep(0))
         self.assertNotIn("task", self.backend.jobs["new"])
         with patch.object(self.backend, "DESKTOP_MODE", False):

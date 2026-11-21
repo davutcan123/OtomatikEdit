@@ -461,11 +461,14 @@ class DesktopUpdateState:
         self.lock = threading.Lock()
         self.preparing = False
         self.active_requests = 0
+        self.close_attempt = 0
+        self.closing = False
 
 
 desktop_update_state = DesktopUpdateState()
-_DESKTOP_UPDATE_CONTROLS = {
+_DESKTOP_LIFECYCLE_CONTROLS = {
     "/api/desktop/prepare-update", "/api/desktop/cancel-update",
+    "/api/desktop/prepare-close", "/api/desktop/cancel-close",
 }
 
 
@@ -481,17 +484,24 @@ class DesktopLifecycleMiddleware:
         ):
             return await Response(status_code=403)(scope, receive, send)
         path = scope.get("path", "")
-        # Waveforms are GETs but create files/processes, so they must drain too.
-        mutating = (
+        # Waveforms create files and downloads must finish streaming. Preview
+        # ranges and SSE can stay open without holding the lifecycle gate.
+        tracked = (
             scope["method"] not in {"GET", "HEAD", "OPTIONS"}
-            or path.startswith("/waveform/")
-        ) and path not in _DESKTOP_UPDATE_CONTROLS
-        if not mutating:
+            or path.startswith(("/waveform/", "/download/"))
+        ) and path not in _DESKTOP_LIFECYCLE_CONTROLS
+        if not tracked:
             return await self.app(scope, receive, send)
         with desktop_update_state.lock:
-            blocked = desktop_update_state.preparing
+            closing = desktop_update_state.closing
+            blocked = closing or desktop_update_state.preparing
             if not blocked:
                 desktop_update_state.active_requests += 1
+        if closing:
+            return await JSONResponse(status_code=409, content={
+                "detail": "Uygulama kapanışa hazırlanıyor.",
+                "code": "desktop_close_preparing",
+            })(scope, receive, send)
         if blocked:
             return await JSONResponse(status_code=409, content={
                 "detail": "Güncelleme hazırlanıyor. İşlem iptal edilene kadar düzenlemeler kaydedilemez veya yeni işler başlatılamaz.",
@@ -545,20 +555,24 @@ APP_VERSION = _load_version()
 jobs = {}
 
 
-def active_job_count():
-    return sum(1 for job in tuple(jobs.values()) if job.get("task") is not None and not job["task"].done())
+def active_job_count(*, include_render=True):
+    return sum(
+        job.get("task") is not None and not job["task"].done()
+        for job in tuple(jobs.values())
+        if include_render or job.get("type") != "render"
+    )
 
 
 def schedule_job(job_id, coroutine):
     # Keep the Task, rather than infer activity from unread SSE messages: a
     # completed render may still have progress/results waiting in its queue.
     with desktop_update_state.lock:
-        if DESKTOP_MODE and desktop_update_state.preparing:
+        if DESKTOP_MODE and (desktop_update_state.preparing or desktop_update_state.closing):
             # Defensive guard for non-HTTP callers too. Do not leak a coroutine
             # if a future background producer attempts to start during update.
             if hasattr(coroutine, "close"):
                 coroutine.close()
-            raise RuntimeError("Güncelleme hazırlanırken yeni iş başlatılamaz")
+            raise RuntimeError("Kapanış veya güncelleme sırasında yeni iş başlatılamaz")
         task = asyncio.create_task(coroutine)
         jobs[job_id]["task"] = task
     return task
@@ -3091,11 +3105,12 @@ async def api_version():
 async def api_health():
     with desktop_update_state.lock:
         active_jobs = active_job_count()
+        active_non_render_jobs = active_job_count(include_render=False)
         preparing = DESKTOP_MODE and desktop_update_state.preparing
         active_requests = desktop_update_state.active_requests if DESKTOP_MODE else 0
     return {"status": "ok", "version": APP_VERSION, "desktop": DESKTOP_MODE,
-            "active_jobs": active_jobs, "active_requests": active_requests,
-            "preparing": preparing, "update_ready": preparing and active_jobs == 0 and active_requests == 0}
+            "active_jobs": active_jobs, "active_non_render_jobs": active_non_render_jobs,
+            "active_requests": active_requests, "preparing": preparing, "update_ready": preparing and active_jobs == 0 and active_requests == 0}
 
 
 @app.post("/api/desktop/prepare-update")
@@ -3105,7 +3120,7 @@ async def api_prepare_desktop_update():
     with desktop_update_state.lock:
         active_jobs = active_job_count()
         active_requests = desktop_update_state.active_requests
-        if active_jobs or active_requests:
+        if active_jobs or active_requests or desktop_update_state.closing:
             return JSONResponse(status_code=409, content={
                 "detail": "Devam eden yükleme, kayıt veya işlem var. Tamamlandıktan sonra güncellemeyi yeniden deneyin.",
                 "code": "desktop_update_busy", "active_jobs": active_jobs, "active_requests": active_requests,
@@ -3122,6 +3137,33 @@ async def api_cancel_desktop_update():
     with desktop_update_state.lock:
         desktop_update_state.preparing = False
     return {"preparing": False, "update_ready": False}
+
+
+@app.post("/api/desktop/prepare-close")
+async def api_prepare_desktop_close(attempt: int, interrupt_render: bool = False):
+    if not DESKTOP_MODE:
+        raise HTTPException(404)
+    state = desktop_update_state
+    with state.lock:
+        if attempt < state.close_attempt or (attempt == state.close_attempt and not state.closing):
+            raise HTTPException(409, "Bu kapanış girişimi iptal edildi.")
+        if state.preparing or state.active_requests or active_job_count(include_render=not interrupt_render):
+            raise HTTPException(409, "Devam eden işlemler tamamlandıktan sonra kapatmayı tekrar deneyin.")
+        state.close_attempt = attempt
+        state.closing = True
+    return {"close_ready": True}
+
+
+@app.post("/api/desktop/cancel-close")
+async def api_cancel_desktop_close(attempt: int):
+    if not DESKTOP_MODE:
+        raise HTTPException(404)
+    state = desktop_update_state
+    with state.lock:
+        if attempt >= state.close_attempt:
+            state.close_attempt = attempt
+            state.closing = False
+    return {"closing": state.closing}
 
 
 @app.post("/api/desktop/import-projects")

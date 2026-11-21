@@ -8,11 +8,20 @@ const html = fs.readFileSync(path.join(__dirname, '../templates/index.html'), 'u
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const persistenceCode = script.slice(script.indexOf('    async function persistProjectRecovery'), script.indexOf('    function scheduleAutosave'));
 const startupCode = script.slice(script.indexOf('    async function initializeProjectWorkspace'), script.indexOf('    /* ═', script.indexOf('    async function initializeProjectWorkspace')));
+const inertCode = script.slice(script.indexOf('    function setDesktopEditorInert'), script.indexOf('    function freezeDesktopEditor'));
 const project = name => ({ name, timelines: [{ id: 'TL1', state: {} }] });
 
 function workspace({ desktop = null, browserSnapshot = null, browserError = null } = {}) {
   const nodes = new Map();
+  const workbench = { id: 'workbench', inert: false };
   const context = vm.createContext({
+    document: {
+      body: { children: [workbench] },
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    },
+    desktopOperations: new Map(), desktopInertState: new Map(), desktopPointerActive: false, desktopUpdateFrozen: false,
+    stopProjectAudio() {},
     desktopBridge: desktop?{ onCloseCancelled() {}, ...desktop }:null, RECOVERY_KEY: 'test', recoveryWrite: Promise.resolve(), projectWorkspaceReady: true, desktopClosing: false, desktopCloseAttempt: null,
     S: {}, snapshot: project('Current'), restored: null,
     Promise, JSON, clearTimeout,
@@ -20,13 +29,13 @@ function workspace({ desktop = null, browserSnapshot = null, browserError = null
       getItem: () => browserSnapshot,
       setItem: (_, value) => { if (browserError) throw browserError; browserSnapshot = value; },
     },
-    el: id => { if (!nodes.has(id)) nodes.set(id, {}); return nodes.get(id); },
+    el: id => { if (!nodes.has(id)) nodes.set(id, { classList: { contains: () => true } }); return nodes.get(id); },
     log() {}, refreshProjectList: async () => {}, scheduleAutosave() {},
     emptyTimelineState: () => ({}), updateCanvas() {}, applyTimelineState() {}, drawTimelineTabs() {},
   });
   vm.runInContext('function projectPayload(){return snapshot} function restoreProject(value){restored=value}', context);
-  vm.runInContext(persistenceCode, context);
-  return { context, nodes, getBrowserSnapshot: () => browserSnapshot };
+  vm.runInContext(persistenceCode + inertCode, context);
+  return { context, nodes, workbench, getBrowserSnapshot: () => browserSnapshot };
 }
 
 test('editor script parses and styles do not depend on a CDN', () => {
@@ -124,26 +133,31 @@ test('web mode still restores browser projects', async () => {
 
 test('desktop close waits for recovery on disk and never confirms a failed save', async () => {
   let beforeClose, finishSave, closed = false;
-  const { context } = workspace({ desktop: {
+  const { context, workbench } = workspace({ desktop: {
     loadRecovery: async () => JSON.stringify(project('Saved')),
     onBeforeClose: callback => { beforeClose = callback; },
     saveRecovery: () => new Promise(resolve => { finishSave = resolve; }),
-    readyToClose: attemptId => { assert.equal(attemptId, 1); closed = true; },
+    readyToClose: (attemptId, error) => {
+      if (attemptId === 1) { assert.equal(error, undefined); closed = true; }
+      else { assert.equal(attemptId, 2); assert.match(error, /kaydedilemedi/); }
+    },
   } });
   vm.runInContext(startupCode, context);
   await vm.runInContext('projectWorkspaceInitialization', context);
   const closing = beforeClose(1);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(closed, false);
+  assert.equal(workbench.inert, true);
   finishSave();
   await closing;
   assert.equal(closed, true);
   closed = false;
-  context.desktopClosing = false;
+  context.resumeAfterCloseCancelled(1);
   context.desktopBridge.saveRecovery = async () => { throw new Error('disk full'); };
   await beforeClose(2);
   assert.equal(closed, false);
   assert.equal(context.desktopClosing, false);
+  assert.equal(workbench.inert, false);
 });
 
 test('canceling a slow close resumes editing and ignores late completion from that attempt', async () => {
@@ -171,6 +185,31 @@ test('canceling a slow close resumes editing and ignores late completion from th
   finishSave();
   await Promise.all([oldAttempt, newAttempt]);
   assert.deepEqual(closed, [2]);
+});
+
+test('close blocks renderer work except the expressly interrupted render', async () => {
+  let beforeClose, cancelClose;
+  const responses = [];
+  const { context, workbench } = workspace({ desktop: {
+    loadRecovery: async () => JSON.stringify(project('Saved')),
+    onBeforeClose: callback => { beforeClose = callback; },
+    onCloseCancelled: callback => { cancelClose = callback; },
+    saveRecovery: async () => {},
+    readyToClose: (...args) => responses.push(args),
+  } });
+  vm.runInContext(startupCode, context);
+  await vm.runInContext('projectWorkspaceInitialization', context);
+  context.desktopOperations.set('render', 'Render');
+  context.desktopOperations.set('save', 'Çıktıyı kaydetme');
+  await beforeClose(1, true);
+  assert.match(responses.at(-1)[1], /Çıktıyı kaydetme/);
+  assert.equal(workbench.inert, false);
+  context.desktopOperations.delete('save');
+  await beforeClose(2, true);
+  assert.deepEqual(responses.at(-1), [2]);
+  assert.equal(workbench.inert, true);
+  cancelClose(2);
+  assert.equal(workbench.inert, false);
 });
 
 test('desktop does not check or invoke the source updater', async () => {
