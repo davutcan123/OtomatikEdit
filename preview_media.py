@@ -14,6 +14,7 @@ import weakref
 
 CACHE_VERSION = 1
 LIGHT_LONG_EDGE = 960
+IDLE_GRACE_SECONDS = 1
 
 
 class PreviewError(Exception):
@@ -64,6 +65,14 @@ def profile_media(path, data):
     return MediaProfile(video["index"], audio.get("index"), video["width"], video["height"], bool(native))
 
 
+
+@dataclass
+class PreviewFlight:
+    task: asyncio.Task
+    waiters: int = 0
+    idle: asyncio.TimerHandle | None = None
+
+
 class PreviewCache:
     def __init__(self, directory, ffmpeg, ffprobe, spawn, begin_work):
         self.directory = Path(directory)
@@ -96,8 +105,8 @@ class PreviewCache:
     async def _shared(self, key, make_result):
         loop = asyncio.get_running_loop()
         key = (loop, *key)
-        task = self.in_flight.get(key)
-        if task is None:
+        flight = self.in_flight.get(key)
+        if flight is None:
             release = self.begin_work()
 
             async def worker():
@@ -114,18 +123,35 @@ class PreviewCache:
             except BaseException:
                 release()
                 raise
-            self.in_flight[key] = task
+            flight = self.in_flight[key] = PreviewFlight(task)
 
             def finished(completed):
-                self.in_flight.pop(key, None)
+                if self.in_flight.get(key) is flight:
+                    self.in_flight.pop(key)
+                if flight.idle:
+                    flight.idle.cancel()
                 release()
                 if not completed.cancelled():
                     completed.exception()
 
             task.add_done_callback(finished)
-        # Playback uses independent byte range requests. A replaced or closed
-        # media element must not cancel work still needed by another preview.
-        return await asyncio.shield(task)
+        if flight.idle:
+            flight.idle.cancel()
+            flight.idle = None
+        flight.waiters += 1
+        try:
+            # Replaced media elements and byte range requests may wait for the
+            # same output. Give Chromium time to send a replacement request.
+            return await asyncio.shield(flight.task)
+        finally:
+            flight.waiters -= 1
+            if not flight.waiters and not flight.task.done():
+                def abandon():
+                    if not flight.waiters and self.in_flight.get(key) is flight:
+                        self.in_flight.pop(key)
+                        flight.task.cancel()
+
+                flight.idle = loop.call_later(IDLE_GRACE_SECONDS, abandon)
 
     async def _inspect(self, path, fingerprint):
         with self.lock:
@@ -178,12 +204,12 @@ class PreviewCache:
         finally:
             temporary.unlink(missing_ok=True)
 
-    async def resolve(self, source, mode):
+    async def resolve(self, source, mode, *, force=False):
         source = Path(source)
         fingerprint = source_fingerprint(source)
         profile = await self._inspect(source, fingerprint)
         light = mode == "light" and max(profile.width, profile.height) > LIGHT_LONG_EDGE
-        if profile.native and not light and mode != "compatible":
+        if profile.native and not light and not force and mode != "compatible":
             return source, "original"
         variant = "light" if light else "compatible"
         target = self.directory / f"{fingerprint}-{variant}.mp4"

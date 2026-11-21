@@ -1,0 +1,19 @@
+.studio-preview-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .35rem .65rem;
+  color: #b8cbe0;
+  font-size: .72rem;
+  padding-block: .3rem;
+}
+.studio-preview-controls[hidden], .studio-preview-controls button[hidden] { display: none; }
+.studio-preview-controls label { display: flex; gap: .4rem; align-items: center; }
+.studio-preview-controls select, .studio-preview-controls button {
+  background: #142237;
+  color: #f4f8ff;
+  border: 1px solid #455a78;
+  padding: .2rem .45rem;
+  border-radius: 5px;
+}
+.studio-preview-controls :focus-visible { outline: 2px solid #8ad8fe; outline-offset: 2px; }

@@ -37,7 +37,7 @@
     const clip = S.clips[S.preview];
     cursor = Number.isFinite(S.timelineCursor) ? S.timelineCursor : clip ? clipTimelineStart(clip) + clamp((primary.currentTime - clip.start) / (+clip.speed || 1), 0, clipOutputDuration(clip)) : 0;
     cursor = clamp(cursor, 0, outDuration()); anchor = cursor;
-    primary.pause(); cancelAnimationFrame(S.previewFrame); S.previewFrame = 0;
+    primary.pause(); window.StudioMediaPreview?.release(primary); cancelAnimationFrame(S.previewFrame); S.previewFrame = 0;
     el('transition-video').pause(); el('transition-video').style.visibility = 'hidden'; el('transition-flash').style.opacity = '0';
     primary.style.visibility = 'hidden'; primary.controls = false;
     el('mask-image-overlay').classList.add('hidden'); el('manual-placeholder').classList.toggle('hidden', !!outDuration());
@@ -45,7 +45,7 @@
   }
   function time() { enter(); return clamp(playing ? anchor + (performance.now() - started) / 1000 : cursor, 0, outDuration()); }
   function dispose(entry) {
-    entry.video.pause(); entry.video.onloadeddata = entry.video.onseeked = entry.video.onerror = null;
+    entry.video.pause(); window.StudioMediaPreview?.release(entry.video); entry.video.onloadeddata = entry.video.onseeked = entry.video.onerror = null;
     entry.video.removeAttribute('src'); entry.video.load(); entry.wrap.remove(); entry.graph?.source.disconnect(); entry.graph?.gain.disconnect();
   }
   function reset() {
@@ -79,14 +79,17 @@
     if (playing && audioContext.state === 'suspended') audioContext.resume().catch(() => {});
   }
   function entryFor(clip) {
-    let entry = entries.get(clip.clipId); const src = clip.src || '/video/' + encodeURIComponent(clip.fileId || S.manualId);
-    if (entry && entry.src !== src) { dispose(entry); entries.delete(clip.clipId); entry = null; }
+    let entry = entries.get(clip.clipId); const original = clip.src || '/video/' + encodeURIComponent(clip.fileId || S.manualId);
+    if (entry && (entry.original !== original ||
+        entry.video.getAttribute('src') !== (window.StudioMediaPreview?.url(original) ?? original))) {
+      dispose(entry); entries.delete(clip.clipId); entry = null;
+    }
     if (entry) return entry;
     const wrap = document.createElement('div'), video = document.createElement('video'), canvas = document.createElement('canvas'), mask = document.createElement('img');
     wrap.className = 'composite-layer'; wrap.dataset.clipId = clip.clipId; canvas.className = 'composite-frame'; video.className = 'composite-source'; mask.className = 'composite-mask'; mask.hidden = true;
-    video.playsInline = true; video.preload = 'auto'; video.src = src; video.muted = true; wrap.append(video, canvas, mask); host.append(wrap);
-    entry = {wrap, video, canvas, mask, src, clip, desired: clip.start, graph: null, lastPainted: -1}; entries.set(clip.clipId, entry);
-    video.onloadeddata = video.onseeked = () => { if (entries.get(clip.clipId) === entry) { paint(); if (playing && entry.playable) video.play().catch(() => {}); } };
+    video.playsInline = true; video.preload = 'auto'; video.src = window.StudioMediaPreview?.source(video, original, 'manual') ?? original; video.muted = true; wrap.append(video, canvas, mask); host.append(wrap);
+    entry = {wrap, video, canvas, mask, original, clip, desired: clip.start, graph: null, lastPainted: -1}; entries.set(clip.clipId, entry);
+    video.onloadeddata = video.onseeked = () => { if (entries.get(clip.clipId) === entry) { entry.failed = false; paint(); if (playing && entry.playable) video.play().catch(() => {}); } };
     video.onerror = () => { if (!entry.failed) { entry.failed = true; log('manual-log', (clip.name || 'Video') + ' önizlemesi yüklenemedi. Dosyanın erişilebilir olduğunu kontrol edin.', 'error'); } };
     video.load(); return entry;
   }
@@ -174,7 +177,7 @@
   }
   function tick(){if(!playing)return;cursor=time();if(cursor>=outDuration()-.001){pause();return}paint();raf=requestAnimationFrame(tick)}
   function seek(value){enter();cursor=clamp(Number(value)||0,0,outDuration());anchor=cursor;started=performance.now();S.timelineCursor=cursor;S.previewGap=!S.clips.some(clip=>cursor>=clipTimelineStart(clip)&&cursor<clipTimelineEnd(clip));const index=S.clips.findIndex(clip=>(clip.videoTrack||1)===(S.activeVideoTrack||1)&&cursor>=clipTimelineStart(clip)&&cursor<clipTimelineEnd(clip));if(index>=0)S.preview=index;paint(true);return cursor}
-  async function play(){enter();if(playing)return;if(cursor>=outDuration()-.001)cursor=0;const token=++generation;paint(true);const until=performance.now()+8000;while([...entries.values()].some(entry=>entry.active&&!entry.failed&&(entry.video.readyState<2||entry.video.seeking))&&performance.now()<until){await new Promise(resolve=>setTimeout(resolve,20));if(token!==generation)return}if(token!==generation)return;playing=true;anchor=cursor;started=performance.now();audioContext?.resume().catch(()=>{});paint();cancelAnimationFrame(raf);raf=requestAnimationFrame(tick)}
+  async function play(){enter();if(playing)return;if(cursor>=outDuration()-.001)cursor=0;const token=++generation;paint(true);const until=performance.now()+8000;while([...entries.values()].some(entry=>entry.active&&!entry.failed&&(entry.video.readyState<2||!entry.video.videoWidth||entry.video.seeking))&&performance.now()<until){await new Promise(resolve=>setTimeout(resolve,20));if(token!==generation)return}if(token!==generation)return;playing=true;anchor=cursor;started=performance.now();audioContext?.resume().catch(()=>{});paint();cancelAnimationFrame(raf);raf=requestAnimationFrame(tick)}
   function pause(){if(!entered)return;cursor=time();anchor=cursor;playing=false;generation++;cancelAnimationFrame(raf);raf=0;for(const entry of entries.values())entry.video.pause();stopProjectAudio();playButton.textContent='▶';S.timelineCursor=cursor;window.StudioTransport?.update(cursor,outDuration())}
   playButton.onclick=()=>playing?pause():play();seekBar.oninput=()=>{pause();seek(+seekBar.value)};controls.querySelector('.composite-volume').oninput=event=>{masterVolume=+event.target.value;paint()};
   window.multiTrackPreview={enabled,time,isPlaying:()=>playing,play,pause,seek,paint,reset,cropOf};

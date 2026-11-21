@@ -12,7 +12,7 @@ function waitForMedia(media, timeoutMs = 15000) {
       media.removeEventListener('error', failed);
     };
     const ready = () => {
-      if (media.readyState < 2 || media.seeking) return false;
+      if (media.readyState < 2 || media.seeking || ('videoWidth' in media && !media.videoWidth)) return false;
       cleanup(); resolve(); return true;
     };
     const failed = () => { cleanup(); reject(new Error(media.error?.message || 'Video decode failed')); };

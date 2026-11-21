@@ -3129,7 +3129,7 @@ async def index(request: Request):
         # External code is restricted to these bundled entry points, not every
         # same-origin upload or future route. Inline scripts remain hash-only.
         bundled_scripts = [str(request.base_url).rstrip("/") + "/static/" + name
-                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js", "studio_commands.js", "studio/templates.js", "studio-transport.js", "studio-library.js")]
+                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js", "studio_commands.js", "studio/templates.js", "studio-transport.js", "studio-library.js", "studio_preview.js")]
         script_sources = " ".join([*hashes, *bundled_scripts])
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
@@ -3977,7 +3977,10 @@ async def get_video(file_id: str, request: Request):
 
 
 @app.get("/preview/{file_id}")
-async def get_preview(file_id: str, request: Request, mode: typing.Literal["normal", "light", "compatible"] = "normal"):
+async def get_preview(
+    file_id: str, request: Request, mode: typing.Literal["normal", "light", "compatible"] = "normal",
+    force: bool = False,
+):
     if not file_id or "/" in file_id or "\\" in file_id or get_media_kind(file_id) != "video":
         raise HTTPException(404)
     uploads = pathlib.Path(UPLOAD_DIR).resolve()
@@ -3985,7 +3988,17 @@ async def get_preview(file_id: str, request: Request, mode: typing.Literal["norm
         source = (uploads / file_id).resolve(strict=True)
         if source.parent != uploads or not source.is_file():
             raise HTTPException(404)
-        media, kind = await preview_cache.resolve(source, mode)
+        resolve = asyncio.create_task(preview_cache.resolve(source, mode, force=force))
+        try:
+            while not resolve.done():
+                if await request.is_disconnected():
+                    return Response(status_code=499)
+                await asyncio.wait({resolve}, timeout=.25)
+            media, kind = await resolve
+        finally:
+            if not resolve.done():
+                resolve.cancel()
+                await asyncio.gather(resolve, return_exceptions=True)
     except FileNotFoundError as error:
         raise HTTPException(404) from error
     except PreviewBusy as error:
