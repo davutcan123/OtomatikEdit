@@ -105,7 +105,21 @@ jobs:
         run: node scripts/windows_update_smoke.cjs --verify-proof
       - name: Build and validate desktop installer
         run: npm run dist
-      - name: Exercise packaged editor, media playback, recovery and render
+      - name: Install and exercise the final Windows release installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          $installer = (Resolve-Path -LiteralPath "dist/OtomatikEdit-${version}-win-x64.exe").Path
+          $installDir = Join-Path $env:RUNNER_TEMP "Otomatik Edit $([guid]::NewGuid())"
+          # NSIS requires /D to be last and unquoted, even with spaces.
+          $setup = Start-Process -FilePath $installer -ArgumentList "/S /currentuser /D=$installDir" -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Windows installer exited $($setup.ExitCode)" }
+          $installedEditor = Join-Path $installDir 'OtomatikEdit.exe'
+          python scripts/smoke_desktop.py --executable "$installedEditor"
+      - name: Exercise packaged macOS editor, media playback, recovery and render
+        if: runner.os == 'macOS'
         run: python scripts/smoke_desktop.py
       - name: Save installers for download and testing
         uses: actions/upload-artifact@v4
