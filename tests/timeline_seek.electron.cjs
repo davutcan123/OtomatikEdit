@@ -50,19 +50,28 @@ app.whenReady().then(() => withStudioBrowser(async ({ evaluate, win, temporary, 
 
   async function frame(source, time, selector = 'mv') {
     const expected = JSON.stringify(source.fileId);
-    const pixel = await waitFor(() => evaluate(`(()=>{
-      const video=${selector};
-      if(!video||video.readyState<2||video.seeking||
-        !new URL(video.currentSrc).pathname.endsWith('/'+encodeURIComponent(${expected}))||Math.abs(video.currentTime-${time})>=.035)return null;
-      const context=document.createElement('canvas').getContext('2d');
-      context.drawImage(video,0,0,1,1);
-      return Array.from(context.getImageData(0,0,1,1).data).slice(0,3);
-    })()`), source.name + ' at ' + time).catch(async error => {
+    let lastSample = null;
+    const pixel = await waitFor(async () => {
+      const sample = await evaluate(`(()=>{
+        const video=${selector};
+        if(!video||video.readyState<2||video.seeking||
+          !new URL(video.currentSrc).pathname.endsWith('/'+encodeURIComponent(${expected}))||Math.abs(video.currentTime-${time})>=.035)return null;
+        const context=document.createElement('canvas').getContext('2d');
+        context.drawImage(video,0,0,1,1);
+        return Array.from(context.getImageData(0,0,1,1).data);
+      })()`);
+      if (!sample) return null;
+      lastSample = sample;
+      const rgb = sample.slice(0, 3);
+      // The decoder can report current data before a canvas draw has usable pixels.
+      // These solid red and blue fixtures have no black or transparent frames.
+      return sample[3] && rgb.some(value => value !== 0) ? rgb : null;
+    }, source.name + ' at ' + time).catch(async error => {
       const playback = await evaluate(`(()=>{const video=${selector};return {
         source:video?.currentSrc,time:video?.currentTime,ready:video?.readyState,seeking:video?.seeking,
         timeline:currentOutputTime(),selected:S.selected,preview:S.preview
       }})()`);
-      throw new Error(error.message + ' ' + JSON.stringify(playback), { cause: error });
+      throw new Error(error.message + ' ' + JSON.stringify({ ...playback, lastSample }), { cause: error });
     });
     const channel = source.id === 'red' ? 0 : 2;
     assert.ok(pixel[channel] > 220 && pixel.every((value, i) => i === channel || value < 20), String(pixel));
