@@ -1,4 +1,5 @@
 import os
+import pathlib
 import uuid
 import re
 import asyncio
@@ -28,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.datastructures import Headers
 from runtime_paths import resolve_runtime_paths, import_legacy_projects
 from studio_preferences import MAX_BYTES as STUDIO_PREFERENCES_LIMIT, read_preferences, write_preference
+from preview_media import PreviewBusy, PreviewCache, PreviewError
 from render_resources import choose_render_resources
 from render_encoder import select_video_encoder, invalidate_nvenc, is_nvenc_failure
 from render_overlays import compact_overlay
@@ -473,6 +475,28 @@ class DesktopUpdateState:
 
 
 desktop_update_state = DesktopUpdateState()
+
+
+def begin_preview_work():
+    state = desktop_update_state
+    with state.lock:
+        if DESKTOP_MODE and (state.preparing or state.closing):
+            raise PreviewBusy("Düzenleme motoru kapanmaya hazırlanıyor.")
+        state.active_requests += 1
+
+    def finish():
+        with state.lock:
+            state.active_requests -= 1
+
+    return finish
+
+
+preview_cache = PreviewCache(
+    os.path.join(DATA_DIR, ".preview-cache"), FFMPEG_BIN, FFPROBE_BIN,
+    create_media_process, begin_preview_work,
+)
+
+
 _DESKTOP_LIFECYCLE_CONTROLS = {
     "/api/desktop/prepare-update", "/api/desktop/cancel-update",
     "/api/desktop/prepare-close", "/api/desktop/cancel-close",
@@ -3090,7 +3114,8 @@ async def run_render_job(job_id: str):
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    response = templates.TemplateResponse(request=request, name="index.html")
+    response = templates.TemplateResponse(request=request, name="index.html",
+                                          context={"studio_preview": "available"})
     if DESKTOP_MODE:
         import base64
         import hashlib
@@ -3946,9 +3971,31 @@ async def get_waveform(
 @app.get("/video/{file_id}")
 async def get_video(file_id: str, request: Request):
     path = os.path.join(UPLOAD_DIR, os.path.basename(file_id))
-    if not os.path.exists(path):
+    if not os.path.isfile(path):
         raise HTTPException(404)
-        
+    return media_range_response(path, request)
+
+
+@app.get("/preview/{file_id}")
+async def get_preview(file_id: str, request: Request, mode: typing.Literal["normal", "light", "compatible"] = "normal"):
+    if not file_id or "/" in file_id or "\\" in file_id or get_media_kind(file_id) != "video":
+        raise HTTPException(404)
+    uploads = pathlib.Path(UPLOAD_DIR).resolve()
+    try:
+        source = (uploads / file_id).resolve(strict=True)
+        if source.parent != uploads or not source.is_file():
+            raise HTTPException(404)
+        media, kind = await preview_cache.resolve(source, mode)
+    except FileNotFoundError as error:
+        raise HTTPException(404) from error
+    except PreviewBusy as error:
+        raise HTTPException(409, str(error)) from error
+    except (PreviewError, asyncio.TimeoutError, OSError, ValueError) as error:
+        raise HTTPException(422, "Video önizlemesi hazırlanamadı.") from error
+    return media_range_response(str(media), request, preview=kind)
+
+
+def media_range_response(path, request, *, preview=None):
     file_size = os.path.getsize(path)
     range_header = request.headers.get("range")
     
@@ -3956,9 +4003,12 @@ async def get_video(file_id: str, request: Request):
         "Accept-Ranges": "bytes",
         "Content-Encoding": "identity",
         "Content-Length": str(file_size),
-        "Access-Control-Allow-Origin": "*",
-    }
-    
+        }
+    if preview is None:
+        headers["Access-Control-Allow-Origin"] = "*"
+    else:
+        headers.update({"Cache-Control": "private, no-store", "X-Studio-Preview": preview})
+
     start = 0
     end = file_size - 1
     status_code = 200

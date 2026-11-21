@@ -16,6 +16,7 @@ uploads/
 outputs/
 projects/
 .backup/
+.preview-cache/
 
 # Windows yerel araçlar
 tools/
