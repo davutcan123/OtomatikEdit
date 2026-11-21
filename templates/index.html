@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Otamatik Edit</title>
+  <title>Otomatik Edit</title>
   <style>
     #recent-outputs-dialog{width:min(520px,calc(100vw - 32px))}
     #recent-output-list{max-height:60vh;overflow:auto}
@@ -76,8 +76,9 @@
   <link rel="stylesheet" href="/static/workspace.css">
   <link rel="stylesheet" href="/static/video_tracks.css">
   <link rel="stylesheet" href="/static/timeline_tools.css">
+  <link rel="stylesheet" href="/static/studio-workspace.css">
 </head>
-<body class="text-slate-100 min-h-screen">
+<body class="studio-shell text-slate-100 min-h-screen">
   <dialog id="desktop-update-dialog" aria-labelledby="desktop-update-heading" aria-describedby="desktop-update-message">
     <h2 id="desktop-update-heading">Uygulama güncellemesi</h2>
     <p id="desktop-update-version"></p>
@@ -102,38 +103,186 @@
       </div>
     </div>
   </div>
-  <header class="h-16 bg-slate-950 border-b border-slate-800 px-6 flex items-center justify-between sticky top-0 z-30">
-    <div>
-      <h1 class="font-black text-xl">OTAMATİK <span class="text-blue-500">EDIT</span></h1>
-      <p class="text-[10px] text-slate-500 flex items-center gap-2">
-        Manuel kurgu + akıllı kırpma <span id="app-version-display" class="px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded-md">v1.0.0</span><span id="desktop-mode-badge" class="hidden text-cyan-400">Masaüstü</span>
-      </p>
-    </div>
-    <nav class="bg-slate-900 border border-slate-800 rounded-xl p-1 flex">
-      <button class="tab active px-5 py-2 rounded-lg text-sm font-bold" data-tab="manual">1. Manuel Edit</button>
-      <button class="tab px-5 py-2 rounded-lg text-sm font-bold text-slate-400" data-tab="auto">2. Otomatik Kırpıcı</button>
+  <header class="studio-header">
+    <div class="studio-brand"><span class="studio-brand-mark" aria-hidden="true"><i></i></span><div><h1>Otomatik Edit</h1><span id="app-version-display">v1.0.0</span><span id="desktop-mode-badge" class="hidden">Masaüstü</span></div></div>
+    <nav class="studio-mode-switch" aria-label="Çalışma alanı">
+      <button type="button" class="tab active" data-tab="manual">Kurgu</button>
+      <button type="button" class="tab" data-tab="auto">Otomatik kırpıcı</button>
     </nav>
-    <span id="status" class="text-xs text-slate-500">Hazır</span>
+    <div class="project-toolbar">
+      <input id="project-name" class="project-name-input" maxlength="80" value="Adsız proje" aria-label="Proje adı">
+      <button id="project-save" type="button" class="project-action">Kaydet</button>
+      <button id="project-new" type="button" class="project-action" aria-label="Yeni proje" title="Yeni proje">＋</button>
+      <details id="studio-project-menu">
+        <summary class="project-action">Projeler <span aria-hidden="true">▾</span></summary>
+        <div class="studio-project-menu-body">
+          <select id="project-list" class="project-name-input" aria-label="Kayıtlı projeler"><option value="">Kayıtlı proje seçin</option></select>
+          <div><button id="project-load" type="button" class="project-action">Aç</button><button id="project-delete" type="button" class="project-action">Çöp kutusuna taşı</button></div>
+          <button id="project-folder" type="button" class="project-action hidden">Proje klasörü</button>
+        </div>
+      </details>
+      <span id="project-save-state" class="project-save-state" aria-live="polite">Otomatik kurtarma açık</span>
+    </div>
+    <div class="studio-header-actions">
+      <button type="button" class="project-action studio-search-launch" data-studio-command="palette" aria-label="Komutlarda ara" title="Komutlarda ara"><span aria-hidden="true">⌕</span><span>Ara</span></button>
+      <button id="recent-outputs-open" type="button" class="project-action" aria-haspopup="dialog">Son çıktılar</button>
+      <button id="manual-render-top" type="button" class="render-action">Dışa aktar <span aria-hidden="true">↗</span></button>
+    </div>
+    <span id="status" class="studio-app-status" role="status" aria-live="polite">Hazır</span>
   </header>
 
-  <main class="p-4 max-w-[1800px] mx-auto">
-    <div class="panel rounded-xl px-4 py-3 mb-4 flex items-center justify-between gap-3 flex-wrap">
-      <div class="project-toolbar">
-        <b class="text-xs">Proje</b>
-        <input id="project-name" class="project-name-input" maxlength="80" value="Adsız proje" aria-label="Proje adı">
-        <button id="project-new" type="button" class="project-action">＋ Yeni proje</button>
-        <button id="project-save" type="button" class="project-action primary">💾 Projeyi kaydet</button>
-        <select id="project-list" class="project-name-input" aria-label="Kayıtlı projeler"><option value="">Kayıtlı proje seçin</option></select>
-        <button id="project-load" type="button" class="project-action">Projeyi aç</button>
-        <button id="project-delete" type="button" class="project-action" title="Seçili kayıtlı projeyi çöp kutusuna taşı">Projeyi sil</button>
-        <button id="recent-outputs-open" type="button" class="project-action" aria-haspopup="dialog">Son çıktılar</button>
-        <button id="project-folder" type="button" class="project-action hidden">📁 Proje klasörü</button>
-      </div>
-      <span id="project-save-state" class="project-save-state">Otomatik kurtarma açık</span>
-    </div>
+  <main class="studio-main">
     <section id="manual" class="workspace active grid-cols-12 gap-4">
       <div class="col-span-12 space-y-4">
         <div id="manual-core" class="manual-core">
+        <div id="asset-editor" class="panel rounded-2xl p-4 collapsible-panel">
+          <div class="collapsible-header studio-library-head">
+            <button id="asset-editor-toggle" type="button" class="panel-collapse-trigger" aria-expanded="true" aria-controls="asset-editor-content">
+              <span class="panel-collapse-title">Varlıklar</span><span class="panel-collapse-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div id="asset-editor-tabs" role="group" aria-label="Varlık kategorileri">
+              <button type="button" class="asset-tab active" data-asset-tab="media" aria-pressed="true"><span aria-hidden="true">▤</span>Medya</button>
+              <button type="button" class="asset-tab" data-asset-tab="sounds"><span aria-hidden="true">♫</span>Ses</button>
+              <button type="button" class="asset-tab" data-asset-tab="text"><span aria-hidden="true">T</span>Metin</button>
+              <button type="button" class="asset-tab" data-asset-tab="fonts"><span aria-hidden="true">Aa</span>Yazı tipi</button>
+              <button type="button" class="asset-tab" data-asset-tab="templates"><span aria-hidden="true">▱</span>Şablon</button>
+              <button type="button" class="asset-tab" data-asset-tab="captions"><span aria-hidden="true">≡</span>Altyazı</button>
+              <button type="button" class="asset-tab" data-asset-tab="video"><span aria-hidden="true">✦</span>Efekt</button>
+              <button type="button" class="asset-tab" data-asset-tab="filter"><span aria-hidden="true">◉</span>Görünüm</button>
+              <button type="button" class="asset-tab" data-asset-tab="transition"><span aria-hidden="true">◇</span>Geçiş</button>
+              <button type="button" class="asset-tab" data-asset-tab="animation"><span aria-hidden="true">↗</span>Hareket</button>
+              <button type="button" class="asset-tab" data-asset-tab="sticker"><span aria-hidden="true">☆</span>Sticker</button>
+            </div>
+          </div>
+          <div id="asset-editor-content" class="collapsible-content">
+            <div class="studio-library-filters">
+              <input id="studio-asset-search" type="search" aria-label="Varlıklarda ara" placeholder="Varlıklarda ara">
+              <button id="studio-favorites" class="project-action" type="button" aria-label="Yalnızca favorileri göster" aria-pressed="false" title="Favoriler">☆</button>
+            </div>
+            <div id="project-library">
+          <div class="studio-media-heading">
+            <h3>Proje medyası</h3>
+            <label for="manual-file" class="studio-media-import">＋ Dosya ekle</label>
+          </div>
+          <div id="project-assets" class="flex gap-3 overflow-x-auto min-h-[118px] pb-1">
+            <div id="project-empty" class="w-full min-h-[112px] border border-dashed border-slate-700 rounded-xl flex items-center justify-center text-xs text-slate-500">Henüz dosya yok · video, resim veya müzik yükleyin</div>
+          </div>
+          <div class="studio-demo-card" id="studio-demo-card">
+            <img src="/static/studio/previews/alpine.jpg" alt="">
+            <div class="studio-demo-caption"><div><b>Alp vadisi</b><small>Örnek video</small></div><button type="button" class="project-action" id="studio-add-demo">Timeline’a ekle</button></div>
+          </div>
+        </div>
+            <section id="studio-sounds" class="hidden"><h3>Ses efektleri</h3><div id="studio-sound-cards" class="studio-card-grid"></div></section>
+            <section id="studio-fonts" class="hidden" aria-label="Yazı tipleri"></section>
+            <section id="studio-templates" class="hidden" aria-label="Şablonlar"></section>
+            <section id="studio-captions" class="hidden" aria-label="Altyazı"></section>
+          <div id="text-editor" class="hidden">
+          <div class="flex items-center justify-between mb-3">
+            <div><h3 class="font-bold">Metin stilleri</h3><p class="text-[10px] text-slate-500">Bir stile tıklayın veya timeline'daki METİN kanalına sürükleyin.</p></div>
+            <span id="text-count" class="text-[10px] text-amber-300">0 metin</span>
+          </div>
+          <div class="flex flex-nowrap gap-4 overflow-x-auto pb-1 items-stretch">
+            <div class="min-w-[790px] flex-[1.15]">
+              <div id="text-presets" class="grid grid-cols-5 gap-2 max-h-[390px] overflow-y-auto pr-1">
+                <button class="text-preset" data-text-style="classic"><span class="text-2xl font-black text-white" style="text-shadow:2px 2px #000,-2px -2px #000">BAŞLIK</span><small class="block text-[9px] text-slate-500 mt-1">Klasik</small></button>
+                <button class="text-preset" data-text-style="pop"><span class="text-2xl font-black text-yellow-300" style="text-shadow:3px 3px #111">VURGU</span><small class="block text-[9px] text-slate-500 mt-1">Pop</small></button>
+                <button class="text-preset" data-text-style="neon"><span class="text-2xl font-black text-cyan-300" style="text-shadow:0 0 8px #22d3ee">NEON</span><small class="block text-[9px] text-slate-500 mt-1">Parlak</small></button>
+                <button class="text-preset" data-text-style="alert"><span class="text-xl font-black text-white bg-red-600 px-2 py-1 rounded">DUYURU</span><small class="block text-[9px] text-slate-500 mt-1">Kutu</small></button>
+                <button class="text-preset" data-text-style="pink"><span class="text-2xl font-black text-pink-300" style="text-shadow:2px 2px #831843">TREND</span><small class="block text-[9px] text-slate-500 mt-1">Pembe</small></button>
+                <button class="text-preset" data-text-style="minimal"><span class="text-xl font-medium text-white tracking-widest">SADE</span><small class="block text-[9px] text-slate-500 mt-1">Minimal</small></button>
+                <button class="text-preset" data-text-style="lime"><span class="text-2xl font-black text-lime-300" style="text-shadow:2px 2px #14532d">ENERJİ</span><small class="block text-[9px] text-slate-500 mt-1">Yeşil</small></button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+        <div id="transition-editor" class="hidden">
+          <div class="flex items-center justify-between mb-3">
+            <div><h3 class="font-bold">Geçiş stilleri</h3><p class="text-[10px] text-slate-500">Bir geçişi iki kesilmiş klibin birleşme noktasına sürükleyin; oynatırken canlı görünür.</p></div>
+            <span id="transition-count" class="text-[10px] text-violet-300">Geçiş için önce videoyu kesin</span>
+          </div>
+          <div id="transition-presets" class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-2 max-h-[390px] overflow-y-auto pr-1">
+            <button class="transition-preset" data-transition="fade"><div class="transition-preview"></div><small class="block text-[9px] text-slate-400">Yumuşak</small></button>
+            <button class="transition-preset" data-transition="dissolve"><div class="transition-preview" style="filter:contrast(.65);opacity:.8"></div><small class="block text-[9px] text-slate-400">Çözülme</small></button>
+            <button class="transition-preset" data-transition="smoothleft"><div class="transition-preview" style="background:linear-gradient(90deg,#1e3a8a 0 50%,#8b5cf6 50%)"></div><small class="block text-[9px] text-slate-400">Sola Kaydır</small></button>
+            <button class="transition-preset" data-transition="smoothright"><div class="transition-preview" style="background:linear-gradient(270deg,#1e3a8a 0 50%,#8b5cf6 50%)"></div><small class="block text-[9px] text-slate-400">Sağa Kaydır</small></button>
+            <button class="transition-preset" data-transition="wipeleft"><div class="transition-preview" style="background:linear-gradient(135deg,#1e3a8a 0 48%,#e2e8f0 49% 51%,#8b5cf6 52%)"></div><small class="block text-[9px] text-slate-400">Perde</small></button>
+            <button class="transition-preset" data-transition="pixelize"><div class="transition-preview" style="image-rendering:pixelated;filter:contrast(2)"></div><small class="block text-[9px] text-slate-400">Piksel</small></button>
+            <button class="transition-preset" data-transition="zoomin"><div class="transition-preview" style="transform:scale(.82);box-shadow:0 0 0 7px #020617 inset"></div><small class="block text-[9px] text-slate-400">Yakınlaş</small></button>
+            <button class="transition-preset" data-transition="fadeblack"><div class="transition-preview" style="background:linear-gradient(90deg,#1e3a8a,#000,#8b5cf6)"></div><small class="block text-[9px] text-slate-400">Siyaha Geç</small></button>
+          </div>
+        </div>
+        <div id="animation-editor" class="hidden">
+          <div class="flex items-center justify-between mb-3">
+            <div><h3 class="font-bold">Klip animasyonları</h3><p class="text-[10px] text-slate-500">Animasyon kartını timeline’daki video klibinin üzerine sürükleyip bırakın. Seçili klip panelinden süresini ayarlayın.</p></div>
+            <span id="animation-status" class="text-[10px] text-violet-300">Önce bir klibe bırakın</span>
+          </div>
+          <div id="animation-presets" class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-2 max-h-[390px] overflow-y-auto pr-1">
+            <button class="animation-card" data-animation="none"><div class="animation-demo"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Animasyon yok</small></button>
+            <button class="animation-card" data-animation="fade"><div class="animation-demo fade"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Yumuşak giriş / çıkış</small></button>
+            <button class="animation-card" data-animation="zoom"><div class="animation-demo zoom"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Yavaş yakınlaşma</small></button>
+            <button class="animation-card" data-animation="slideleft"><div class="animation-demo slide-left"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Soldan kaydır</small></button>
+            <button class="animation-card" data-animation="slideright"><div class="animation-demo slide-right"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Sağdan kaydır</small></button>
+            <button class="animation-card" data-animation="slideup"><div class="animation-demo slide-up"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Alttan yüksel</small></button>
+            <button class="animation-card" data-animation="pop"><div class="animation-demo pop"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Vurgulu açılış</small></button>
+          </div>
+        </div>
+        <div id="video-effects-editor" class="hidden">
+          <div class="flex items-center justify-between mb-3">
+            <div><h3 class="font-bold">Video efektleri</h3><p class="text-[10px] text-slate-500">Efekti timeline’daki video klibinin üzerine sürükleyip bırakın; yalnızca o klibe ve çıktıya uygulanır.</p></div>
+            <span id="video-effect-status" class="text-[10px] text-cyan-300">Önce bir klip seçin</span>
+          </div>
+          <div id="video-effect-presets" class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-2 max-h-[440px] overflow-y-auto pr-1">
+            <button class="video-effect-card" data-video-effect="none"><div class="video-effect-demo"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Efektsiz</small></button>
+            <button class="video-effect-card" data-video-effect="vivid"><div class="video-effect-demo" style="filter:contrast(1.1) saturate(1.5)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Canlı Renk</small></button>
+            <button class="video-effect-card" data-video-effect="noir"><div class="video-effect-demo" style="filter:grayscale(1) contrast(1.2)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Siyah Beyaz</small></button>
+            <button class="video-effect-card" data-video-effect="warm"><div class="video-effect-demo" style="filter:sepia(.35) saturate(1.35)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Sıcak</small></button>
+            <button class="video-effect-card" data-video-effect="cool"><div class="video-effect-demo" style="filter:hue-rotate(18deg) saturate(1.2)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Soğuk</small></button>
+            <button class="video-effect-card" data-video-effect="blur"><div class="video-effect-demo" style="filter:blur(2px);transform:scale(1.05)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Bulanıklık</small></button>
+            <button class="video-effect-card" data-video-effect="vintage"><div class="video-effect-demo" style="filter:sepia(.6) contrast(.9)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Retro</small></button>
+            <button class="video-effect-card" data-video-effect="glitch"><div class="video-effect-demo" style="filter:contrast(1.3) saturate(1.5) hue-rotate(28deg)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Glitch</small></button>
+            <button class="video-effect-card" data-video-effect="mirror"><div class="video-effect-demo" style="transform:scaleX(-1)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Ayna</small></button>
+            <button class="video-effect-card" data-video-effect="soft"><div class="video-effect-demo" style="filter:blur(.7px) brightness(1.08) saturate(.85)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Yumuşak</small></button>
+          </div>
+        </div>
+        <div id="filter-editor" class="hidden">
+          <div class="flex items-center justify-between mb-3">
+            <div><h3 class="font-bold">Filtreler</h3><p class="text-[10px] text-slate-500">Filtreyi timeline’daki video klibinin üzerine sürükleyip bırakın.</p></div>
+            <span id="filter-status" class="text-[10px] text-pink-300">Önce bir video klibine bırakın</span>
+          </div>
+          <div id="filter-presets" class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-2 max-h-[440px] overflow-y-auto pr-1">
+            <button class="filter-card" data-filter="none"><div class="filter-demo"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Filtresiz</small></button>
+            <button class="filter-card" data-filter="portrait"><div class="filter-demo" style="filter:brightness(1.08) saturate(.92) contrast(.96)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Portre</small></button>
+            <button class="filter-card" data-filter="cinema"><div class="filter-demo" style="filter:contrast(1.18) saturate(.82) sepia(.12)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Sinema</small></button>
+            <button class="filter-card" data-filter="summer"><div class="filter-demo" style="filter:saturate(1.42) brightness(1.08) hue-rotate(-7deg)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Canlı Yaz</small></button>
+            <button class="filter-card" data-filter="teal"><div class="filter-demo" style="filter:contrast(1.12) saturate(1.18) hue-rotate(16deg)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Turkuaz</small></button>
+            <button class="filter-card" data-filter="rose"><div class="filter-demo" style="filter:saturate(1.2) hue-rotate(-18deg) brightness(1.04)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Pembe</small></button>
+            <button class="filter-card" data-filter="matte"><div class="filter-demo" style="filter:contrast(.84) saturate(.78) brightness(1.08)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Mat Film</small></button>
+            <button class="filter-card" data-filter="night"><div class="filter-demo" style="filter:brightness(.72) contrast(1.24) saturate(.72) hue-rotate(12deg)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Gece</small></button>
+          </div>
+        </div>
+        <div id="sticker-editor" class="hidden">
+          <div class="flex items-center justify-between mb-3">
+            <div><h3 class="font-bold">Stickerlar</h3><p class="text-[10px] text-slate-500">Stickerı timeline’daki STICKER kanalına sürükleyin; sonra ekranda taşıyın, ölçeklendirin veya döndürün.</p></div>
+            <span id="sticker-count" class="text-[10px] text-pink-300">0 sticker</span>
+          </div>
+          <div id="sticker-presets" class="grid grid-cols-4 sm:grid-cols-8 lg:grid-cols-12 gap-2 max-h-[520px] overflow-y-auto pr-1">
+            <button class="sticker-card" data-sticker="arrow"><div class="sticker-demo">➡️</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Ok</small></button>
+            <button class="sticker-card" data-sticker="circle"><div class="sticker-demo">⭕</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Daire</small></button>
+            <button class="sticker-card" data-sticker="heart"><div class="sticker-demo">❤️</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Kalp</small></button>
+            <button class="sticker-card" data-sticker="star"><div class="sticker-demo">⭐</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Yıldız</small></button>
+            <button class="sticker-card" data-sticker="sparkle"><div class="sticker-demo">✨</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Parıltı</small></button>
+            <button class="sticker-card" data-sticker="fire"><div class="sticker-demo">🔥</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Ateş</small></button>
+            <button class="sticker-card" data-sticker="bolt"><div class="sticker-demo">⚡</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Enerji</small></button>
+            <button class="sticker-card" data-sticker="target"><div class="sticker-demo">🎯</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Hedef</small></button>
+            <button class="sticker-card" data-sticker="check"><div class="sticker-demo">✅</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Onay</small></button>
+            <button class="sticker-card" data-sticker="party"><div class="sticker-demo">🎉</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Kutlama</small></button>
+            <button class="sticker-card" data-sticker="speech"><div class="sticker-demo">💬</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Konuşma</small></button>
+            <button class="sticker-card" data-sticker="subscribe"><div class="sticker-demo"><span class="bg-red-600 text-white text-[10px] font-black px-2 py-1 rounded">ABONE OL</span></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Abone Ol</small></button>
+          </div>
+        </div>
+        </div>
+        </div>
         <div id="preview-panel" class="panel rounded-2xl p-4">
           <div class="preview-toolbar">
             <div class="preview-meta">
@@ -142,8 +291,7 @@
               </div>
             </div>
             <div class="export-action">
-              <button id="snapshot-open" type="button" class="snapshot-action" title="Oynatma çizgisindeki kareyi fotoğraf olarak kaydet">📷 Ekran görüntüsü</button>
-              <button id="manual-render-top" type="button" class="render-action">Videoyu Dışa Aktar ↗</button>
+              <button id="snapshot-open" type="button" class="snapshot-action" title="Oynatma çizgisindeki kareyi fotoğraf olarak kaydet">Kare yakala</button>
             </div>
             <div class="preview-controls">
                 <select id="canvas-preset-top" aria-label="Video ekran oranı ve çözünürlüğü" class="bg-slate-900 border border-blue-500/40 text-blue-200 rounded-lg px-3 py-2 text-[10px]">
@@ -167,7 +315,12 @@
               <button id="zoom-focus-picker" type="button" class="zoom-focus-picker hidden" aria-label="Zoom odak noktasını seç"></button>
               <div id="brush-stage-toolbar" class="brush-stage-toolbar hidden"><button id="brush-stage-toggle" type="button">🖌 Boyamayı başlat</button><button id="brush-stage-paint" type="button" aria-pressed="false">Fırça</button><button id="brush-stage-erase" type="button" aria-pressed="false" title="Boyadığınız seçimi silgiyle düzeltin">Silgi</button><span id="brush-stage-mode" class="brush-color-keep">Boyanan alan kalacak</span></div>
               <div id="project-audio-host" class="hidden"></div>
-              <div id="manual-placeholder" class="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center text-slate-500 pointer-events-none"><span class="text-5xl">▶</span><b class="mt-3">Düzenlenecek videoyu yükleyin</b><p class="text-xs">veya otomatik kırpıcıdan buraya gönderin</p></div>
+              <div id="manual-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-center">
+                <div class="studio-player-empty">
+                  <span class="studio-play-mark" aria-hidden="true">▷</span>
+                  <b>Önizleme</b><p>Başlamak için medya ekleyin.</p>
+                </div>
+              </div>
             </div>
           </div>
           <div class="hidden" aria-hidden="true">
@@ -199,14 +352,7 @@
               </div>
               <div id="manual-progress" class="hidden mt-2 max-w-md"><div class="h-2 bg-slate-800 rounded overflow-hidden"><div class="h-full bg-emerald-500" style="width:0"></div></div><p class="text-right text-[10px] text-slate-400 mt-1">0%</p></div>
             </div>
-            <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 min-w-[360px]">
-              <h3 class="text-xs font-bold mb-2">Seçili klibin sınırları</h3>
-              <div class="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
-                <label class="text-[10px] text-slate-400">Başlangıç<input id="clip-start" type="number" step=".01" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></label>
-                <label class="text-[10px] text-slate-400">Bitiş<input id="clip-end" type="number" step=".01" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></label>
-                <button id="trim" class="bg-indigo-600 rounded-lg px-3 py-2 text-[11px] font-bold disabled:opacity-40">Uygula</button>
-              </div>
-            </div>
+
             <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 min-w-[330px]">
               <h3 class="text-xs font-bold mb-2">Kısayollar</h3>
               <div class="flex flex-wrap gap-x-3 gap-y-2 text-[10px] text-slate-400">
@@ -231,6 +377,14 @@
             <button class="clip-inspector-tab active py-2 text-xs font-bold" data-clip-tab="video">Video</button><button class="clip-inspector-tab py-2 text-xs font-bold" data-clip-tab="audio">Ses</button><button class="clip-inspector-tab py-2 text-xs font-bold" data-clip-tab="speed">Hız</button><button class="clip-inspector-tab py-2 text-xs font-bold" data-clip-tab="animation">Animasyon</button><button class="clip-inspector-tab py-2 text-xs font-bold" data-clip-tab="adjust">Ayarla</button><button class="clip-inspector-tab py-2 text-xs font-bold" data-clip-tab="ai">Yapay zeka stili</button>
           </div>
           <div class="clip-inspector-body">
+              <div class="studio-trim">
+              <h3 class="text-xs font-bold mb-2">Seçili klibin sınırları</h3>
+              <div class="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                <label class="text-[10px] text-slate-400">Başlangıç<input id="clip-start" type="number" step=".01" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></label>
+                <label class="text-[10px] text-slate-400">Bitiş<input id="clip-end" type="number" step=".01" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></label>
+                <button id="trim" class="bg-indigo-600 rounded-lg px-3 py-2 text-[11px] font-bold disabled:opacity-40">Uygula</button>
+              </div>
+            </div>
             <div class="clip-inspector-panel active" data-clip-panel="video">
               <details class="inspector-section" open><summary>Dönüştürme</summary><div class="inspector-section-content grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4 items-end">
                 <label class="text-[10px] text-slate-400">Kadraj<select id="clip-fit" class="block w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"><option value="cover">Doldur</option><option value="contain">Sığdır</option><option value="stretch">Esnet</option></select></label>
@@ -388,37 +542,12 @@
           </div></details>
           </div>
         </div>
-        <div id="asset-editor" class="panel rounded-2xl p-4 collapsible-panel">
-          <div class="collapsible-header flex flex-wrap items-center justify-between gap-3 mb-4 border-b border-slate-800 pb-3">
-            <button id="asset-editor-toggle" type="button" class="panel-collapse-trigger" aria-expanded="true" aria-controls="asset-editor-content"><span class="panel-collapse-chevron">⌄</span><span><span class="panel-collapse-title block font-bold">Düzenleme Araçları</span><span class="block text-[10px] text-slate-500">Kartları tutup timeline’daki uygun kanal veya klibin üzerine bırakın.</span></span></button>
-            <div id="asset-editor-tabs" class="bg-slate-950 border border-slate-800 rounded-xl p-1 flex gap-1 overflow-x-auto max-w-full">
-              <button class="asset-tab active rounded-lg px-5 py-2 text-xs font-bold" data-asset-tab="text">T Metinler</button>
-              <button class="asset-tab rounded-lg px-5 py-2 text-xs font-bold" data-asset-tab="transition">◇ Geçişler</button>
-              <button class="asset-tab rounded-lg px-5 py-2 text-xs font-bold whitespace-nowrap" data-asset-tab="animation">↗ Klip Animasyonları</button>
-              <button class="asset-tab rounded-lg px-5 py-2 text-xs font-bold" data-asset-tab="video">✦ Video Efektleri</button>
-              <button class="asset-tab rounded-lg px-5 py-2 text-xs font-bold" data-asset-tab="filter">◉ Filtreler</button>
-              <button class="asset-tab rounded-lg px-5 py-2 text-xs font-bold" data-asset-tab="sticker">★ Stickerlar</button>
-            </div>
-          </div>
-          <div id="asset-editor-content" class="collapsible-content">
-          <div id="text-editor">
-          <div class="flex items-center justify-between mb-3">
-            <div><h3 class="font-bold">Metin stilleri</h3><p class="text-[10px] text-slate-500">Bir stile tıklayın veya timeline'daki METİN kanalına sürükleyin.</p></div>
-            <span id="text-count" class="text-[10px] text-amber-300">0 metin</span>
-          </div>
-          <div class="flex flex-nowrap gap-4 overflow-x-auto pb-1 items-stretch">
-            <div class="min-w-[790px] flex-[1.15]">
-              <div id="text-presets" class="grid grid-cols-5 gap-2 max-h-[390px] overflow-y-auto pr-1">
-                <button class="text-preset" data-text-style="classic"><span class="text-2xl font-black text-white" style="text-shadow:2px 2px #000,-2px -2px #000">BAŞLIK</span><small class="block text-[9px] text-slate-500 mt-1">Klasik</small></button>
-                <button class="text-preset" data-text-style="pop"><span class="text-2xl font-black text-yellow-300" style="text-shadow:3px 3px #111">VURGU</span><small class="block text-[9px] text-slate-500 mt-1">Pop</small></button>
-                <button class="text-preset" data-text-style="neon"><span class="text-2xl font-black text-cyan-300" style="text-shadow:0 0 8px #22d3ee">NEON</span><small class="block text-[9px] text-slate-500 mt-1">Parlak</small></button>
-                <button class="text-preset" data-text-style="alert"><span class="text-xl font-black text-white bg-red-600 px-2 py-1 rounded">DUYURU</span><small class="block text-[9px] text-slate-500 mt-1">Kutu</small></button>
-                <button class="text-preset" data-text-style="pink"><span class="text-2xl font-black text-pink-300" style="text-shadow:2px 2px #831843">TREND</span><small class="block text-[9px] text-slate-500 mt-1">Pembe</small></button>
-                <button class="text-preset" data-text-style="minimal"><span class="text-xl font-medium text-white tracking-widest">SADE</span><small class="block text-[9px] text-slate-500 mt-1">Minimal</small></button>
-                <button class="text-preset" data-text-style="lime"><span class="text-2xl font-black text-lime-300" style="text-shadow:2px 2px #14532d">ENERJİ</span><small class="block text-[9px] text-slate-500 mt-1">Yeşil</small></button>
-              </div>
-            </div>
-            <div class="min-w-[650px] bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+
+        <section id="studio-inspector-empty" class="panel">
+          <h2>Özellikler</h2>
+          <div><span class="studio-inspector-mark" aria-hidden="true">☷</span><p>Özelliklerini görmek için timeline’dan bir öğe seçin.</p></div>
+        </section>
+        <div id="studio-text-inspector" class="panel rounded-2xl p-3">
               <div id="text-empty" class="h-full flex items-center justify-center text-xs text-slate-500">Timeline'dan bir metin seçin; özellikleri burada açılır.</div>
               <div id="text-fields" class="hidden">
                 <div class="flex items-center justify-between gap-3 mb-2"><h3 class="text-xs font-bold">Seçili metnin özellikleri</h3><button id="text-delete" class="text-[10px] bg-rose-600 px-3 py-1.5 rounded font-bold">Metni Sil</button></div>
@@ -447,124 +576,27 @@
                   <div id="text-kf-list" class="flex flex-wrap gap-2"></div>
                 </div></details>
               </div>
-            </div>
-          </div>
-        </div>
-        <div id="transition-editor" class="hidden">
-          <div class="flex items-center justify-between mb-3">
-            <div><h3 class="font-bold">Geçiş stilleri</h3><p class="text-[10px] text-slate-500">Bir geçişi iki kesilmiş klibin birleşme noktasına sürükleyin; oynatırken canlı görünür.</p></div>
-            <span id="transition-count" class="text-[10px] text-violet-300">Geçiş için önce videoyu kesin</span>
-          </div>
-          <div id="transition-presets" class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-2 max-h-[390px] overflow-y-auto pr-1">
-            <button class="transition-preset" data-transition="fade"><div class="transition-preview"></div><small class="block text-[9px] text-slate-400">Yumuşak</small></button>
-            <button class="transition-preset" data-transition="dissolve"><div class="transition-preview" style="filter:contrast(.65);opacity:.8"></div><small class="block text-[9px] text-slate-400">Çözülme</small></button>
-            <button class="transition-preset" data-transition="smoothleft"><div class="transition-preview" style="background:linear-gradient(90deg,#1e3a8a 0 50%,#8b5cf6 50%)"></div><small class="block text-[9px] text-slate-400">Sola Kaydır</small></button>
-            <button class="transition-preset" data-transition="smoothright"><div class="transition-preview" style="background:linear-gradient(270deg,#1e3a8a 0 50%,#8b5cf6 50%)"></div><small class="block text-[9px] text-slate-400">Sağa Kaydır</small></button>
-            <button class="transition-preset" data-transition="wipeleft"><div class="transition-preview" style="background:linear-gradient(135deg,#1e3a8a 0 48%,#e2e8f0 49% 51%,#8b5cf6 52%)"></div><small class="block text-[9px] text-slate-400">Perde</small></button>
-            <button class="transition-preset" data-transition="pixelize"><div class="transition-preview" style="image-rendering:pixelated;filter:contrast(2)"></div><small class="block text-[9px] text-slate-400">Piksel</small></button>
-            <button class="transition-preset" data-transition="zoomin"><div class="transition-preview" style="transform:scale(.82);box-shadow:0 0 0 7px #020617 inset"></div><small class="block text-[9px] text-slate-400">Yakınlaş</small></button>
-            <button class="transition-preset" data-transition="fadeblack"><div class="transition-preview" style="background:linear-gradient(90deg,#1e3a8a,#000,#8b5cf6)"></div><small class="block text-[9px] text-slate-400">Siyaha Geç</small></button>
-          </div>
-        </div>
-        <div id="animation-editor" class="hidden">
-          <div class="flex items-center justify-between mb-3">
-            <div><h3 class="font-bold">Klip animasyonları</h3><p class="text-[10px] text-slate-500">Animasyon kartını timeline’daki video klibinin üzerine sürükleyip bırakın. Seçili klip panelinden süresini ayarlayın.</p></div>
-            <span id="animation-status" class="text-[10px] text-violet-300">Önce bir klibe bırakın</span>
-          </div>
-          <div id="animation-presets" class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-2 max-h-[390px] overflow-y-auto pr-1">
-            <button class="animation-card" data-animation="none"><div class="animation-demo"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Animasyon yok</small></button>
-            <button class="animation-card" data-animation="fade"><div class="animation-demo fade"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Yumuşak giriş / çıkış</small></button>
-            <button class="animation-card" data-animation="zoom"><div class="animation-demo zoom"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Yavaş yakınlaşma</small></button>
-            <button class="animation-card" data-animation="slideleft"><div class="animation-demo slide-left"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Soldan kaydır</small></button>
-            <button class="animation-card" data-animation="slideright"><div class="animation-demo slide-right"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Sağdan kaydır</small></button>
-            <button class="animation-card" data-animation="slideup"><div class="animation-demo slide-up"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Alttan yüksel</small></button>
-            <button class="animation-card" data-animation="pop"><div class="animation-demo pop"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Vurgulu açılış</small></button>
-          </div>
-        </div>
-        <div id="video-effects-editor" class="hidden">
-          <div class="flex items-center justify-between mb-3">
-            <div><h3 class="font-bold">Video efektleri</h3><p class="text-[10px] text-slate-500">Efekti timeline’daki video klibinin üzerine sürükleyip bırakın; yalnızca o klibe ve çıktıya uygulanır.</p></div>
-            <span id="video-effect-status" class="text-[10px] text-cyan-300">Önce bir klip seçin</span>
-          </div>
-          <div id="video-effect-presets" class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-2 max-h-[440px] overflow-y-auto pr-1">
-            <button class="video-effect-card" data-video-effect="none"><div class="video-effect-demo"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Efektsiz</small></button>
-            <button class="video-effect-card" data-video-effect="vivid"><div class="video-effect-demo" style="filter:contrast(1.1) saturate(1.5)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Canlı Renk</small></button>
-            <button class="video-effect-card" data-video-effect="noir"><div class="video-effect-demo" style="filter:grayscale(1) contrast(1.2)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Siyah Beyaz</small></button>
-            <button class="video-effect-card" data-video-effect="warm"><div class="video-effect-demo" style="filter:sepia(.35) saturate(1.35)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Sıcak</small></button>
-            <button class="video-effect-card" data-video-effect="cool"><div class="video-effect-demo" style="filter:hue-rotate(18deg) saturate(1.2)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Soğuk</small></button>
-            <button class="video-effect-card" data-video-effect="blur"><div class="video-effect-demo" style="filter:blur(2px);transform:scale(1.05)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Bulanıklık</small></button>
-            <button class="video-effect-card" data-video-effect="vintage"><div class="video-effect-demo" style="filter:sepia(.6) contrast(.9)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Retro</small></button>
-            <button class="video-effect-card" data-video-effect="glitch"><div class="video-effect-demo" style="filter:contrast(1.3) saturate(1.5) hue-rotate(28deg)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Glitch</small></button>
-            <button class="video-effect-card" data-video-effect="mirror"><div class="video-effect-demo" style="transform:scaleX(-1)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Ayna</small></button>
-            <button class="video-effect-card" data-video-effect="soft"><div class="video-effect-demo" style="filter:blur(.7px) brightness(1.08) saturate(.85)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Yumuşak</small></button>
-          </div>
-        </div>
-        <div id="filter-editor" class="hidden">
-          <div class="flex items-center justify-between mb-3">
-            <div><h3 class="font-bold">Filtreler</h3><p class="text-[10px] text-slate-500">Filtreyi timeline’daki video klibinin üzerine sürükleyip bırakın.</p></div>
-            <span id="filter-status" class="text-[10px] text-pink-300">Önce bir video klibine bırakın</span>
-          </div>
-          <div id="filter-presets" class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-2 max-h-[440px] overflow-y-auto pr-1">
-            <button class="filter-card" data-filter="none"><div class="filter-demo"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Filtresiz</small></button>
-            <button class="filter-card" data-filter="portrait"><div class="filter-demo" style="filter:brightness(1.08) saturate(.92) contrast(.96)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Portre</small></button>
-            <button class="filter-card" data-filter="cinema"><div class="filter-demo" style="filter:contrast(1.18) saturate(.82) sepia(.12)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Sinema</small></button>
-            <button class="filter-card" data-filter="summer"><div class="filter-demo" style="filter:saturate(1.42) brightness(1.08) hue-rotate(-7deg)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Canlı Yaz</small></button>
-            <button class="filter-card" data-filter="teal"><div class="filter-demo" style="filter:contrast(1.12) saturate(1.18) hue-rotate(16deg)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Turkuaz</small></button>
-            <button class="filter-card" data-filter="rose"><div class="filter-demo" style="filter:saturate(1.2) hue-rotate(-18deg) brightness(1.04)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Pembe</small></button>
-            <button class="filter-card" data-filter="matte"><div class="filter-demo" style="filter:contrast(.84) saturate(.78) brightness(1.08)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Mat Film</small></button>
-            <button class="filter-card" data-filter="night"><div class="filter-demo" style="filter:brightness(.72) contrast(1.24) saturate(.72) hue-rotate(12deg)"></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Gece</small></button>
-          </div>
-        </div>
-        <div id="sticker-editor" class="hidden">
-          <div class="flex items-center justify-between mb-3">
-            <div><h3 class="font-bold">Stickerlar</h3><p class="text-[10px] text-slate-500">Stickerı timeline’daki STICKER kanalına sürükleyin; sonra ekranda taşıyın, ölçeklendirin veya döndürün.</p></div>
-            <span id="sticker-count" class="text-[10px] text-pink-300">0 sticker</span>
-          </div>
-          <div id="sticker-presets" class="grid grid-cols-4 sm:grid-cols-8 lg:grid-cols-12 gap-2 max-h-[520px] overflow-y-auto pr-1">
-            <button class="sticker-card" data-sticker="arrow"><div class="sticker-demo">➡️</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Ok</small></button>
-            <button class="sticker-card" data-sticker="circle"><div class="sticker-demo">⭕</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Daire</small></button>
-            <button class="sticker-card" data-sticker="heart"><div class="sticker-demo">❤️</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Kalp</small></button>
-            <button class="sticker-card" data-sticker="star"><div class="sticker-demo">⭐</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Yıldız</small></button>
-            <button class="sticker-card" data-sticker="sparkle"><div class="sticker-demo">✨</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Parıltı</small></button>
-            <button class="sticker-card" data-sticker="fire"><div class="sticker-demo">🔥</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Ateş</small></button>
-            <button class="sticker-card" data-sticker="bolt"><div class="sticker-demo">⚡</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Enerji</small></button>
-            <button class="sticker-card" data-sticker="target"><div class="sticker-demo">🎯</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Hedef</small></button>
-            <button class="sticker-card" data-sticker="check"><div class="sticker-demo">✅</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Onay</small></button>
-            <button class="sticker-card" data-sticker="party"><div class="sticker-demo">🎉</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Kutlama</small></button>
-            <button class="sticker-card" data-sticker="speech"><div class="sticker-demo">💬</div><small class="block px-2 pb-2 text-[9px] text-slate-400">Konuşma</small></button>
-            <button class="sticker-card" data-sticker="subscribe"><div class="sticker-demo"><span class="bg-red-600 text-white text-[10px] font-black px-2 py-1 rounded">ABONE OL</span></div><small class="block px-2 pb-2 text-[9px] text-slate-400">Abone Ol</small></button>
-          </div>
-        </div>
-        </div>
-        </div>
-        </div>
+            </div></div>
         </div>
         <div id="project-timeline-row" class="project-timeline-row">
-        <div id="project-library" class="panel rounded-2xl p-4">
-          <div class="flex items-center justify-between gap-3 mb-3">
-            <div><h2 class="font-bold">Projelerim</h2><p class="text-[10px] text-slate-500">Video, resim veya müziği tutup timeline'daki kendi kanalına bırakın.</p></div>
-            <label for="manual-file" class="bg-blue-600 hover:bg-blue-500 rounded-lg px-4 py-2 text-xs font-bold cursor-pointer">＋ Dosya ekle</label>
-          </div>
-          <div id="project-assets" class="flex gap-3 overflow-x-auto min-h-[118px] pb-1">
-            <div id="project-empty" class="w-full min-h-[112px] border border-dashed border-slate-700 rounded-xl flex items-center justify-center text-xs text-slate-500">Henüz dosya yok · video, resim veya müzik yükleyin</div>
-          </div>
-        </div>
+
         <div id="timeline-panel" class="panel rounded-2xl p-4">
           <div id="timeline-tabs" class="timeline-tabs"><button type="button" class="timeline-tab active" data-timeline-id="TL1"><span>Timeline 1 · Ana video</span></button><button id="timeline-add" type="button" class="timeline-add">＋ Timeline oluştur</button></div>
           <div class="flex justify-between items-end mb-3 gap-4">
-            <div><h2 class="font-bold">Timeline</h2><p class="text-[10px] text-slate-500">Kırmızı kafayı ve klipleri sürükleyin. Mıknatıs açıkken kenarlar hizalanır; kapalıyken boşluk bırakabilirsiniz.</p></div>
-            <div class="flex flex-wrap items-center justify-end gap-2"><button id="timeline-magnet" type="button" class="timeline-magnet active" aria-pressed="true" title="Açıkken klip kenarları birbirine hizalanır">🧲 Mıknatıs açık</button><button id="timeline-crop" type="button" class="timeline-fit" title="Seçili videonun kaynak çerçevesini kırp">⌗ Kırp</button><button id="timeline-fit" type="button" class="timeline-fit" title="Tüm timeline'ı görünen alana sığdır">↔ Tümünü sığdır</button><label class="text-[10px] text-slate-400 flex items-center gap-2">Timeline yakınlığı <input id="timeline-zoom" type="range" min="0.02" max="80" step="0.01" value="14" class="accent-blue-500 w-36"><span id="zoom-value">14 px/sn</span></label></div>
-          </div>
-          <div class="hidden" aria-hidden="true">
-            <button id="split" tabindex="-1">Böl</button>
-            <button id="remove" tabindex="-1">Sil</button>
-            <button id="undo" tabindex="-1">Geri al</button>
+            <div class="studio-timeline-edit-actions">
+              <h2 class="sr-only">Timeline</h2>
+            <button id="undo" type="button" title="Geri al">↶ Geri al</button>
+            <button id="split" type="button" title="Oynatma noktasında böl">Böl</button>
+            <button id="remove" type="button" title="Seçili öğeyi sil">Sil</button>
             <button id="left" tabindex="-1">Sola taşı</button>
             <button id="right" tabindex="-1">Sağa taşı</button>
             <button id="reset" tabindex="-1">Sıfırla</button>
           </div>
+            <div class="flex flex-wrap items-center justify-end gap-2"><button id="timeline-magnet" type="button" class="timeline-magnet active" aria-pressed="true" title="Açıkken klip kenarları birbirine hizalanır">🧲 Mıknatıs açık</button><button id="timeline-crop" type="button" class="timeline-fit" title="Seçili videonun kaynak çerçevesini kırp">⌗ Kırp</button><button id="timeline-fit" type="button" class="timeline-fit" title="Tüm timeline'ı görünen alana sığdır">↔ Tümünü sığdır</button><label class="text-[10px] text-slate-400 flex items-center gap-2">Timeline yakınlığı <input id="timeline-zoom" type="range" min="0.02" max="80" step="0.01" value="14" class="accent-blue-500 w-36"><span id="zoom-value">14 px/sn</span></label></div>
+          </div>
           <div id="timeline" class="relative h-[310px] rounded-xl bg-slate-950 border border-slate-800 overflow-x-auto overflow-y-hidden">
             <div id="timeline-content" class="relative h-full min-w-full">
+              <p id="studio-timeline-empty">Medya veya bir varlığı buraya sürükleyin.</p>
               <div id="timeline-ruler" class="absolute left-[132px] right-0 top-0 h-10 border-b border-slate-800"></div>
               <div id="sticker-label" class="track-label text-pink-400"><b>STICKER</b><span class="track-controls"><button class="track-control" data-track="sticker" data-track-action="lock" title="Sticker kanalını kilitle">🔓</button><button class="track-control" data-track="sticker" data-track-action="visible" title="Stickerları göster/gizle">👁</button></span></div>
               <div id="sticker-track" class="absolute left-[132px] h-12"></div>
@@ -1043,7 +1075,19 @@
     el('logs-close').onclick=()=>el('logs-modal').close();el('logs-search').oninput=refreshLogViewer;el('logs-modal').addEventListener('keydown',event=>event.stopPropagation());
     function switchTab(name){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));document.querySelectorAll('.workspace').forEach(x=>x.classList.toggle('active',x.id===name));if(name==='auto'&&S.autoData)drawAuto(S.autoData)}
     document.querySelectorAll('.tab').forEach(x=>x.onclick=()=>switchTab(x.dataset.tab));
-    function switchAssetTab(name){document.querySelectorAll('.asset-tab').forEach(x=>x.classList.toggle('active',x.dataset.assetTab===name));['text','transition','animation','video-effects','filter','sticker'].forEach(section=>el(section+'-editor').classList.toggle('hidden',section!==(name==='video'?'video-effects':name)))}
+    const studioSections={media:'project-library',sounds:'studio-sounds',text:'text-editor',fonts:'studio-fonts',templates:'studio-templates',captions:'studio-captions',video:'video-effects-editor',filter:'filter-editor',transition:'transition-editor',animation:'animation-editor',sticker:'sticker-editor'};
+    function switchAssetTab(name){
+      if(!Object.hasOwn(studioSections,name))return false;
+      setCollapsiblePanel('assetEditor',true);
+      document.querySelectorAll('.asset-tab').forEach(button=>{
+        const active=button.dataset.assetTab===name;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
+      });
+      for(const [section,id] of Object.entries(studioSections))el(id).classList.toggle('hidden',section!==name);
+      window.dispatchEvent(new CustomEvent('studio:section',{detail:{id:name}}));
+      return true;
+    }
+    window.StudioWorkspace={openSection: name=>{switchTab('manual');return switchAssetTab(name)}};
+    for(const id of ['project-load','project-delete'])el(id).addEventListener('click',()=>{el('studio-project-menu').open=false});
     document.querySelectorAll('.asset-tab').forEach(x=>x.onclick=()=>switchAssetTab(x.dataset.assetTab));
 
     function isTrackLocked(type){return type==='video'?isVideoTrackLocked(S.clips[S.selected]||S.activeVideoTrack):!!S.trackState[type]?.locked}
@@ -2204,7 +2248,7 @@
     document.querySelectorAll('.transition-preset').forEach(button=>{button.onpointerdown=e=>beginTransitionDrag(e,button);button.onclick=()=>{if(!S.suppressTransitionClick)log('manual-log','Bu geçişi kesilmiş iki klibin arasındaki mor + alanına sürükleyin.','info')}});
 
     const canvasLabels={'1920x1080':'YouTube Full HD · 1920×1080 · 16:9','3840x2160':'YouTube 4K · 3840×2160 · 16:9','2560x1440':'YouTube 2K · 2560×1440 · 16:9','1280x720':'HD · 1280×720 · 16:9','1080x1920':'Shorts / Reels / TikTok · 1080×1920 · 9:16','1080x1080':'Kare gönderi · 1080×1080 · 1:1','1080x1350':'Instagram portre · 1080×1350 · 4:5','2560x1080':'Sinematik · 2560×1080 · 21:9'};
-    function fitPreviewStage(){const shell=el('preview-shell'),stage=el('preview-stage'),ratio=S.canvas.width/S.canvas.height;if(window.matchMedia('(min-width:1100px) and (min-height:650px)').matches&&shell.clientWidth&&shell.clientHeight){const width=Math.min(shell.clientWidth,shell.clientHeight*ratio);stage.style.width=width+'px';stage.style.height=(width/ratio)+'px'}else{stage.style.width=ratio<.8?'min(46%,460px)':ratio<1.2?'min(68%,680px)':'100%';stage.style.height=''}}
+    function fitPreviewStage(){const shell=el('preview-shell'),stage=el('preview-stage'),ratio=S.canvas.width/S.canvas.height;if(shell.clientWidth&&shell.clientHeight){const width=Math.min(shell.clientWidth,shell.clientHeight*ratio);stage.style.width=width+'px';stage.style.height=(width/ratio)+'px'}else{stage.style.width=ratio<.8?'min(46%,460px)':ratio<1.2?'min(68%,680px)':'100%';stage.style.height=''}}
     function updateCanvas(){const value=el('canvas-preset').value,[w,h]=value.split('x').map(Number);S.canvas={width:w,height:h};el('canvas-preset-top').value=value;el('canvas-info').textContent=canvasLabels[value];el('canvas-info-top').textContent=canvasLabels[value];el('export-resolution').textContent=w+'×'+h;el('preview-stage').style.aspectRatio=w+'/'+h;fitPreviewStage();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();applyMaskImagePreview(S.clips[S.preview]||S.clips[S.selected])}
     let previewResizeFrame=0;new ResizeObserver(()=>{cancelAnimationFrame(previewResizeFrame);previewResizeFrame=requestAnimationFrame(()=>{fitPreviewStage();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();drawBrushCanvas()})}).observe(el('preview-shell'));
     el('canvas-preset').onchange=()=>{updateCanvas();drawClips()};el('canvas-preset-top').onchange=()=>{el('canvas-preset').value=el('canvas-preset-top').value;updateCanvas();drawClips()};
