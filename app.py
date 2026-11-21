@@ -13,6 +13,7 @@ import multiprocessing
 import time
 import secrets
 import tempfile
+from collections import deque
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from urllib.parse import quote
@@ -338,7 +339,7 @@ def is_benign_ffmpeg_warning(line: str) -> bool:
     return "udta parsing failed retrying raw" in normalized
 
 
-async def collect_ffmpeg_stderr(proc, q: asyncio.Queue, total_duration: float) -> list[str]:
+async def collect_ffmpeg_stderr(proc, q: "JobEvents | asyncio.Queue", total_duration: float) -> list[str]:
     """Read FFmpeg output in bounded chunks instead of newline-delimited records.
 
     FFmpeg can print a complete filter graph as one very long line. StreamReader.readline
@@ -551,8 +552,91 @@ def _load_version() -> str:
 
 APP_VERSION = _load_version()
 
-# In-memory storage for jobs
+# Keep recent terminal events available to subscribers that attach or reconnect
+# after a job completes. The download files have an independent lifetime.
+_JOB_EVENT_LIMIT = 256
+_COMPLETED_JOB_LIMIT = 64
+_COMPLETED_JOB_TTL = 15 * 60
+
 jobs = {}
+
+
+class JobEvents:
+    def __init__(self):
+        self._events = deque(maxlen=_JOB_EVENT_LIMIT)
+        self._next = 0
+        self._finished = False
+        self._changed = asyncio.Event()
+
+    async def put(self, message):
+        self._publish(message)
+
+    def _publish(self, message):
+        if self._finished:
+            return
+        if message is None:
+            self._finished = True
+        else:
+            self._events.append(message)
+            self._next += 1
+        signal = self._changed
+        self._changed = asyncio.Event()
+        signal.set()
+
+    def finish(self, error=None):
+        if error:
+            self._publish({"type": "error", "message": error})
+        self._publish(None)
+
+    async def read(self):
+        cursor = 0
+        while True:
+            first = self._next - len(self._events)
+            cursor = max(cursor, first)
+            if cursor < self._next:
+                message = self._events[cursor - first]
+                cursor += 1
+                yield message
+            elif self._finished:
+                break
+            else:
+                await self._changed.wait()
+
+
+def forget_completed_job(job_id):
+    job = jobs.get(job_id)
+    if job is None or "completed_at" not in job:
+        return
+    jobs.pop(job_id)
+    if script := job.get("filter_script"):
+        try:
+            os.remove(script)
+        except OSError:
+            pass
+
+
+def finish_job(job_id, task):
+    job = jobs.get(job_id)
+    if job is None or job.get("task") is not task:
+        return
+    job["completed_at"] = time.monotonic()
+    q = job.get("q")
+    if isinstance(q, JobEvents):
+        error = None
+        if task.cancelled():
+            error = "İşlem iptal edildi."
+        elif task.exception() is not None:
+            error = "İşlem beklenmedik şekilde durdu."
+        q.finish(error)
+
+    task.get_loop().call_later(_COMPLETED_JOB_TTL, forget_completed_job, job_id)
+    completed = sorted(
+        (record["completed_at"], key)
+        for key, record in jobs.items() if "completed_at" in record
+    )
+    for _, key in completed[:-_COMPLETED_JOB_LIMIT]:
+        forget_completed_job(key)
+
 
 
 def active_job_count(*, include_render=True):
@@ -575,6 +659,7 @@ def schedule_job(job_id, coroutine):
             raise RuntimeError("Kapanış veya güncelleme sırasında yeni iş başlatılamaz")
         task = asyncio.create_task(coroutine)
         jobs[job_id]["task"] = task
+    task.add_done_callback(lambda completed: finish_job(job_id, completed))
     return task
 
 
@@ -1684,7 +1769,7 @@ async def run_subtitle_job(job_id: str):
     finally:
         await q.put(None)
 
-async def detect_keywords(filepath: str, words_to_find: list, q: asyncio.Queue):
+async def detect_keywords(filepath: str, words_to_find: list, q: JobEvents):
     loop = asyncio.get_running_loop()
     def q_sync(msg):
         asyncio.run_coroutine_threadsafe(q.put({"type": "log", "message": msg}), loop)
@@ -2890,6 +2975,7 @@ async def run_render_job(job_id: str):
         elif not snapshot:
             lines.append(f"{current_audio}anull[outa]")
         
+        job["filter_script"] = script_path
         with open(script_path, "w") as f:
             f.write(";\n".join(lines))
             
@@ -3378,7 +3464,7 @@ async def start_analysis(
         "threshold": threshold,
         "duration": duration,
         "keywords": keywords,
-        "q": asyncio.Queue()
+        "q": JobEvents()
     }
     schedule_job(job_id, run_analysis_job(job_id))
     return {"job_id": job_id}
@@ -3415,7 +3501,7 @@ async def start_subtitles(
         "timeline_start": timeline_start,
         "speed": speed,
         "target_language": target_language,
-        "q": asyncio.Queue(),
+        "q": JobEvents(),
     }
     schedule_job(job_id, run_subtitle_job(job_id))
     return {"job_id": job_id}
@@ -3776,7 +3862,7 @@ async def start_render(
         "video_visible": video_visible,
         "mute_video_audio": mute_video_audio,
         "video_inputs": list(video_sources.values()),
-        "q": asyncio.Queue()
+        "q": JobEvents()
     }
     if snapshot:
         jobs[job_id]["snapshot_timeline_duration"] = layer_duration
@@ -3791,12 +3877,9 @@ async def stream_events(job_id: str):
         raise HTTPException(404)
         
     async def event_generator():
-        while True:
-            msg = await job["q"].get()
-            if msg is None:
-                break
-            yield f"data: {json.dumps(msg)}\n\n"
-            
+        async for message in job["q"].read():
+            yield f"data: {json.dumps(message)}\n\n"
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 def send_bytes_range_requests(file_obj: typing.BinaryIO, start: int, end: int, chunk_size: int = 65536):

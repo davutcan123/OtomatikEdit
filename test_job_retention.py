@@ -1,0 +1,86 @@
+"""Exercise bounded SSE replay and completed job lifetime in isolation."""
+import asyncio
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from test_update import load_source_backend
+
+
+class JobRetentionTests(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temporary = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.temporary.cleanup)
+        cls.backend = load_source_backend(cls.temporary.name)
+
+    async def asyncSetUp(self):
+        self.backend.jobs.clear()
+
+    async def collect(self, job_id):
+        response = await self.backend.stream_events(job_id)
+        return [message async for message in response.body_iterator]
+
+    async def test_two_connected_clients_and_a_late_client_see_the_result(self):
+        with patch.object(self.backend, "_JOB_EVENT_LIMIT", 3):
+            events = self.backend.JobEvents()
+
+        async def work():
+            await proceed.wait()
+            for percent in range(8):
+                await events.put({"type": "progress", "percent": percent})
+            await events.put({"type": "result", "download_url": "/download/test/mp4"})
+            await events.put(None)
+
+        proceed = asyncio.Event()
+        self.backend.jobs["job"] = {"q": events}
+        task = self.backend.schedule_job("job", work())
+        clients = [asyncio.create_task(self.collect("job")) for _ in range(2)]
+        await asyncio.sleep(0)
+        proceed.set()
+        await task
+        expected = await self.collect("job")
+        self.assertEqual(expected, await clients[0])
+        self.assertEqual(expected, await clients[1])
+        self.assertEqual(len(expected), 3)
+        self.assertIn("/download/test/mp4", expected[-1])
+        self.assertEqual(self.backend.active_job_count(), 0)
+
+    async def test_eviction_keeps_existing_stream_and_output(self):
+        output = Path(self.backend.OUTPUT_DIR) / "out_old.mp4"
+        script = Path(self.backend.OUTPUT_DIR) / "script_old.txt"
+        output.write_bytes(b"completed output")
+        script.write_text("completed filter graph")
+
+        async def start(job_id, *, script_path=None):
+            events = self.backend.JobEvents()
+            self.backend.jobs[job_id] = {"q": events, "filter_script": script_path}
+
+            async def complete():
+                await events.put({"type": "result"})
+                await events.put(None)
+
+            await self.backend.schedule_job(job_id, complete())
+
+        with patch.object(self.backend, "_COMPLETED_JOB_LIMIT", 1):
+            await start("old", script_path=script)
+            old_stream = await self.backend.stream_events("old")
+            wait = asyncio.Event()
+            self.backend.jobs["running"] = {"q": self.backend.JobEvents()}
+            running = self.backend.schedule_job("running", wait.wait())
+            await start("new")
+            self.assertEqual(set(self.backend.jobs), {"running", "new"})
+            self.assertEqual(len([line async for line in old_stream.body_iterator]), 1)
+            self.assertEqual(output.read_bytes(), b"completed output")
+            self.assertFalse(script.exists())
+            wait.set()
+            await running
+
+    async def test_ttl_removes_inactive_job_without_a_subsequent_request(self):
+        self.backend.jobs["expired"] = {"q": self.backend.JobEvents()}
+        with patch.object(self.backend, "_COMPLETED_JOB_TTL", 0):
+            await self.backend.schedule_job("expired", asyncio.sleep(0))
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            self.assertEqual(self.backend.jobs, {})

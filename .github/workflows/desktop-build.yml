@@ -60,7 +60,7 @@ jobs:
         run: brew install ffmpeg
       - name: Check desktop persistence, rendering and backend isolation
         run: >-
-          python -m unittest test_runtime_paths test_update test_desktop_backend test_desktop_update
+          python -m unittest test_runtime_paths test_update test_job_retention test_desktop_backend test_desktop_update
           test_snapshot test_sticker_timing test_render_encoder test_render_resources
           test_render_overlays test_render_execution test_render_graph_optimizations test_render_color test_image_layer_effects
           test_multitrack_crop test_brush_masks

@@ -10,17 +10,22 @@ from fastapi.testclient import TestClient
 from runtime_paths import RuntimePaths
 
 
+def load_source_backend(data_dir):
+    root = Path(__file__).resolve().parent
+    paths = RuntimePaths(root, root, Path(data_dir), False)
+    spec = importlib.util.spec_from_file_location("source_update_test_app", root / "app.py")
+    backend = importlib.util.module_from_spec(spec)
+    with patch("runtime_paths.resolve_runtime_paths", return_value=paths):
+        spec.loader.exec_module(backend)
+    return backend
+
+
 class SourceUpdateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.temporary.cleanup)
-        root = Path(__file__).resolve().parent
-        paths = RuntimePaths(root, root, Path(cls.temporary.name), False)
-        spec = importlib.util.spec_from_file_location("source_update_test_app", root / "app.py")
-        cls.backend = importlib.util.module_from_spec(spec)
-        with patch("runtime_paths.resolve_runtime_paths", return_value=paths):
-            spec.loader.exec_module(cls.backend)
+        cls.backend = load_source_backend(cls.temporary.name)
 
     def check(self, release):
         with patch.object(self.backend, "_latest_release", return_value=release):
