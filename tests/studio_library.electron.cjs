@@ -16,6 +16,8 @@ const token = crypto.randomBytes(24).toString('hex');
 const headers = {'X-Desktop-Token':token};
 const backendLines = [];
 let backend, win, origin;
+// Wait for backend cleanup and the fixture's explicit exit code.
+app.on('window-all-closed', () => {});
 const evaluate = code => win.webContents.executeJavaScript(code);
 const frames = () => evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
 
@@ -81,6 +83,20 @@ async function click(selector) {
   const at = await point(selector);
   send('mouseDown',at);send('mouseUp',at);await frames();
 }
+async function dragToVideoClip(selector) {
+  const source = await point(selector);
+  send('mouseDown', source);
+  send('mouseMove', { x: source.x + 14, y: source.y + 10 });
+  await frames();
+  assert.ok(await evaluate("!el('drag-ghost').classList.contains('hidden')"), 'Native drag started for '+selector);
+
+  // Revealing the timeline can move the source out of view on short screens.
+  const target = await point('#video-track-1 .clip');
+  send('mouseMove', target);
+  await frames();
+  send('mouseUp', target);
+  await frames();
+}
 async function search(value) {
   await evaluate(`el('studio-asset-search').value=${JSON.stringify(value)};el('studio-asset-search').dispatchEvent(new Event('input',{bubbles:true}))`);
 }
@@ -143,9 +159,7 @@ async function checkPlayerAndLooks() {
   await evaluate('videoTrackState(1).locked=false;drawClips()');
   await click('#studio-favorites');
   await search('krem');
-  const from = await point('[data-studio-look="cream-studio"]'), target = await point('#video-track-1 .clip');
-  send('mouseDown',from);send('mouseMove',{x:from.x+14,y:from.y+10});await frames();
-  send('mouseMove',target);await frames();send('mouseUp',target);await frames();
+  await dragToVideoClip('[data-studio-look="cream-studio"]');
   assert.equal(await evaluate('S.clips[0].brightness'),111,'Drag applies the look to the actual video clip');
   return {before,after,initialZoom:sample.zoom};
 }
@@ -201,9 +215,7 @@ async function checkCatalogSelection() {
   await click('[data-asset-tab="filter"]');
   assert.equal(await evaluate('el("studio-look-save").disabled'),true);
   await search('altin');
-  const from=await point('[data-filter=golden]'),to=await point('#video-track-1 .clip');
-  send('mouseDown',from);send('mouseMove',{x:from.x+14,y:from.y+10});await frames();
-  send('mouseMove',to);await frames();send('mouseUp',to);await frames();
+  await dragToVideoClip('[data-filter=golden]');
   assert.equal(await evaluate('S.clips[0].filter'),'golden','An explicit drop on a video still applies the filter');
   await evaluate('undoEdit()');
 }
