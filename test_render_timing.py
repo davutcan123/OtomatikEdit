@@ -3,7 +3,7 @@ import unittest
 
 from render_audio import clip_audio_filter, join_audio, mix_audio_layers
 from render_timing import (ClipClock, TimelineClip, normalize_zoom_cadence, plan_render_timing,
-                           plan_video_frames, snapshot_source_window, source_frame_samples)
+                           plan_video_frames, snapshot_source_window, source_frame_samples, subtitle_frame_interval)
 
 
 class RenderTimingTests(unittest.TestCase):
@@ -75,6 +75,18 @@ class RenderTimingTests(unittest.TestCase):
             normalize_zoom_cadence(first + zoom * 2, 24, snapshot_base=-.25),
             first + ",fps=24" + (zoom + ",setpts=PTS+-0.25000000/TB") * 2,
         )
+
+    def test_subtitle_window_covers_a_frame_at_the_configured_output_rate(self):
+        for fps, start, end, duration, expected in (
+            (30, .315, 1.205, 3.5, (.315, 1.205)),
+            (30, 1.541, 1.554, 3.5, (1.541, 1.567)),
+            (30, 1.978, 1.511, 3.5, (1.978, 2.001)),
+            (30, 3.490, 3.498, 3.5, (3.466, 3.498)),
+            (24, .001, .002, .002, (0, .002)),
+            (60, .001, .002, 1, (.001, .017)),
+        ):
+            with self.subTest(fps=fps, start=start, end=end):
+                self.assertEqual(subtitle_frame_interval(start, end, fps=fps, duration=duration), expected)
 
     def test_audio_pads_to_video_span_after_speed_and_track_delays(self):
         timing = TimelineClip(ClipClock(2, 7, 2, True), .25, .75)

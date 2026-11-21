@@ -2,6 +2,8 @@
 #studio-captions .studio-caption-heading { display: flex; align-items: center; justify-content: space-between; gap: 5px; margin-bottom: 8px; }
 #studio-captions h3, #studio-captions h4 { color: var(--studio-ink); font-weight: 750; }
 .studio-caption-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.studio-caption-export-clock { margin-top: 8px; }
+#studio-caption-export-clock-hint { margin-top: 4px; font-size: 10px; line-height: 1.4; }
 .studio-caption-import-options, .studio-caption-times, .studio-caption-appearance { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 5px; margin: 6px 0; }
 #studio-captions label { display: block; min-width: 0; }
 #studio-captions :is(select,input,textarea) { width: 100%; min-width: 0; margin-top: 3px; padding: 4px 5px; color: var(--studio-ink); border: 1px solid var(--studio-border); border-radius: 5px; background: #151a18; font-size: 11px; }

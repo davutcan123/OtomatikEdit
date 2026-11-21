@@ -175,18 +175,30 @@
     drawClips();message('Stil '+others.length+' altyazıya uygulandı.');
   }
 
+  async function videoSubtitleTimes() {
+    const data=manualExportData();
+    if(!data.texts.some(item=>item.kind==='subtitle')){
+      throw new Error('Video için görünür altyazı yok. Tüm satırları almak için zaman çizelgesi zamanlarını seçin.');
+    }
+    const response=await fetch('/studio/subtitle-timing',{method:'POST',body:buildRenderForm(data)});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok||!Array.isArray(result.cues))throw new Error(result.detail||'Video altyazı zamanları hesaplanamadı.');
+    return result.cues;
+  }
+
   async function exportFile() {
     const request={scope:scope()};
     if(pendingExport?.scope===request.scope||desktopUpdateFrozen||desktopClosing)return;
-    let content;
-    try {content=codec.serialize(texts());}
-    catch(error){message(error.message,true);return;}
+    const clock=field('export-clock').value;
     const timeline=S.timelines.find(item=>item.id===S.activeTimelineId);
     const name=[el('project-name').value.trim(),timeline?.name].filter(Boolean).join(' - ');
     const safeName=(name.replace(/[<>:"/\\|?*\p{C}]/gu,' ').trim().slice(0,80)||'altyazı')+' - altyazı.srt';
     const finish=beginDesktopOperation('SRT altyazı kaydetme');
     pendingExport=request;refresh();
     try {
+      const cues=clock==='video'?await videoSubtitleTimes():texts();
+      if(request.scope!==scope())return;
+      const content=codec.serialize(cues);
       if(desktopBridge){
         const result=await desktopBridge.saveSubtitles(safeName,content);
         if(request.scope===scope())message(result.saved?'SRT dosyası kaydedildi.':'SRT kaydı iptal edildi.');

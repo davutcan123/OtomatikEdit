@@ -193,6 +193,13 @@
                 <label>İçe aktarma konumu<select id="studio-caption-position"><option value="zero">Başlangıçtan</option><option value="playhead">Oynatma noktasından</option></select></label>
                 <label>Mevcut altyazılar<select id="studio-caption-mode"><option value="append">Koru ve ekle</option><option value="replace">Değiştir</option></select></label>
               </div>
+              <label class="studio-caption-export-clock">SRT dışa aktarma zamanları
+                <select id="studio-caption-export-clock" aria-describedby="studio-caption-export-clock-hint">
+                  <option value="video">Tam video ile senkron</option>
+                  <option value="timeline">Zaman çizelgesindeki gibi</option>
+                </select>
+              </label>
+              <p id="studio-caption-export-clock-hint">Tam video seçeneği görünür altyazıları, geçişleri ve dışa aktarma kare hızını kullanır.</p>
               <p id="studio-caption-status" role="status" aria-live="polite"></p>
               <input id="studio-caption-search" type="search" placeholder="Transkriptte ara" aria-label="Transkriptte ara">
               <p id="studio-caption-empty">Bu zaman çizelgesinde altyazı yok.</p>

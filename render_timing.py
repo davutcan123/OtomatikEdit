@@ -240,6 +240,29 @@ def gif_clock_filters(fps, *, start=0, start_frame=0, snapshot_elapsed_us=None, 
     )
 
 
+def crossfade_boundaries(segments, transitions):
+    """Return the ruler cut and overlap duration of each legacy transition."""
+    boundaries = []
+    for transition in transitions:
+        clip = segments[transition["boundary"]]
+        boundary = clip.get("timelineStart", 0) + ClipClock.from_segment(clip).duration
+        boundaries.append((boundary, transition["duration"]))
+    return boundaries
+
+
+def subtitle_frame_interval(start, end, *, fps, duration):
+    """Keep millisecond cue times and cover a real frame when a cue has none."""
+    start_ms = round(start * 1000)
+    end_ms = max(start_ms, round(end * 1000))
+    first_frame = (start_ms * fps + 999) // 1000
+    last_frame = max(0, math.ceil(duration * fps - 1e-7) - 1)
+    visible_frame = min(first_frame, last_frame)
+    visible_ms = visible_frame * 1000 // fps
+    # A cue after the last frame begins on that frame. The half-open end must
+    # include the chosen frame even when it falls between two milliseconds.
+    return min(start_ms, visible_ms) / 1000, max(end_ms, visible_ms + 1) / 1000
+
+
 def resolve_export_range(start, end, *, fps, timeline_duration, output_duration, segments, transitions):
     """Project the ruler endpoints onto the already composed export clock."""
     if start is None and end is None:
@@ -248,11 +271,7 @@ def resolve_export_range(start, end, *, fps, timeline_duration, output_duration,
             or not 0 <= start < end <= timeline_duration + .00001):
         raise ValueError("Giriş ve çıkış noktaları timeline sınırları içinde olmalı.")
 
-    boundaries = []
-    for transition in transitions:
-        clip = segments[transition["boundary"]]
-        boundary = clip["timelineStart"] + ClipClock.from_segment(clip).duration
-        boundaries.append((boundary, transition["duration"]))
+    boundaries = crossfade_boundaries(segments, transitions)
 
     def projected(time):
         # The incoming section already consumed by an overlap shares its end

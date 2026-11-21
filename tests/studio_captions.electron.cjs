@@ -283,7 +283,12 @@ async function checkBrowserExport(named,nativeData) {
   await click('[data-asset-tab="captions"]');
   assert.equal(await evaluate('typeof desktopApp'),'undefined');
   assert.deepEqual(await rendererCues(),edited);
-  const browserFile=path.join(artifacts,'browser.srt');
+  const browserFile=await downloadSrt('browser');
+  assert.deepEqual(assertSrt(browserFile),nativeData);
+}
+
+async function downloadSrt(name) {
+  const browserFile=path.join(artifacts,name+'.srt');
   const downloaded=new Promise((resolve,reject)=>{
     const timeout=setTimeout(()=>reject(new Error('SRT download did not finish')),10000);
     win.webContents.session.once('will-download',(_event,item)=>{
@@ -293,7 +298,7 @@ async function checkBrowserExport(named,nativeData) {
   });
   await click('#studio-caption-export');
   await downloaded;
-  assert.deepEqual(assertSrt(browserFile),nativeData);
+  return browserFile;
 }
 
 async function checkDraftIsolation() {
@@ -319,10 +324,11 @@ async function checkDraftIsolation() {
   assert.deepEqual(await draft(),['Kayıtlı metin','1','2'],'Even identical timeline and cue IDs are scoped to the current project');
 }
 
-async function render(captions) {
+async function render(captions,{variant,trim=false}={variant:"nominal",trim:true}) {
   const job=await evaluate(`(async()=>{
     const data=manualExportData();data.resolution={width:320,height:180};
-    data.options.hardware='cpu';data.options.fps=30;data.clips[0].end=2.4;
+    data.options.hardware='cpu';data.options.fps=30;
+    if(${trim})data.clips[0].end=2.4;
     data.texts=${captions} ? data.texts.filter(item=>item.kind==='subtitle') : [];
     const response=await fetch('/start-render',{method:'POST',body:buildRenderForm(data)});
     if(!response.ok)throw new Error(await response.text());
@@ -330,7 +336,7 @@ async function render(captions) {
   })()`);
   const response=await fetch(origin+job.download_url,{headers});
   assert.ok(response.ok);
-  const output=path.join(artifacts,captions?'captions.mp4':'original.mp4');
+  const output=path.join(artifacts,variant+(captions?'-captions.mp4':'-original.mp4'));
   fs.writeFileSync(output,Buffer.from(await response.arrayBuffer()));
   const bundled=path.join(root,'tools','ffmpeg','bin','ffmpeg.exe');
   const ffmpeg=process.env.SMART_EDITOR_FFMPEG||(process.platform==='win32'&&fs.existsSync(bundled)?bundled:'ffmpeg');
@@ -339,13 +345,12 @@ async function render(captions) {
   });
 }
 
-async function checkRenderedTiming() {
-  const baseline=await render(false), withCaptions=await render(true);
+function checkPixels(label,baseline,withCaptions,expectations) {
   const frameSize=320*90*3;
   assert.equal(baseline.length,withCaptions.length);
-  assert.ok(baseline.length>=62*frameSize);
+  assert.ok(Math.max(...expectations.map(([frame])=>frame))<baseline.length/frameSize,'The rendered video includes all sampled frames');
   const evidence=[];
-  for(const [frame,visible] of [[9,false],[10,true],[36,true],[37,false],[42,false],[43,true],[60,true],[61,false]]) {
+  for(const [frame,visible] of expectations) {
     let changed=0;
     for(let i=frame*frameSize;i<(frame+1)*frameSize;i+=3) {
       const delta=Math.abs(withCaptions[i]-baseline[i])+Math.abs(withCaptions[i+1]-baseline[i+1])+Math.abs(withCaptions[i+2]-baseline[i+2]);
@@ -353,8 +358,92 @@ async function checkRenderedTiming() {
     }
     evidence.push({frame,time:frame/30,visible,changed});
   }
-  console.log('CPU render cue boundaries',JSON.stringify(evidence));
+  console.log(label+' CPU render cue boundaries',JSON.stringify(evidence));
   for(const {frame,visible,changed} of evidence)assert.ok(visible?changed>=20:changed<20,`Frame ${frame} visibility ${visible} with ${changed} changed pixels`);
+}
+
+async function checkRenderedTiming() {
+  const frames=[[9,false],[10,true],[36,true],[37,false],[42,false],[43,true],[60,true],[61,false]];
+  checkPixels('No transition',await render(false),await render(true),frames);
+}
+
+async function checkCrossfadeSidecar() {
+  const timelineCues=[
+    {text:'Önce',start:.7,end:.92},
+    {text:'Kısa',start:2.041,end:2.054},
+    {text:'Geçiş',start:2.18,end:2.32},
+    {text:'Kesimi aşan',start:1.978,end:2.011},
+    {text:'Sonra',start:3,end:3.24},
+    {text:'Son kare',start:3.99,end:3.998},
+  ].sort((a,b)=>a.start-b.start);
+  await evaluate(`(() => {
+    const base=S.clips[0],left={...base,clipId:'left',start:0,end:2,timelineStart:0};
+    const right={...base,clipId:'right',start:2,end:4,timelineStart:2};
+    S.texts=[];S.clips=[left,right];S.transitions=[{boundary:0,type:'fade',duration:.5}];
+    drawClips();select(0);seekOutputTime(0);
+  })()`);
+  assert.equal(await evaluate('manualExportData().options.timelineComposite'),false);
+  assert.match(await importAndWait(codec.serialize(timelineCues)),/6 altyazı eklendi/);
+  assert.equal(await evaluate('el("studio-caption-export-clock").value'),'video');
+  const read=file=>codec.parse(fs.readFileSync(file,'utf8')).map(toObject);
+  const synced=read(await downloadSrt('crossfade-video-clock'));
+  assert.deepEqual(synced,[
+    {text:'Önce',start:.7,end:.92},
+    {text:'Kısa',start:1.541,end:1.567},
+    {text:'Geçiş',start:1.68,end:1.82},
+    {text:'Kesimi aşan',start:1.978,end:2.001},
+    {text:'Sonra',start:2.5,end:2.74},
+    {text:'Son kare',start:3.466,end:3.498},
+  ]);
+  const parity=async (variant,cues,frames)=>{
+    const sample=frames.map(frame=>[frame,cues.some(cue=>cue.start<=frame/30&&frame/30<cue.end)]);
+    checkPixels(variant,await render(false,{variant}),await render(true,{variant}),sample);
+  };
+  await parity('Single-track crossfade',synced,[20,21,28,46,47,48,50,51,54,55,59,60,61,74,75,82,83,103,104]);
+
+  await updateControl('studio-caption-export-clock','timeline');
+  assert.deepEqual(read(await downloadSrt('crossfade-timeline-clock')),timelineCues);
+  await evaluate('addVideoTrack()');
+  assert.equal(await evaluate('manualExportData().options.timelineComposite'),true);
+  await updateControl('studio-caption-export-clock','video');
+  const composite=read(await downloadSrt('composite-video-clock'));
+  assert.equal(composite.find(cue=>cue.text==='Sonra').start,3);
+  assert.equal(composite.find(cue=>cue.text==='Geçiş').start,2.18);
+  assert.equal(composite.find(cue=>cue.text==='Kısa').end,2.067);
+  await parity('Composite crossfade',composite,[20,21,28,59,60,61,62,65,66,69,70,89,90,97,98,118,119]);
+}
+
+async function checkStaleTimingExport() {
+  await evaluate(`(() => {
+    S.trackState.subtitle.visible=false;drawClips();
+  })()`);
+  await click('#studio-caption-export');
+  assert.match(await readStatus(),/görünür altyazı yok/);
+  await evaluate(`(() => {
+    S.trackState.subtitle.visible=true;drawClips();
+    const fetchDefault=window.fetch;
+    window.fetch=async (input,options)=>{
+      if(input!=='/studio/subtitle-timing')return fetchDefault(input,options);
+      window.fetch=fetchDefault;
+      const reply=await fetchDefault(input,options);
+      return new Promise(resolve=>{window.fixtureReleaseClock=()=>resolve(reply)});
+    };
+  })()`);
+  let staleDownloads=0;
+  const preventDownload=(_event,item)=>{staleDownloads++;item.cancel()};
+  const session=win.webContents.session;
+  session.on('will-download',preventDownload);
+  try {
+    await click('#studio-caption-export');
+    await waitUI('typeof fixtureReleaseClock==="function"','delayed local timing response');
+    await evaluate('createTimeline();fixtureReleaseClock()');
+    await waitUI('desktopOperations.size===0','timing export released after timeline navigation');
+    await frames();
+    assert.equal(staleDownloads,0,'A stale result never starts a save in the new timeline');
+    assert.equal(await readStatus(),'');
+  } finally {
+    session.removeListener('will-download',preventDownload);
+  }
 }
 
 app.whenReady().then(async()=>{
@@ -365,6 +454,8 @@ app.whenReady().then(async()=>{
   const nativeData=await checkNativeExports();
   await checkRenderedTiming();
   await checkBrowserExport(named,nativeData);
+  await checkCrossfadeSidecar();
+  await checkStaleTimingExport();
   await checkDraftIsolation();
   console.log('SRT editor, restore, both save paths and timed FFmpeg render verified.',artifacts);
 }).catch(error=>{

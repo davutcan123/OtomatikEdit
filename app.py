@@ -41,11 +41,11 @@ from render_video_tracks import (normalize_video_track, normalize_source_crop, s
                                  video_grid)
 from studio_fonts import bundled_font_path, font_face_css, normalize_font_family
 from render_audio import atempo_chain, clip_audio_filter, join_audio, mix_audio_layers
-from render_timing import (ClipClock, MICROSECONDS_PER_SECOND, align_output_frame_timestamps,
+from render_timing import (ClipClock, MICROSECONDS_PER_SECOND, align_output_frame_timestamps, crossfade_boundaries,
                            displayed_output_frame, first_output_frame, gif_clock_filters,
                            normalize_zoom_cadence, output_frame_time_us, plan_render_timing,
                            plan_video_frames, resolve_export_range, snapshot_source_window,
-                           source_frame_samples)
+                           source_frame_samples, subtitle_frame_interval)
 
 RUNTIME_PATHS = resolve_runtime_paths(__file__)
 BASE_DIR = str(RUNTIME_PATHS.source_dir)
@@ -1051,6 +1051,7 @@ def normalize_text_items(items, total_duration: float) -> list[dict]:
             raw_transform_keyframes, max(0.05, end - start)
         )
         normalized.append({
+            "kind": "subtitle" if subtitle else "text",
             "text": text,
             "start": start,
             "end": end,
@@ -1273,14 +1274,7 @@ def adjust_texts_for_transitions(
 ) -> list[dict]:
     if not transitions:
         return items
-    boundaries = []
-    transition_map = {item["boundary"]: item["duration"] for item in transitions}
-    for index, segment in enumerate(segments[:-1]):
-        elapsed = segment.get("timelineStart", 0) + (
-            segment["end"] - segment["start"]
-        ) / segment.get("speed", 1)
-        if index in transition_map:
-            boundaries.append((elapsed, transition_map[index]))
+    boundaries = crossfade_boundaries(segments, transitions)
     actual_duration = max(
         [s.get("timelineStart", 0) + (s["end"] - s["start"]) / s.get("speed", 1) for s in segments]
         + [item["end"] for item in items]
@@ -1294,7 +1288,9 @@ def adjust_texts_for_transitions(
         end_shift = sum(duration for boundary, duration in boundaries if boundary < item["end"])
         copy_item["start"] = max(0.0, item["start"] - start_shift)
         copy_item["end"] = min(actual_duration, item["end"] - end_shift)
-        if copy_item["end"] - copy_item["start"] >= 0.05:
+        # Subtitle windows that straddle an overlap may collapse here. Their
+        # final frame is resolved on the composed output clock.
+        if item.get("kind") == "subtitle" or copy_item["end"] - copy_item["start"] >= 0.05:
             adjusted.append(copy_item)
     return adjusted
 
@@ -2924,6 +2920,10 @@ async def run_render_job(job_id: str):
             )
             current_video = next_label
 
+        if not snapshot and any(item["kind"] == "subtitle" for item in text_items):
+            lines.append(f"{current_video}{align_output_frame_timestamps(target_fps)}[captionclock]")
+            current_video = "[captionclock]"
+
         for index, text_item in enumerate(text_items):
             input_index = len(video_inputs) + index
             next_label = f"[textv{index}]"
@@ -2958,10 +2958,13 @@ async def run_render_job(job_id: str):
                 overlay_input = animated_label
                 x_expr = f"W*({text_x})-w/2"
                 y_expr = f"H*({text_y})-h/2"
+            start, end = text_item["start"], text_item["end"]
+            visibility = f"between(t,{start},{end})"
+            if not snapshot and text_item["kind"] == "subtitle":
+                visibility = f"gte(t,{start})*lt(t,{end})"
             lines.append(
                 f"{current_video}{overlay_input}overlay=x='{x_expr}':y='{y_expr}':"
-                f"enable='between(t,{text_item['start']},{text_item['end']})':"
-                f"eof_action=pass:shortest=1{next_label}"
+                f"enable='{visibility}':eof_action=pass:shortest=1{next_label}"
             )
             current_video = next_label
         for index, sticker_item in enumerate(sticker_items):
@@ -3563,6 +3566,7 @@ async def start_subtitles(
 
 @app.post("/start-render")
 @app.post("/start-snapshot")
+@app.post("/studio/subtitle-timing")
 async def start_render(
     request: Request,
     file_id: str = Form(""),
@@ -3588,6 +3592,9 @@ async def start_render(
     canvas_height: int = Form(0),
 ):
     snapshot = request.url.path == "/start-snapshot"
+    subtitle_timing = request.url.path == "/studio/subtitle-timing"
+    if subtitle_timing and (range_in is not None or range_out is not None):
+        raise HTTPException(400, "SRT zamanlaması videonun tamamı için hesaplanır.")
     if snapshot:
         if range_in is not None or range_out is not None:
             raise HTTPException(400, "Kare alırken bir dışa aktarma aralığı seçilemez.")
@@ -3665,13 +3672,13 @@ async def start_render(
         if segment_file_id not in video_sources:
             video_stream, audio_stream = await asyncio.to_thread(source_playback_streams, segment_path)
             has_audio = bool(audio_stream)
-            if not video_stream and not snapshot:
+            if not video_stream and not (snapshot or subtitle_timing):
                 has_audio = await asyncio.to_thread(video_has_audio, segment_path)
             source = {
                 "fileId": segment_file_id,
                 "path": segment_path,
                 "duration": await asyncio.to_thread(get_video_duration, segment_path),
-                "hasAudio": not snapshot and has_audio,
+                "hasAudio": not (snapshot or subtitle_timing) and has_audio,
             }
             if video_stream:
                 source["video_index"] = video_stream["index"]
@@ -3900,13 +3907,22 @@ async def start_render(
     if not normalized_segments and not (normalized_texts or normalized_stickers or normalized_images
                                         or validated_audio_layers):
         raise HTTPException(400, "Timeline'a en az bir klip veya katman ekleyin")
+    output_layers = normalized_texts + normalized_stickers + normalized_images + normalized_audio_layers
+    output_duration = max([hard_cut_duration - (0 if multitrack else sum(item["duration"] for item in normalized_transitions))]
+                          + [item["end"] for item in output_layers])
+    subtitle_items = [item for item in normalized_texts if item["kind"] == "subtitle"]
+    if not snapshot:
+        for item in subtitle_items:
+            item["start"], item["end"] = subtitle_frame_interval(
+                item["start"], item["end"], fps=fps, duration=output_duration,
+            )
+    if subtitle_timing:
+        return {"cues": [{key: item[key] for key in ("start", "end", "text")} for item in subtitle_items]}
+
     dimension_source = filepath if file_id and get_media_kind(file_id) == "video" else next(
         (source["path"] for source in video_sources.values()), None)
     source_width, source_height = (await asyncio.to_thread(get_video_dimensions, dimension_source)
                                    if dimension_source else (width or 1920, height or 1080))
-    output_duration = max([hard_cut_duration - (0 if multitrack else sum(item["duration"] for item in normalized_transitions))]
-                          + [item["end"] for item in normalized_texts + normalized_stickers + normalized_images + normalized_audio_layers])
-        
     try:
         export_range = resolve_export_range(
             range_in, range_out, fps=fps, timeline_duration=layer_duration,
