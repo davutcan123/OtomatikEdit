@@ -103,28 +103,40 @@ class JobRetentionTests(unittest.IsolatedAsyncioTestCase):
         output = Path(self.backend.OUTPUT_DIR) / "out_old.mp4"
         output.write_bytes(b"completed output")
 
-        async def start(job_id):
+        def start(job_id, proceed=None):
             events = self.backend.JobEvents()
             self.backend.jobs[job_id] = {"q": events}
 
             async def complete():
+                if proceed is not None:
+                    await proceed.wait()
                 await events.put({"type": "result"})
                 await events.put(None)
 
-            await self.backend.schedule_job(job_id, complete())
+            return self.backend.schedule_job(job_id, complete())
 
-        with patch.object(self.backend, "_COMPLETED_JOB_LIMIT", 1):
+        with (
+            patch.object(self.backend, "_COMPLETED_JOB_LIMIT", 1),
+            patch.object(self.backend, "time", wraps=self.backend.time) as clock,
+        ):
+            # Both jobs finish on the same timer tick, in reverse start order.
+            clock.monotonic.return_value = 123
+            proceed = asyncio.Event()
+            new = start("new", proceed)
             await start("old")
             old_stream = await self.backend.stream_events("old")
             wait = asyncio.Event()
             self.backend.jobs["running"] = {"q": self.backend.JobEvents()}
             running = self.backend.schedule_job("running", wait.wait())
-            await start("new")
-            self.assertEqual(set(self.backend.jobs), {"running", "new"})
-            self.assertEqual(len([line async for line in old_stream.body_iterator]), 1)
-            self.assertEqual(output.read_bytes(), b"completed output")
-            wait.set()
-            await running
+            try:
+                proceed.set()
+                await new
+                self.assertEqual(set(self.backend.jobs), {"running", "new"})
+                self.assertEqual(len([line async for line in old_stream.body_iterator]), 1)
+                self.assertEqual(output.read_bytes(), b"completed output")
+            finally:
+                wait.set()
+                await running
 
     async def test_ttl_removes_inactive_job_without_a_subsequent_request(self):
         self.backend.jobs["expired"] = {"q": self.backend.JobEvents()}

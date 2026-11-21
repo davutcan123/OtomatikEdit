@@ -16,6 +16,7 @@ import secrets
 import tempfile
 from collections import deque
 from contextlib import asynccontextmanager
+from itertools import count
 from types import SimpleNamespace
 from urllib.parse import quote
 
@@ -601,6 +602,7 @@ _JOB_EVENT_LIMIT = 256
 _JOB_HEARTBEAT_SECONDS = 10
 _COMPLETED_JOB_LIMIT = 64
 _COMPLETED_JOB_TTL = 15 * 60
+_completed_job_order = count()
 
 jobs = {}
 
@@ -659,7 +661,7 @@ class JobEvents:
 
 def forget_completed_job(job_id):
     job = jobs.get(job_id)
-    if job is None or "completed_at" not in job:
+    if job is None or "completion_order" not in job:
         return
     jobs.pop(job_id)
 
@@ -668,7 +670,8 @@ def finish_job(job_id, task):
     job = jobs.get(job_id)
     if job is None or job.get("task") is not task:
         return
-    job["completed_at"] = time.monotonic()
+    # Multiple completions can share a timer tick. Order by callback sequence.
+    job["completion_order"] = next(_completed_job_order)
     q = job.get("q")
     if isinstance(q, JobEvents):
         error = None
@@ -680,8 +683,8 @@ def finish_job(job_id, task):
 
     task.get_loop().call_later(_COMPLETED_JOB_TTL, forget_completed_job, job_id)
     completed = sorted(
-        (record["completed_at"], key)
-        for key, record in jobs.items() if "completed_at" in record
+        (record["completion_order"], key)
+        for key, record in jobs.items() if "completion_order" in record
     )
     for _, key in completed[:-_COMPLETED_JOB_LIMIT]:
         forget_completed_job(key)
