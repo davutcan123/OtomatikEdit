@@ -124,27 +124,55 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   assert.equal(recoveredVideo.width, 640); assert.equal(recoveredVideo.clips, 1);
   assert.ok(recoveredVideo.duration >= 1.9);
   assert.equal(await mainWindow.webContents.executeJavaScript('getComputedStyle(document.querySelector(".brush-stage-toolbar")).display'), 'none');
+  const twoFrames = () => mainWindow.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   const layouts = [];
   for (const [width, height] of [[1440, 900], [1366, 740], [1100, 700]]) {
     mainWindow.setContentSize(width, height);
-    await mainWindow.webContents.executeJavaScript('new Promise(r=>setTimeout(r,180))');
-    const layout = await mainWindow.webContents.executeJavaScript(`(()=>{const bounds=id=>{const r=document.getElementById(id).getBoundingClientRect();return{top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height}};return{width:innerWidth,height:innerHeight,pageHeight:document.documentElement.scrollHeight,pageWidth:document.documentElement.scrollWidth,preview:bounds('preview-shell'),stage:bounds('preview-stage'),timeline:bounds('timeline'),timelinePanel:bounds('timeline-panel'),core:bounds('manual-core'),assets:bounds('asset-editor'),player:bounds('preview-panel'),inspector:bounds('right-editor-column'),transport:bounds('studio-play-toggle'),nativeControls:document.getElementById('manual-video').controls}})()`);
-    assert.ok(layout.pageHeight <= height + 2, JSON.stringify(layout));
-    assert.ok(layout.pageWidth <= width + 2, JSON.stringify(layout));
-    assert.ok(layout.preview.height >= 219 && layout.timeline.height >= 199, JSON.stringify(layout));
-    assert.ok(layout.timeline.bottom <= height && layout.preview.bottom <= layout.timelinePanel.top, JSON.stringify(layout));
-    assert.ok(Math.abs(layout.stage.width / layout.stage.height - 16 / 9) < .01, JSON.stringify(layout));
-    assert.ok(layout.assets.right < layout.player.left && layout.player.right < layout.inspector.left, JSON.stringify(layout));
-    assert.ok(Math.abs(layout.timelinePanel.left - layout.core.left) < 2 && Math.abs(layout.timelinePanel.right - layout.core.right) < 2, JSON.stringify(layout));
-    assert.ok(layout.transport.width > 20 && layout.transport.bottom <= layout.player.bottom && !layout.nativeControls, JSON.stringify(layout));
-    layouts.push(layout);
-    await fs.writeFile(path.join(dataDir, `workspace-${width}.png`), (await mainWindow.webContents.capturePage()).toPNG());
+    await twoFrames();
+    const [contentWidth, contentHeight] = mainWindow.getContentSize();
+    // A runner's work area can clamp native dimensions before CSS layout.
+    mainWindow.webContents.enableDeviceEmulation({
+      screenPosition: 'desktop', screenSize: { width, height }, viewPosition: { x: 0, y: 0 },
+      viewSize: { width, height }, deviceScaleFactor: 0,
+      scale: Math.min(1, contentWidth / width, contentHeight / height),
+    });
+    try {
+      await twoFrames();
+      const layout = await mainWindow.webContents.executeJavaScript(`(()=>{const bounds=id=>{const r=document.getElementById(id).getBoundingClientRect();return{top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height}};return{width:innerWidth,height:innerHeight,pageHeight:document.documentElement.scrollHeight,pageWidth:document.documentElement.scrollWidth,preview:bounds('preview-shell'),stage:bounds('preview-stage'),timeline:bounds('timeline'),timelinePanel:bounds('timeline-panel'),core:bounds('manual-core'),assets:bounds('asset-editor'),player:bounds('preview-panel'),inspector:bounds('right-editor-column'),transport:bounds('studio-play-toggle'),nativeControls:document.getElementById('manual-video').controls}})()`);
+      assert.deepEqual([layout.width, layout.height], [width, height], 'Exercise the requested CSS viewport');
+      assert.ok(layout.pageHeight <= height + 2, JSON.stringify(layout));
+      assert.ok(layout.pageWidth <= width + 2, JSON.stringify(layout));
+      assert.ok(layout.preview.height >= 219 && layout.timeline.height >= 199, JSON.stringify(layout));
+      assert.ok(layout.timeline.bottom <= height && layout.preview.bottom <= layout.timelinePanel.top, JSON.stringify(layout));
+      assert.ok(Math.abs(layout.stage.width / layout.stage.height - 16 / 9) < .01, JSON.stringify(layout));
+      assert.ok(layout.assets.right < layout.player.left && layout.player.right < layout.inspector.left, JSON.stringify(layout));
+      assert.ok(Math.abs(layout.timelinePanel.left - layout.core.left) < 2 && Math.abs(layout.timelinePanel.right - layout.core.right) < 2, JSON.stringify(layout));
+      assert.ok(layout.transport.width > 20 && layout.transport.bottom <= layout.player.bottom && !layout.nativeControls, JSON.stringify(layout));
+      layouts.push(layout);
+      await fs.writeFile(path.join(dataDir, `workspace-${width}.png`), (await mainWindow.webContents.capturePage()).toPNG());
+    } finally {
+      mainWindow.webContents.disableDeviceEmulation();
+      await twoFrames();
+    }
   }
   // Reproduce a real timeline click after an input had keyboard focus, then B.
-  await mainWindow.webContents.executeJavaScript('S.zoom=80;drawClips();document.getElementById("project-name").focus()');
-  const clipPoint = await mainWindow.webContents.executeJavaScript(`(()=>{const r=document.querySelector('#track .clip').getBoundingClientRect();return{x:Math.round(r.left+76),y:Math.round(r.top+r.height/2)}})()`);
-  mainWindow.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...clipPoint });
-  mainWindow.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...clipPoint });
+  await mainWindow.webContents.executeJavaScript(`
+    S.zoom = 80;
+    drawClips();
+    document.getElementById('project-name').focus({ preventScroll: true });
+    document.querySelector('#track .clip').scrollIntoView({ block: 'center', inline: 'nearest' });
+  `);
+  await twoFrames();
+  const clipPoint = await mainWindow.webContents.executeJavaScript(`(() => {
+    const clip = document.querySelector('#track .clip');
+    const { left, top, height } = clip.getBoundingClientRect();
+    const x = Math.round(left + 76), y = Math.round(top + height / 2);
+    return { x, y, reachable: clip.contains(document.elementFromPoint(x, y)), width: innerWidth, height: innerHeight };
+  })()`);
+  assert.equal(clipPoint.reachable, true, `Native clip click is outside its target: ${JSON.stringify(clipPoint)}`);
+  const { x, y } = clipPoint;
+  mainWindow.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x, y });
+  mainWindow.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x, y });
   await mainWindow.webContents.executeJavaScript('new Promise(r=>setTimeout(r,100))');
   assert.equal(await mainWindow.webContents.executeJavaScript('document.activeElement.id'), 'timeline');
   mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'B' });
