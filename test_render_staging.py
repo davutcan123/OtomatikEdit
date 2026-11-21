@@ -1,4 +1,5 @@
 """Keep live render scratch from another worker and recover after a forced exit."""
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -71,11 +72,19 @@ class RenderStagingTests(unittest.TestCase):
         original.write_bytes(b"original")
         self.stop(abandoned)
 
-        # Exercise cleanup from a separate application process, not the owner.
-        subprocess.run([sys.executable, "-c",
-                        "from render_staging import cleanup_abandoned_stages; "
-                        "import sys; cleanup_abandoned_stages(sys.argv[1])", str(self.outputs)],
-                       cwd=_ROOT, check=True, timeout=8)
+        # Run the actual backend startup in a process distinct from both owners.
+        startup = """
+import asyncio
+from app import app, app_lifespan
+async def start():
+    async with app_lifespan(app):
+        pass
+asyncio.run(start())
+"""
+        subprocess.run([sys.executable, "-c", startup], cwd=_ROOT, check=True, timeout=15, env={
+            **os.environ, "SMART_EDITOR_DESKTOP": "1", "SMART_EDITOR_DESKTOP_TOKEN": "staging-test",
+            "SMART_EDITOR_DATA_DIR": str(self.data), "SMART_EDITOR_LEGACY_DIR": "",
+        })
         self.assertTrue((active_path / "partial.mp4").is_file())
         self.assertFalse(abandoned_path.exists())
         self.assertEqual(completed.read_bytes(), b"completed")
