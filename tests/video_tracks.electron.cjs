@@ -1,5 +1,6 @@
 // Real visible multichannel playback; all projects/media are disposable fixtures.
-const {app,BrowserWindow}=require('electron');
+const {app,}=require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
@@ -184,7 +185,7 @@ app.whenReady().then(async()=>{
     }catch(error){errors.push(error.stack);res.writeHead(500).end()}
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  window=new BrowserWindow({show:false,width:1366,height:768,useContentSize:true,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
+  window=createNativeTestWindow({show:false,width:1366,height:768,useContentSize:true,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
   window.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');window.setContentSize(1366,768);window.showInactive();await frames();
   await evaluate(`restoreProject({name:'Video channels fixture',mediaAssets:['red','blue','green'].map((name,index)=>({id:'asset'+index,fileId:name+'.mp4',name:name+'.mp4',kind:'video',duration:12})),activeTimelineId:'TL1',timelines:[{id:'TL1',name:'Three channels',state:{...emptyTimelineState(),manualId:'red.mp4',manualName:'Red source',duration:12,selected:0,preview:0,videoTracks:[1,2,3].map(id=>({id,name:'Video '+id,locked:false,visible:true,muted:false})),activeVideoTrack:1,clips:[{clipId:'red-a',fileId:'red.mp4',start:0,end:4,timelineStart:0,videoTrack:1,sourceDuration:12},{clipId:'blue',fileId:'blue.mp4',start:1,end:5,speed:2,timelineStart:1,videoTrack:2,sourceDuration:12,scale:65,crop:{x:.5,y:0,width:.5,height:1}},{clipId:'green',fileId:'green.mp4',start:2,end:3,speed:.5,timelineStart:1.5,videoTrack:3,sourceDuration:12,scale:35},{clipId:'red-b',fileId:'red.mp4',start:4,end:6,timelineStart:6,videoTrack:1,sourceDuration:12}],zoom:45}}]})`);

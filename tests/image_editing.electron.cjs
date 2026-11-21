@@ -1,5 +1,6 @@
 // Run with Electron, not node:test. Every media file/project lives in a fresh temporary directory.
-const {app,BrowserWindow}=require('electron');
+const {app,}=require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const http=require('node:http');
@@ -268,7 +269,7 @@ app.whenReady().then(async()=>{
     }catch(error){errors.push(error.stack);response.writeHead(500).end()}
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  window=new BrowserWindow({show:false,width:1366,height:740,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
+  window=createNativeTestWindow({show:false,width:1366,height:740,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
   window.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');
   proof.initialViewport=await evaluate(`({width:innerWidth,height:innerHeight})`);
@@ -289,27 +290,15 @@ app.whenReady().then(async()=>{
   const first=layers.find(x=>x.fileId==='red.png').id,second=layers.find(x=>x.fileId==='blue.png').id;proof.imported={assets,layers};
   await checkImageKeyframes(first,second);await checkToolDrops(first,second);await checkTrimAndPlayback(first);await checkPersistence();
   for(const [width,height] of [[1366,768],[1100,700]]){
-    // The visible native window can be clamped by the runner's work area.
-    // Give the layout check its exact CSS viewport, then restore native input.
     window.setContentSize(width,height);await twoFrames();
-    const [contentWidth,contentHeight]=window.getContentSize();
-    window.webContents.enableDeviceEmulation({
-      screenPosition:'desktop',screenSize:{width,height},viewPosition:{x:0,y:0},
-      viewSize:{width,height},deviceScaleFactor:0,scale:Math.min(1,contentWidth/width,contentHeight/height),
-    });
-    try{
-      await twoFrames();
-      const viewport=await evaluate('({width:innerWidth,height:innerHeight})');
-      assert.deepEqual(viewport,{width,height},'Image layout check must exercise the requested CSS viewport');
-      await seek(3);await evaluate(`selectImageLayer(${json(first)},false)`);await screenshot(`image-editor-${width}x${height}`);
-      await evaluate(`el('image-kf-scale').scrollIntoView({block:'center',inline:'nearest'})`);await twoFrames();
-      const geometry=await evaluate(`(()=>{const rect=id=>{const r=el(id).getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom}},input=el('image-kf-scale'),r=input.getBoundingClientRect();return{preview:rect('preview-stage'),timeline:rect('timeline'),keyframe:rect('image-kf-scale'),keyframeReachable:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===input,scroll:document.documentElement.scrollTop}})()`);
-      assert.ok(geometry.preview.y>=0&&geometry.preview.bottom<=height&&geometry.preview.height>=219,'Preview must remain visible while image controls are scrolled');
-      assert.ok(geometry.timeline.height>=199&&geometry.timeline.bottom<=height,'Timeline must remain visible while editing images');assert.ok(geometry.keyframeReachable,'Image keyframe slider must be reachable by internal scrolling');
-      (proof.geometry??=[]).push({...viewport,...geometry});await screenshot(`image-keyframes-${width}x${height}`);
-    }finally{
-      window.webContents.disableDeviceEmulation();await twoFrames();
-    }
+    const viewport=await evaluate('({width:innerWidth,height:innerHeight})');
+    assert.deepEqual(viewport,{width,height},'Image layout check must exercise the requested CSS viewport');
+    await seek(3);await evaluate(`selectImageLayer(${json(first)},false)`);await screenshot(`image-editor-${width}x${height}`);
+    await evaluate(`el('image-kf-scale').scrollIntoView({block:'center',inline:'nearest'})`);await twoFrames();
+    const geometry=await evaluate(`(()=>{const rect=id=>{const r=el(id).getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom}},input=el('image-kf-scale'),r=input.getBoundingClientRect();return{preview:rect('preview-stage'),timeline:rect('timeline'),keyframe:rect('image-kf-scale'),keyframeReachable:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===input,scroll:document.documentElement.scrollTop}})()`);
+    assert.ok(geometry.preview.y>=0&&geometry.preview.bottom<=height&&geometry.preview.height>=219,'Preview must remain visible while image controls are scrolled');
+    assert.ok(geometry.timeline.height>=199&&geometry.timeline.bottom<=height,'Timeline must remain visible while editing images');assert.ok(geometry.keyframeReachable,'Image keyframe slider must be reachable by internal scrolling');
+    (proof.geometry??=[]).push({...viewport,...geometry});await screenshot(`image-keyframes-${width}x${height}`);
   }
   await checkLibraryRemoval();
   await checkShortViewportControls(first);

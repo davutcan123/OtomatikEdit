@@ -1,6 +1,7 @@
 'use strict';
 
-const { app, BrowserWindow } = require('electron');
+const { app, } = require('electron');
+const { createNativeTestWindow } = require('./native_test_window.cjs');
 app.on('window-all-closed', () => {});
 const fs = require('node:fs');
 const os = require('node:os');
@@ -42,7 +43,7 @@ function startBackend() {
 
 async function withStudioBrowser(work) {
   const { processHandle, ready } = startBackend();
-  const win = new BrowserWindow({ width: 1280, height: 820, show: false,
+  const win = createNativeTestWindow({ width: 1280, height: 820, show: false,
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   try {
     const origin = await ready;

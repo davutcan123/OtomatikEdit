@@ -1,5 +1,6 @@
 // Native pointer regression in a disposable local editor, never the user's running app.
-const {app,BrowserWindow}=require('electron');
+const {app,}=require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const http=require('node:http');
@@ -94,7 +95,7 @@ app.whenReady().then(async()=>{
     if(item&&(route.startsWith('/video/')||route.startsWith('/waveform/'))){const range=/^bytes=(\d+)-(\d*)$/.exec(request.headers.range||''),start=range?+range[1]:0,end=range&&range[2]?Math.min(item.bytes.length-1,+range[2]):item.bytes.length-1;response.statusCode=range?206:200;response.setHeader('Content-Type',item.type);response.setHeader('Accept-Ranges','bytes');response.setHeader('Content-Length',end-start+1);if(range)response.setHeader('Content-Range',`bytes ${start}-${end}/${item.bytes.length}`);response.end(item.bytes.subarray(start,end+1));return}
     response.writeHead(404).end();
   }catch(error){errors.push(error.stack);response.writeHead(500).end()}});
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));window=new BrowserWindow({show:true,frame:false,width:1366,height:768,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});window.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});await window.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');window.setContentSize(1366,768);window.showInactive();await frames();
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));window=createNativeTestWindow({show:true,frame:false,width:1366,height:768,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});window.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});await window.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');window.setContentSize(1366,768);window.showInactive();await frames();
   await setup();proof.initial=await geometry();assertVisible(proof.initial,[]);assert.equal(proof.initial.videoTop,44);assert.equal(proof.initial.height,158);await screenshot('empty-optional-rows');
   for(const type of ['sticker','text','image','audio'])await firstDrop(type);await cancelCases();await lockedEmptyRecovery();await subtitlesAndRecovery();
   for(const item of media.values())assert.equal(crypto.createHash('sha256').update(fs.readFileSync(item.file)).digest('hex'),item.hash);assert.deepEqual(errors,[]);console.log(JSON.stringify({ok:true,proof,errors,artifacts}));

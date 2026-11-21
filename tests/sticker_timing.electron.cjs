@@ -1,6 +1,7 @@
 // Run: node_modules/.bin/electron tests/sticker_timing.electron.cjs [--diagnose] [--baseline]
 // Uses the production editor script and a disposable local video/project, never user projects.
-const { app, BrowserWindow } = require('electron');
+const { app } = require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -167,7 +168,7 @@ app.whenReady().then(async () => {
     response.writeHead(404).end();
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  window = new BrowserWindow({ show: false, width: 1366, height: 768, useContentSize: true, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false } });
+  window = createNativeTestWindow({ show: false, width: 1366, height: 768, useContentSize: true, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false } });
   window.webContents.on('console-message', details => { if (details.level === 'error') pageErrors.push(details.message); });
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);
   await evaluate('projectWorkspaceInitialization');

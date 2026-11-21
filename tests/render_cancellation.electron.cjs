@@ -1,6 +1,7 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, ipcMain } = require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -128,7 +129,7 @@ app.whenReady().then(async()=>{
   ipcMain.handle('desktop:save-output',(_event,link)=>{saves.push(link);return {saved:false,canceled:true}});
   seedSource();
   await startBackend();
-  win = new BrowserWindow({show:false,width:1440,height:900,webPreferences:{
+  win = createNativeTestWindow({show:false,width:1440,height:900,webPreferences:{
     preload:path.join(root,'desktop','preload.cjs'),sandbox:true,contextIsolation:true,backgroundThrottling:false,
   }});
   win.webContents.session.webRequest.onBeforeSendHeaders((details,callback)=>{

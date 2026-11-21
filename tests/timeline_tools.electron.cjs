@@ -1,5 +1,6 @@
 // Isolated real-DOM fixture: no user's backend, projects, clipboard or media.
-const {app,BrowserWindow}=require('electron');
+const {app,}=require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
@@ -148,7 +149,7 @@ app.whenReady().then(async()=>{
     }catch(error){errors.push(error.stack);res.writeHead(500).end()}
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  window=new BrowserWindow({show:false,width:1366,height:768,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
+  window=createNativeTestWindow({show:false,width:1366,height:768,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
   window.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');
   window.setContentSize(1366,768);window.showInactive();await twoFrames();

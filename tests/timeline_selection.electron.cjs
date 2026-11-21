@@ -1,5 +1,6 @@
 // Disposable, visible Electron selection regression. Never reads user projects or clipboard.
-const {app, BrowserWindow, Menu} = require('electron');
+const {app, Menu} = require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -224,7 +225,7 @@ app.whenReady().then(async()=>{
     res.writeHead(404).end();
   }catch(error){errors.push(error.stack);res.writeHead(500).end()}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  window=new BrowserWindow({show:true,frame:false,...viewport,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
+  window=createNativeTestWindow({show:true,frame:false,...viewport,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
   window.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');window.setContentSize(viewport.width,viewport.height);window.showInactive();await frames();
   proof.viewport=await evaluate('({width:innerWidth,height:innerHeight})');assert.deepEqual(proof.viewport,viewport);

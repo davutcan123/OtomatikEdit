@@ -1,5 +1,6 @@
 // Real workspace layout, assets and controls are isolated from local user data.
-const { app, BrowserWindow } = require('electron');
+const { app } = require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -73,7 +74,7 @@ function serve(req, res) {
 app.whenReady().then(async () => {
   server=http.createServer(serve);
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  window=new BrowserWindow({show:false,width:1440,height:900,useContentSize:true,
+  window=createNativeTestWindow({show:false,width:1440,height:900,useContentSize:true,
     webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);
   await evalPage('projectWorkspaceInitialization');await evalPage('Promise.all(document.getAnimations().map(animation=>animation.finished.catch(()=>{})))');await frames();

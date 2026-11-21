@@ -7,7 +7,8 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { app, BrowserWindow, session } = require('electron');
+const { app, session } = require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 
 const root = path.resolve(__dirname, '..');
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'otomatik-preview-fixture-'));
@@ -99,7 +100,7 @@ app.whenReady().then(async () => {
     if (new URL(details.url).origin === origin) details.requestHeaders['X-Desktop-Token'] = token;
     callback({ requestHeaders: details.requestHeaders });
   });
-  window = new BrowserWindow({ show: true, width: 1366, height: 740, webPreferences: { backgroundThrottling: false } });
+  window = createNativeTestWindow({ show: true, width: 1366, height: 740, webPreferences: { backgroundThrottling: false } });
   await window.loadURL(origin);
   await evaluate('projectWorkspaceInitialization');
   const variants = new Map();

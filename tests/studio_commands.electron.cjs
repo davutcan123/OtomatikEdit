@@ -6,7 +6,8 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { app, BrowserWindow } = require('electron');
+const { app } = require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 
 const root = path.resolve(__dirname, '..');
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'otomatik-studio-command-'));
@@ -245,7 +246,7 @@ app.whenReady().then(async () => {
     console.error(error);res.writeHead(500).end();
   }));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  window = new BrowserWindow({ show: true, width: 1366, height: 740, webPreferences: { backgroundThrottling: false } });
+  window = createNativeTestWindow({ show: true, width: 1366, height: 740, webPreferences: { backgroundThrottling: false } });
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);
   await evaluate(`(async()=>{await projectWorkspaceInitialization;
     restoreProject({name:'Studio fixture',activeTimelineId:'one',timelines:[

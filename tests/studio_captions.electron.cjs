@@ -1,7 +1,8 @@
 'use strict';
 
 // Exercise the transcript, native and browser export, and FFmpeg with an isolated backend and real Electron inputs.
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, ipcMain } = require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -94,7 +95,7 @@ const updateControl = (id,value,event='change') => evaluate(`(() => {
 const screenshot = async name => fs.writeFileSync(path.join(artifacts,name+'.png'),(await win.webContents.capturePage()).toPNG());
 
 async function openEditor(useNative) {
-  const current = new BrowserWindow({show:false,width:1440,height:900,useContentSize:true,
+  const current = createNativeTestWindow({show:false,width:1440,height:900,useContentSize:true,
     webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false,
       partition:useNative?'native-captions':'browser-captions',...(useNative&&{preload:path.join(root,'desktop/preload.cjs')})}});
   current.webContents.session.webRequest.onBeforeSendHeaders({urls:[origin+'/*']},(request,callback)=>{

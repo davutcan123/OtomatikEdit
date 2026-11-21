@@ -1,5 +1,6 @@
 // Isolated native scrolling/scrubbing fixture; never uses a user's project or profile.
-const {app,BrowserWindow}=require('electron');
+const {app,}=require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
@@ -69,7 +70,7 @@ app.whenReady().then(async()=>{
     if(route==='/video/source.mp4'){const range=/^bytes=(\d+)-(\d*)$/.exec(request.headers.range||''),start=range?+range[1]:0,end=range&&range[2]?Math.min(+range[2],video.length-1):video.length-1;response.statusCode=range?206:200;response.setHeader('Content-Type','video/mp4');response.setHeader('Accept-Ranges','bytes');response.setHeader('Content-Length',end-start+1);if(range)response.setHeader('Content-Range',`bytes ${start}-${end}/${video.length}`);response.end(video.subarray(start,end+1));return}
     if(route.startsWith('/waveform/')||route==='/favicon.ico'){response.writeHead(204).end();return}response.writeHead(404).end();
   });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  win=new BrowserWindow({show:true,frame:false,width:1366,height:740,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
+  win=createNativeTestWindow({show:true,frame:false,width:1366,height:740,useContentSize:true,webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
   win.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message)});
   await win.loadURL(`http://127.0.0.1:${server.address().port}/`);await evaluate('projectWorkspaceInitialization');
   proof.initialViewport=await evaluate('({width:innerWidth,height:innerHeight})');win.showInactive();proof.settledViewport=await setViewport(1366,740);

@@ -1,6 +1,7 @@
 'use strict';
 
-const { app, BrowserWindow } = require('electron');
+const { app } = require('electron');
+const { createNativeTestWindow } = require('./support/native_test_window.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -501,7 +502,7 @@ app.whenReady().then(async () => {
     '-vf','drawbox=x=160:y=0:w=160:h=180:color=red:t=fill','-c:v','libx264','-pix_fmt','yuv420p',fixture], { timeout: 30000 });
   video = fs.readFileSync(fixture);
   server = serve();await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  win = new BrowserWindow({ show: false, width: 1366, height: 768,
+  win = createNativeTestWindow({ show: false, width: 1366, height: 768,
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   await win.loadURL('http://127.0.0.1:' + server.address().port);
   await evaluate('projectWorkspaceInitialization');
