@@ -7,10 +7,12 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
 import httpx
+from render_encoder import EncoderChoice, nvenc_h264_args
 
 
 class RenderCancellationTests(unittest.IsolatedAsyncioTestCase):
@@ -80,12 +82,26 @@ class RenderCancellationTests(unittest.IsolatedAsyncioTestCase):
         return [(int(lines[0][4:]), json.loads(lines[1][6:]))
                 for item in response.text.split("\n\n") if (lines := item.splitlines()) and lines[0].startswith("id: ")]
 
-    def slow_first(self, output_basename):
+    def slow_first(self, output_basename, *, fail_gpu=False):
         real_spawn = self.backend.create_media_process
         started = asyncio.Future()
         attempts = []
 
         async def spawn(*args, **kwargs):
+            if fail_gpu and "h264_nvenc" in args:
+                stderr = asyncio.StreamReader()
+                stderr.feed_data(b"[h264_nvenc] OpenEncodeSessionEx failed: no capable devices found\n")
+                stderr.feed_eof()
+
+                class UnavailableGPU:
+                    returncode = 1
+                    async def wait(self):
+                        return self.returncode
+
+                process = UnavailableGPU()
+                process.stderr = stderr
+                attempts.append((args[-1], process))
+                return process
             first_match = Path(args[-1]).name == output_basename and not started.done()
             if first_match:
                 input_index = args.index("-i")
@@ -159,3 +175,45 @@ class RenderCancellationTests(unittest.IsolatedAsyncioTestCase):
                     await self.assert_stopped(job, process, scratch, fmt)
                 self.assertEqual(len(attempts), 1 if fmt == "png" else 2)
                 await self.assert_working_output(await self.start(fmt, duration=1), fmt)
+
+
+    async def test_cancel_during_real_cpu_fallback_after_gpu_failure(self):
+        started, attempts, intercept = self.slow_first("output.mp4", fail_gpu=True)
+        choice = EncoderChoice("h264_nvenc", nvenc_h264_args(), True)
+        with (intercept, patch.object(self.backend, "select_video_encoder", return_value=choice),
+              patch.object(self.backend, "invalidate_nvenc")):
+            job = await self.start()
+            scratch, process = await asyncio.wait_for(started, 5)
+            self.assertEqual(len(attempts), 2)
+            self.assertIsNone(process.returncode)
+            self.assertEqual((await self.cancel(job)).status_code, 202)
+            await self.assert_stopped(job, process, scratch, "mp4")
+            self.assertEqual(len(attempts), 2, "A deliberate stop cannot start a third attempt")
+        await self.assert_working_output(await self.start(duration=.5), "mp4")
+
+    async def test_cancel_during_overlay_preparation_waits_for_cleanup_without_launching_ffmpeg(self):
+        ready = threading.Event()
+        release = threading.Event()
+        scratch = []
+        real_overlay = self.backend.create_text_overlay
+
+        def prepare(path, *args):
+            result = real_overlay(path, *args)
+            scratch.append(Path(path).parent)
+            ready.set()
+            release.wait(5)
+            return result
+
+        with (patch.object(self.backend, "create_text_overlay", side_effect=prepare),
+              patch.object(self.backend, "create_media_process") as spawn):
+            job = await self.start()
+            try:
+                self.assertTrue(await asyncio.to_thread(ready.wait, 4))
+                self.assertEqual((await self.cancel(job)).status_code, 202)
+                self.assertTrue(scratch[0].exists())
+            finally:
+                release.set()
+            messages = [message["type"] for _, message in await self.events(job)]
+            self.assertEqual(messages[-1], "cancelled")
+            self.assertFalse(scratch[0].exists())
+            spawn.assert_not_called()

@@ -148,6 +148,7 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, sto
     const job = {...currentScope(kind), format, phase: 'running', percent: 0, message};
     const key = scopeKey(job);
     active.set(kind, job);
+    el('active-output-announcement').textContent = '';
     latest.delete(key);
     latest.set(key, job);
     for (const [oldKey, oldJob] of latest) {
@@ -164,8 +165,13 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, sto
     job.message = message;
     job.phase = phase;
     if (visible(job)) draw(job.kind);
-    if (phase === 'running') paintActiveRow(job);
-    else drawActive();
+    if (phase === 'running') {
+      paintActiveRow(job);
+    } else {
+      if (phase === 'cancelled') el('active-output-announcement').textContent =
+        [message, job.projectName, job.timelineName].filter(Boolean).join(' · ');
+      drawActive();
+    }
   }
 
   function drawRecent() {

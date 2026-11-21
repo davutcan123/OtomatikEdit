@@ -158,6 +158,7 @@ app.whenReady().then(async()=>{
   assert.match(await evaluate("el('active-output-list').textContent"),/İptal denemesi.*İlk kesim/);
   await click('#active-output-list [data-output-stop="manual"]');
   await until(() => evaluate("el('active-output-section').hidden"), 'stopped background timeline export');
+  assert.match(await evaluate("el('active-output-announcement').textContent"),/durduruldu.*İlk kesim/);
   await click('#recent-outputs-dialog form button');
   await click('[data-timeline-id="one"]');
   assert.equal(await evaluate("el('manual-progress-top').dataset.state"),'cancelled');

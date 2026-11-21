@@ -2682,6 +2682,7 @@ async def run_render_job(job_id: str):
             select_video_encoder, FFMPEG_BIN, fmt, quality,
             hardware="cpu" if snapshot else job.get("hardware", "auto"),
         )
+        filter_script_args = await prepare(ffmpeg_filter_script_args, script_path)
         h264_profile, h264_level = h264_compatibility_settings(render_width, render_height, target_fps)
 
         def render_command(use_hardware, policy):
@@ -2709,7 +2710,7 @@ async def run_render_job(job_id: str):
                 cmd.extend(["-threads", "1", "-i", audio_item["path"]])
             for mask_path in brush_video_paths:
                 cmd.extend(["-threads", "1", "-framerate", str(target_fps), "-i", mask_path])
-            cmd.extend(ffmpeg_filter_script_args(script_path))
+            cmd.extend(filter_script_args)
             cmd.extend(["-map", video_output])
             if not snapshot:
                 cmd.extend(["-map", audio_output])
