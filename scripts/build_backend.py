@@ -75,7 +75,7 @@ def main() -> int:
         (notices / "ffmpeg-source.txt").write_text(
             "FFmpeg source and license: https://ffmpeg.org/download.html\n"
             "Windows build source: https://www.gyan.dev/ffmpeg/builds/\n"
-            "macOS build formula: https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/f/ffmpeg.rb\n",
+            "macOS build formula: https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/f/ffmpeg-full.rb\n",
             encoding="utf-8",
         )
         versions = {dist.metadata["Name"]: dist.version for dist in importlib.metadata.distributions()}

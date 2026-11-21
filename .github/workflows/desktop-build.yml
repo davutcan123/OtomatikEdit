@@ -24,6 +24,8 @@ jobs:
             platform: Windows-x64
           - os: macos-15
             platform: macOS-arm64
+            ffmpeg_version: "9.0.2"
+            ffmpeg_bottle_sha256: "64d139fb62d60e85fd92874bbc63a147db212c9db4658e08ca8ec538ef8059f5"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     env:
@@ -73,21 +75,41 @@ jobs:
           }
       - name: Install macOS FFmpeg
         if: runner.os == 'macOS'
+        env:
+          FFMPEG_BOTTLE_SHA256: ${{ matrix.ffmpeg_bottle_sha256 }}
+          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          brew install ffmpeg@8
-          printf '%s/bin\n' "$(brew --prefix ffmpeg@8)" >> "$GITHUB_PATH"
+          # FFmpeg 8.1.3 and PyAV's LGPL wheel ship identically named dylibs.
+          # FFmpeg 9 uses a different ABI, and the full formula enables drawtext.
+          bottle_sha256="$(brew info --json=v2 ffmpeg-full | jq -er '.formulae[0].bottle.stable.files.arm64_sequoia.sha256')"
+          if [[ "$bottle_sha256" != "$FFMPEG_BOTTLE_SHA256" ]]; then
+            printf 'Unexpected ffmpeg-full bottle SHA-256: %s\n' "$bottle_sha256" >&2
+            exit 1
+          fi
+          brew install --force-bottle ffmpeg-full
+          printf '%s/bin\n' "$(brew --prefix ffmpeg-full)" >> "$GITHUB_PATH"
       - name: Verify macOS media tools in the shared PATH
         if: runner.os == 'macOS'
+        env:
+          FFMPEG_VERSION: ${{ matrix.ffmpeg_version }}
         run: |
-          ffmpeg_bin="$(brew --prefix ffmpeg@8)/bin"
+          ffmpeg_bin="$(brew --prefix ffmpeg-full)/bin"
           for tool in ffmpeg ffprobe; do
             executable="$(command -v "$tool")"
             if [[ "$executable" != "$ffmpeg_bin/$tool" ]]; then
               printf 'Expected %s on PATH, found %s\n' "$ffmpeg_bin/$tool" "$executable" >&2
               exit 1
             fi
-            "$executable" -version
+            version_info="$("$executable" -version)"
+            printf '%s\n' "$version_info"
+            if [[ "$version_info" != "$tool version $FFMPEG_VERSION "* ]]; then
+              printf 'Expected %s %s\n' "$tool" "$FFMPEG_VERSION" >&2
+              exit 1
+            fi
           done
+          ffmpeg -v error -f lavfi -i 'color=size=64x64' \
+            -vf 'eq=contrast=1.08,drawtext=fontfile=/System/Library/Fonts/Supplemental/Arial.ttf:text=Smoke' \
+            -frames:v 1 -f null -
       - name: Verify Windows source launcher dependency checks
         if: runner.os == 'Windows'
         run: python scripts/windows_launcher_smoke.py
@@ -118,6 +140,23 @@ jobs:
           if ($setup.ExitCode -ne 0) { throw "Windows installer exited $($setup.ExitCode)" }
           $installedEditor = Join-Path $installDir 'OtomatikEdit.exe'
           python scripts/smoke_desktop.py --executable "$installedEditor"
+      - name: Verify the packaged macOS FFmpeg and FFprobe
+        if: runner.os == 'macOS'
+        env:
+          FFMPEG_VERSION: ${{ matrix.ffmpeg_version }}
+        run: |
+          bundled='dist/mac-arm64/Otomatik Edit.app/Contents/Resources/backend/_internal/tools/ffmpeg/bin'
+          for tool in ffmpeg ffprobe; do
+            version_info="$("$bundled/$tool" -version)"
+            printf '%s\n' "$version_info"
+            if [[ "$version_info" != "$tool version $FFMPEG_VERSION "* ]]; then
+              printf 'Expected packaged %s %s\n' "$tool" "$FFMPEG_VERSION" >&2
+              exit 1
+            fi
+          done
+          "$bundled/ffmpeg" -v error -f lavfi -i 'color=size=64x64' \
+            -vf 'eq=contrast=1.08,drawtext=fontfile=/System/Library/Fonts/Supplemental/Arial.ttf:text=Smoke' \
+            -frames:v 1 -f null -
       - name: Exercise packaged macOS editor, media playback, recovery and render
         if: runner.os == 'macOS'
         run: python scripts/smoke_desktop.py
