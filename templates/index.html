@@ -2650,18 +2650,23 @@
       const input=el(id);
       if(input!==editedControl&&input.value!==String(value))input.value=value;
     }
+    function showTextTiming(item,editedControl=null){
+      const precision=item.kind==='subtitle'?3:2,step=10**-precision;
+      for(const edge of ['start','end']){
+        const id='text-'+edge;
+        el(id).step=step;writeInspectorValue(id,item[edge].toFixed(precision),editedControl);
+      }
+    }
     function showTextProperties(editedControl=null){
       const item=selectedText(),fields=el('text-fields'),empty=el('text-empty');
       window.StudioFonts?.refreshSelection();
       fields.classList.toggle('hidden',!item);empty.classList.toggle('hidden',!!item);
       if(!item)return;
       hydrateText(item);
-      const precision=item.kind==='subtitle'?3:2;
-      el('text-start').step=el('text-end').step=10**-precision;
+      showTextTiming(item,editedControl);
       for(const [id,value] of Object.entries({
         'text-content':item.text,'text-color':item.color,'text-outline':item.outlineColor,
-        'text-size':item.size,'text-x':item.x,'text-y':item.y,'text-start':item.start.toFixed(precision),
-        'text-end':item.end.toFixed(precision),'text-bg-opacity':item.backgroundOpacity
+        'text-size':item.size,'text-x':item.x,'text-y':item.y,'text-bg-opacity':item.backgroundOpacity
       }))writeInspectorValue(id,value,editedControl);
       el('text-size-value').textContent=Math.round(item.size);
       drawSubtitleEditor(editedControl);drawTextKeyframeEditor();

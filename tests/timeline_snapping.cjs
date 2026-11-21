@@ -37,6 +37,7 @@ function fixture() {
     between('    function appendTrimHandles', '    function fitClipPosition'),
     between('    function beginTimedTrim', '    function setPreviewSource'),
     between('    function beginTimelineLayerDrag', '    function deleteSelectedLayer'),
+    between('    function writeInspectorValue', '    function showTextProperties'),
     line('function normalizedTextKeyframes('), line('function textTransformAtTime('),
   ].join('\n'), c);
   const pointer = x => ({ button: 0, clientX: x, preventDefault() {}, stopPropagation() {} });
