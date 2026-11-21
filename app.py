@@ -40,7 +40,7 @@ from studio_fonts import bundled_font_path, font_face_css, normalize_font_family
 from render_audio import atempo_chain, clip_audio_filter, join_audio, mix_audio_layers
 from render_timing import (ClipClock, MICROSECONDS_PER_SECOND, align_output_frame_timestamps,
                            display_frame_time_us, gif_clock_filters, normalize_zoom_cadence,
-                           plan_render_timing, snapshot_source_window)
+                           plan_render_timing, resolve_export_range, snapshot_source_window)
 
 RUNTIME_PATHS = resolve_runtime_paths(__file__)
 BASE_DIR = str(RUNTIME_PATHS.source_dir)
@@ -2901,6 +2901,16 @@ async def run_render_job(job_id: str):
             first_audio_input = len(video_inputs) + len(text_overlay_paths) + len(sticker_overlay_paths) + len(image_items)
             lines.extend(mix_audio_layers(current_audio, audio_items, first_audio_input))
 
+        export_range = job.get("export_range")
+        video_output, audio_output = "[outv]", "[outa]"
+        progress_duration = total_duration
+        if export_range:
+            first, last = export_range
+            video_output, audio_output = "[rangev]", "[rangea]"
+            lines.append(f"[outv]trim=start={first:.8f}:end={last:.8f},setpts=PTS-STARTPTS{video_output}")
+            lines.append(f"[outa]atrim=start={first:.8f}:end={last:.8f},asetpts=PTS-STARTPTS{audio_output}")
+            progress_duration = last - first
+
         script_directory = tempfile.TemporaryDirectory(prefix="otomatik-render-", ignore_cleanup_errors=True)
         script_path = os.path.join(script_directory.name, "filter.txt")
         with open(script_path, "w") as f:
@@ -2946,9 +2956,9 @@ async def run_render_job(job_id: str):
             for mask_path in brush_video_paths:
                 cmd.extend(["-threads", "1", "-framerate", str(target_fps), "-i", mask_path])
             cmd.extend(ffmpeg_filter_script_args(script_path))
-            cmd.extend(["-map", "[outv]"])
+            cmd.extend(["-map", video_output])
             if not snapshot:
-                cmd.extend(["-map", "[outa]"])
+                cmd.extend(["-map", audio_output])
             # Keep the existing quality targets and Windows CPU presets. More
             # threads must not secretly select a slower quality preset.
             preset_map = ({"draft": "ultrafast", "standard": "veryfast", "high": "faster", "ultra": "medium"}
@@ -2982,7 +2992,7 @@ async def run_render_job(job_id: str):
         image_message = f", {len(image_items)} görsel" if image_items else ""
         audio_message = f", {len(audio_items)} ses" if audio_items else ""
         transition_message = f", {len(transitions)} geçiş" if transitions else ""
-        await q.put({"type": "log", "message": f"FFmpeg komutu çalıştırılıyor (Toplam {n} parça{text_message}{sticker_message}{image_message}{audio_message}{transition_message}, ~{total_duration:.2f}s çıktı)."})
+        await q.put({"type": "log", "message": f"FFmpeg komutu çalıştırılıyor (Toplam {n} parça{text_message}{sticker_message}{image_message}{audio_message}{transition_message}, ~{progress_duration:.2f}s çıktı)."})
         if fast_path_segments:
             await q.put({
                 "type": "log",
@@ -3004,7 +3014,7 @@ async def run_render_job(job_id: str):
         while True:
             proc = await create_media_process(*render_command(use_hardware, resources),
                                              stderr=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
-            ffmpeg_stderr_tail = await collect_ffmpeg_stderr(proc, q, total_duration)
+            ffmpeg_stderr_tail = await collect_ffmpeg_stderr(proc, q, progress_duration)
             await proc.wait()
             final_returncode = proc.returncode
             if final_returncode == 0:
@@ -3058,7 +3068,7 @@ async def run_render_job(job_id: str):
             await q.put({"type": "log", "message": "Ekran görüntüsü PNG olarak hazır!" if snapshot else "Render başarıyla tamamlandı!"})
             if not snapshot:
                 elapsed = max(.001, time.monotonic() - render_started)
-                await q.put({"type": "log", "message": f"Render süresi: {elapsed:.1f} sn · {total_duration / elapsed:.2f}× video hızı."})
+                await q.put({"type": "log", "message": f"Render süresi: {elapsed:.1f} sn · {progress_duration / elapsed:.2f}× video hızı."})
             await q.put({"type": "result", "download_url": f"/download/{job_id}/{fmt}"})
         else:
             await q.put({
@@ -3094,7 +3104,7 @@ async def index(request: Request):
         # External code is restricted to these bundled entry points, not every
         # same-origin upload or future route. Inline scripts remain hash-only.
         bundled_scripts = [str(request.base_url).rstrip("/") + "/static/" + name
-                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js")]
+                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js", "studio_commands.js")]
         script_sources = " ".join([*hashes, *bundled_scripts])
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
@@ -3486,12 +3496,16 @@ async def start_render(
     mute_video_audio: bool = Form(False),
     width: int = Form(0),
     height: int = Form(0),
+    range_in: float | None = Form(None),
+    range_out: float | None = Form(None),
     timeline_time: float = Form(0),
     canvas_width: int = Form(0),
     canvas_height: int = Form(0),
 ):
     snapshot = request.url.path == "/start-snapshot"
     if snapshot:
+        if range_in is not None or range_out is not None:
+            raise HTTPException(400, "Kare alırken bir dışa aktarma aralığı seçilemez.")
         if not math.isfinite(timeline_time):
             raise HTTPException(400, "Geçersiz ekran görüntüsü zamanı")
         if canvas_width or canvas_height:
@@ -3799,6 +3813,15 @@ async def start_render(
     output_duration = max([hard_cut_duration - (0 if multitrack else sum(item["duration"] for item in normalized_transitions))]
                           + [item["end"] for item in normalized_texts + normalized_stickers + normalized_images + normalized_audio_layers])
         
+    try:
+        export_range = resolve_export_range(
+            range_in, range_out, fps=fps, timeline_duration=layer_duration,
+            output_duration=output_duration, segments=normalized_segments,
+            transitions=[] if multitrack else normalized_transitions,
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
     jobs[job_id] = {
         "type": "render",
         "file_id": file_id,
@@ -3814,6 +3837,7 @@ async def start_render(
         "segments": normalized_segments,
         "multitrack": multitrack,
         "timeline_duration": output_duration,
+        "export_range": export_range,
         "texts": normalized_texts,
         "stickers": normalized_stickers,
         "images": normalized_images,

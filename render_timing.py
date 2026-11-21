@@ -1,6 +1,7 @@
 """Shared source, clip and timeline clocks for FFmpeg render and snapshots."""
 import math
 from dataclasses import dataclass
+import math
 
 from render_video_tracks import next_track_clip
 
@@ -182,3 +183,29 @@ def gif_clock_filters(fps, *, start=0, snapshot_elapsed_us=None, cycle_duration=
         f"settb=AVTB,setpts=PTS-STARTPTS{offset:+d},fps={fps}:round=up{fps_opts},"
         + align_output_frame_timestamps(fps)
     )
+
+
+def resolve_export_range(start, end, *, fps, timeline_duration, output_duration, segments, transitions):
+    """Project the ruler endpoints onto the already composed export clock."""
+    if start is None and end is None:
+        return None
+    if (start is None or end is None or not all(map(math.isfinite, (start, end)))
+            or not 0 <= start < end <= timeline_duration + .00001):
+        raise ValueError("Giriş ve çıkış noktaları timeline sınırları içinde olmalı.")
+
+    boundaries = []
+    for transition in transitions:
+        clip = segments[transition["boundary"]]
+        boundary = clip["timelineStart"] + ClipClock.from_segment(clip).duration
+        boundaries.append((boundary, transition["duration"]))
+
+    def projected(time):
+        # The incoming section already consumed by an overlap shares its end
+        # with the outgoing transition in the legacy single-channel renderer.
+        removed = sum(min(duration, max(0, time - boundary)) for boundary, duration in boundaries)
+        return min(time - removed, output_duration)
+
+    first, last = projected(start), projected(end)
+    if last - first + .00001 < 1 / fps:
+        raise ValueError("İşaretli çıktı aralığı en az bir kare sürmeli.")
+    return first, last

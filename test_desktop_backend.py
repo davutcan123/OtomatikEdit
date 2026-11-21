@@ -47,6 +47,20 @@ class DesktopBackendTests(unittest.TestCase):
             self.assertIs(response.json()["desktop"], True)
             self.assertEqual(Path(self.backend.DATA_DIR), Path(self.temporary.name).resolve())
 
+    def test_studio_preferences_persist_across_desktop_origins_and_require_token(self):
+        headers = {"X-Desktop-Token": "test-desktop-token"}
+        route = "/api/desktop/studio-preferences"
+        with TestClient(self.backend.app, base_url="http://127.0.0.1:4101") as client:
+            self.assertEqual(client.get(route).status_code, 403)
+            self.assertEqual(client.put(route + "/favorites", json=["text:classic"], headers=headers).status_code, 200)
+            self.assertEqual(client.put(route + "/shortcuts", json={"save": "Mod+Shift+KeyS"}, headers=headers).status_code, 200)
+            self.assertEqual(client.put(route + "/favorites", json=["invalid"], headers=headers).status_code, 400)
+            self.assertEqual(client.put(route + "/layout", content=b" " * (256 * 1024 + 1), headers=headers).status_code, 413)
+        with TestClient(self.backend.app, base_url="http://127.0.0.1:4102") as client:
+            self.assertEqual(client.get(route, headers=headers).json(), {
+                "favorites": ["text:classic"], "shortcuts": {"save": "Mod+Shift+KeyS"},
+            })
+
     def test_frozen_backend_rejects_source_update_before_reading_body(self):
         with TestClient(self.backend.app) as client:
             response = client.post("/api/apply-update", content=b"not JSON", headers={"X-Desktop-Token": "test-desktop-token"})
@@ -86,7 +100,7 @@ class DesktopBackendTests(unittest.TestCase):
             directives = dict(item.strip().split(" ", 1) for item in policy.split(";") if item.strip())
             allowed_scripts = set(directives["script-src"].split())
             bundled_scripts = {"http://testserver/static/" + name for name in (
-                "editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js",
+                "editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js", "studio_commands.js",
             )}
             self.assertEqual(allowed_scripts, {
                 "'sha256-" + base64.b64encode(hashlib.sha256(script.encode("utf-8")).digest()).decode("ascii") + "'"
