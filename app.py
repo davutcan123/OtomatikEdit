@@ -31,6 +31,7 @@ from runtime_paths import resolve_runtime_paths, import_legacy_projects
 from studio_preferences import MAX_BYTES as STUDIO_PREFERENCES_LIMIT, read_preferences, write_preference
 from preview_media import PreviewBusy, PreviewCache, PreviewError, original_streams
 from render_resources import choose_render_resources
+from render_staging import RenderStaging, cleanup_abandoned_stages
 from render_encoder import select_video_encoder, invalidate_nvenc, is_nvenc_failure
 from render_overlays import compact_overlay
 from brush_masks import normalize_brush_strokes, brush_mask, create_brushed_image, brush_video_filter
@@ -465,6 +466,7 @@ async def stop_media_processes():
 
 @asynccontextmanager
 async def app_lifespan(application):
+    await asyncio.to_thread(cleanup_abandoned_stages, OUTPUT_DIR)
     try:
         yield
     finally:
@@ -1888,16 +1890,25 @@ def stop_render_child(job):
         job["stop_task"] = asyncio.create_task(terminate_media_process(process))
 
 
-async def run_render_process(job, command, read_stderr):
+def request_render_stop(job):
+    if not job.get("published"):
+        job["cancel_requested"] = True
+        stop_render_child(job)
+
+
+async def run_render_process(job, staging, command, read_stderr):
     check_render_cancelled(job)
+    staging.note_spawn()
     process = await create_media_process(
         *command, stderr=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
+        **staging.child_options(),
     )
     job["process"] = process
     # A request may have arrived while the OS was starting this child.
     if job.get("cancel_requested"):
         stop_render_child(job)
     try:
+        staging.note_child(process)
         diagnostic = await read_stderr(process)
         await process.wait()
         check_render_cancelled(job)
@@ -1937,8 +1948,8 @@ async def run_render_job(job_id: str):
         if not segments and not snapshot and not job.get("timeline_duration"):
             raise Exception("Geçerli video bölümü bulunamadı!")
             
-        staging = tempfile.TemporaryDirectory(prefix=".render-", dir=OUTPUT_DIR, ignore_cleanup_errors=True)
-        scratch = staging.name
+        staging = RenderStaging(OUTPUT_DIR)
+        scratch = staging.path
         delivery_path = os.path.join(OUTPUT_DIR, f"out_{job_id}.{job['format']}")
         out_path = os.path.join(scratch, f"output.{job['format']}")
         render_path = out_path if job["format"] not in {"gif", "mp3"} else os.path.join(scratch, "intermediate.mp4")
@@ -2768,7 +2779,7 @@ async def run_render_job(job_id: str):
         safe_retry_used = resources.low_memory
         while True:
             final_returncode, ffmpeg_stderr_tail = await run_render_process(
-                job, render_command(use_hardware, resources),
+                job, staging, render_command(use_hardware, resources),
                 lambda process: collect_ffmpeg_stderr(process, q, progress_duration),
             )
             if final_returncode == 0:
@@ -2802,7 +2813,7 @@ async def run_render_job(job_id: str):
                 )
                 convert_cmd = [FFMPEG_BIN, "-y", "-i", render_path, "-vf", gif_filter, "-loop", "0", out_path]
             final_returncode, conversion_errors = await run_render_process(
-                job, convert_cmd, lambda process: collect_ffmpeg_stderr(process, q, progress_duration),
+                job, staging, convert_cmd, lambda process: collect_ffmpeg_stderr(process, q, progress_duration),
             )
             ffmpeg_stderr_tail.extend(conversion_errors)
 
@@ -2932,6 +2943,20 @@ async def api_prepare_desktop_close(attempt: int, interrupt_render: bool = False
             raise HTTPException(409, "Devam eden işlemler tamamlandıktan sonra kapatmayı tekrar deneyin.")
         state.close_attempt = attempt
         state.closing = True
+        interruptible = [
+            job for job in jobs.values()
+            if interrupt_render and job.get("type") == "render" and job.get("cancel_token")
+            and not job["task"].done()
+        ]
+    for job in interruptible:
+        request_render_stop(job)
+    if interruptible:
+        # Give FFmpeg and scratch cleanup an opportunity before the native
+        # launcher terminates the process tree, within the 4 s request limit.
+        await asyncio.wait([job["task"] for job in interruptible], timeout=2.5)
+    with state.lock:
+        if state.close_attempt != attempt or not state.closing:
+            raise HTTPException(409, "Bu kapanış girişimi iptal edildi.")
     return {"close_ready": True}
 
 
@@ -3638,8 +3663,7 @@ async def cancel_render(job_id: str, x_render_cancel_token: typing.Annotated[str
         raise HTTPException(404, "Dışa aktarma işi bulunamadı veya süresi doldu.")
     if job.get("published") or job["task"].done():
         return {"status": "cancelled" if job.get("cancel_requested") else "finished"}
-    job["cancel_requested"] = True
-    stop_render_child(job)
+    request_render_stop(job)
     return JSONResponse(status_code=202, content={"status": "cancelling"})
 
 

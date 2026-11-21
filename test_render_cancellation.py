@@ -42,6 +42,8 @@ class RenderCancellationTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.backend.jobs.clear()
+        self.backend.desktop_update_state.closing = False
+        self.backend.desktop_update_state.close_attempt = 0
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.backend.app), base_url="http://editor", headers=self.headers,
         )
@@ -217,3 +219,20 @@ class RenderCancellationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(messages[-1], "cancelled")
             self.assertFalse(scratch[0].exists())
             spawn.assert_not_called()
+
+
+    async def test_confirmed_desktop_close_stops_and_cleans_real_render_before_returning(self):
+        started, _, intercept = self.slow_first("output.mp4")
+        with intercept:
+            job = await self.start()
+            scratch, process = await asyncio.wait_for(started, 5)
+            self.assertEqual((await self.client.post("/api/desktop/prepare-close?attempt=91")).status_code, 409)
+            try:
+                closed = await self.client.post("/api/desktop/prepare-close?attempt=91&interrupt_render=true")
+                self.assertEqual(closed.json(), {"close_ready": True})
+                self.assertTrue(self.backend.jobs[job["job_id"]]["task"].done())
+                self.assertIsNotNone(process.returncode)
+                self.assertFalse(scratch.exists())
+            finally:
+                await self.client.post("/api/desktop/cancel-close?attempt=91")
+            await self.assert_stopped(job, process, scratch, "mp4")
