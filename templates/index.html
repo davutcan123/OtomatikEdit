@@ -1158,12 +1158,12 @@
     function prepareVideoTrackNodes(width){
       const host=el('track');host.replaceChildren();document.querySelectorAll('[data-extra-video-label]').forEach(node=>node.remove());
       for(const state of ensureVideoTracks()){
-        const lane=document.createElement('div');lane.id='video-track-'+state.id;lane.dataset.videoTrack=state.id;lane.className='video-lane';lane.style.width=width+'px';lane.onpointerdown=event=>{if(event.target===lane){S.activeVideoTrack=state.id;S.selectedVideoClipIds=[];S.selected=-1;beginScrub(event);drawVideoTrackLabels()}};host.append(lane);
+        const lane=document.createElement('div');lane.id='video-track-'+state.id;lane.dataset.videoTrack=state.id;lane.className='video-lane';lane.style.width=width+'px';lane.onpointerdown=event=>{if(event.target===lane){S.activeVideoTrack=state.id;S.selectedVideoClipIds=[];S.selected=-1;beginScrub(event,{selectionChanged:true})}};host.append(lane);
         if(state.id!==1){const label=document.createElement('div');label.className='track-label video-track-label';label.dataset.extraVideoLabel=state.id;label.innerHTML='<b></b><span class="track-controls"></span>';const controls=label.querySelector('.track-controls');for(const action of ['lock','visible','mute']){const button=document.createElement('button');button.type='button';button.className='track-control';button.dataset.videoTrackAction=action;button.dataset.videoTrackId=state.id;button.onclick=event=>{event.stopPropagation();remember();const track=videoTrackState(state.id);if(action==='lock')track.locked=!track.locked;else if(action==='visible')track.visible=!track.visible;else track.muted=!track.muted;drawClips()};controls.append(button)}el('timeline-content').append(label)}
       }
       drawVideoTrackLabels();return host;
     }
-    function drawVideoTrackLabels(){for(const state of ensureVideoTracks()){const label=state.id===1?el('video-label'):document.querySelector('[data-extra-video-label="'+state.id+'"]');if(!label)continue;label.querySelector('b').textContent=state.name.toLocaleUpperCase('tr-TR');if(state.id!==1){const close=document.createElement('button');close.type='button';close.className='track-control video-track-remove';close.textContent='×';close.title=state.name+' kanalını sil';close.setAttribute('aria-label',close.title);close.onclick=event=>{event.stopPropagation();removeVideoTrack(state.id)};label.querySelector('b').append(close);}label.querySelector('b').onclick=()=>{const time=currentOutputTime();S.selectedVideoClipIds=[];S.activeVideoTrack=state.id;S.selected=S.clips.findIndex(clip=>(clip.videoTrack||1)===state.id&&time>=clipTimelineStart(clip)&&time<clipTimelineEnd(clip));S.selectedText=S.selectedSticker=S.selectedLayer=null;drawClips()};label.classList.toggle('active-video-track',S.activeVideoTrack===state.id);label.classList.toggle('track-hidden',!state.visible);label.classList.toggle('track-locked',state.locked);for(const button of label.querySelectorAll('[data-video-track-action]'))paintStudioTrackControl(button,state)}}
+    function drawVideoTrackLabels(){for(const state of ensureVideoTracks()){const label=state.id===1?el('video-label'):document.querySelector('[data-extra-video-label="'+state.id+'"]');if(!label)continue;label.querySelector('b').textContent=state.name.toLocaleUpperCase('tr-TR');if(state.id!==1){const close=document.createElement('button');close.type='button';close.className='track-control video-track-remove';close.textContent='×';close.title=state.name+' kanalını sil';close.setAttribute('aria-label',close.title);close.onclick=event=>{event.stopPropagation();removeVideoTrack(state.id)};label.querySelector('b').append(close);}label.querySelector('b').onclick=()=>{const time=currentOutputTime();S.selectedVideoClipIds=[];S.activeVideoTrack=state.id;S.selected=S.clips.findIndex(clip=>(clip.videoTrack||1)===state.id&&time>=clipTimelineStart(clip)&&time<clipTimelineEnd(clip));S.selectedText=S.selectedSticker=S.selectedLayer=null;showTextProperties();refreshTimelineSelection()};label.classList.toggle('active-video-track',S.activeVideoTrack===state.id);label.classList.toggle('track-hidden',!state.visible);label.classList.toggle('track-locked',state.locked);for(const button of label.querySelectorAll('[data-video-track-action]'))paintStudioTrackControl(button,state)}}
     function layoutVideoTracks(top,height,width){const tracks=ensureVideoTracks(),span=height+8;S.videoLaneTops={};for(const [index,state]of [...tracks].reverse().entries()){const offset=index*span,lane=el('video-track-'+state.id),label=state.id===1?el('video-label'):document.querySelector('[data-extra-video-label="'+state.id+'"]');S.videoLaneTops[state.id]=top+offset;if(lane){lane.style.top=offset+'px';lane.style.height=height+'px';lane.style.width=width+'px'}if(label)label.style.top=(top+offset+height/2-12)+'px'}el('track').style.height=(tracks.length*span-8)+'px';return top+tracks.length*span}
     function scrollVideoTrackIntoView(id){const box=el('timeline'),top=S.videoLaneTops?.[id];if(!box||!Number.isFinite(top))return;box.scrollTop=Math.max(0,top-44);}
     function videoTrackAtClientY(y){const timeline=el('timeline').getBoundingClientRect();if(y<timeline.top||y>timeline.bottom)return null;for(const lane of el('track').querySelectorAll('.video-lane')){const r=lane.getBoundingClientRect();if(y>=r.top&&y<=r.bottom)return +lane.dataset.videoTrack}return null}
@@ -1641,7 +1641,7 @@
       el('zoom-keyframe-scale-value').textContent=scale+'%';el('zoom-keyframe-opacity-value').textContent=opacity+'%';el('zoom-keyframe-x-value').textContent=x+'%';el('zoom-keyframe-y-value').textContent=y+'%';el('zoom-keyframe-delete').disabled=locked||!selected;el('zoom-keyframes-clear').disabled=locked||!frames.length;
       const list=el('zoom-keyframe-list');
       list.innerHTML=frames.length?frames.map(frame=>'<button type="button" class="zoom-keyframe-chip '+(frame.id===S.selectedZoomKeyframe?'active':'')+'" data-zoom-keyframe-id="'+frame.id+'"><span>◆ '+ft(clipTimelineStart(clip)+frame.time)+'</span><b>'+Math.round(frame.scale)+'% · α'+Math.round(frame.opacity)+'% · '+Math.round(frame.x)+','+Math.round(frame.y)+' · '+ZOOM_EASINGS[frame.easing]+'</b></button>').join(''):'<span class="text-[10px] text-slate-600">Henüz zoom keyframe’i yok.</span>';
-      list.querySelectorAll('[data-zoom-keyframe-id]').forEach(button=>button.onclick=()=>{const frame=frames.find(item=>item.id===button.dataset.zoomKeyframeId);if(!frame)return;S.selectedZoomKeyframe=frame.id;seekOutputTime(clipTimelineStart(clip)+frame.time);drawZoomKeyframeInspector(true);drawClips()});
+      list.querySelectorAll('[data-zoom-keyframe-id]').forEach(button=>button.onclick=()=>{const frame=frames.find(item=>item.id===button.dataset.zoomKeyframeId);if(!frame)return;S.selectedZoomKeyframe=frame.id;seekOutputTime(clipTimelineStart(clip)+frame.time);refreshTimelineSelection()});
     }
     function addZoomKeyframe(scale,x=el('zoom-keyframe-x').value,y=el('zoom-keyframe-y').value,easing=el('zoom-keyframe-easing').value,opacity=el('zoom-keyframe-opacity').value){
       const clip=selectedClip();if(!clip)return log('manual-log','Önce timeline’dan bir video klibi seçin.','error');if(isTrackLocked('video'))return log('manual-log','Video kanalı kilitli.','error');
@@ -1744,6 +1744,57 @@
     el('clip-animation-remove').onclick=()=>{const clip=selectedClip();if(!clip)return;remember();clip.animation='none';drawClips();log('manual-log','Klip animasyonu kaldırıldı.','info')};
     document.querySelectorAll('.clip-style-card').forEach(button=>button.onclick=()=>{const clip=selectedClip();if(!clip)return;remember();clip.effect=button.dataset.clipStyle;drawClips();log('manual-log','K'+(S.selected+1)+' klibine '+VIDEO_EFFECTS[clip.effect].name+' stili uygulandı.','info')});
     el('clip-settings-reset').onclick=()=>{const clip=selectedClip();if(!clip||isVideoTrackLocked(clip))return;const defaults=clipSettings();if(!canResizeVideoClip(clip,{...clip,...defaults}))return;remember();Object.assign(clip,defaults);S.selectedZoomKeyframe=null;drawClips();log('manual-log','Seçili klibin video ayarları sıfırlandı.','info')};
+    function drawClipSelectionControls(){
+      const clip=S.clips[S.selected],hasClips=S.clips.length>0,videoLocked=isTrackLocked('video');
+      const actionTrack=timelineSelectedTrack(),actionLocked=isTrackLocked(actionTrack);
+      el('split').disabled=actionLocked||(actionTrack==='video'?!hasClips:actionTrack!=='audio');
+      el('remove').disabled=actionLocked||(actionTrack==='video'&&!clip);
+      el('reset').disabled=!hasClips||timelineResetLocked();
+      el('left').disabled=videoLocked||!clip||!neighboringVideoClip(clip,-1);
+      el('right').disabled=videoLocked||!clip||!neighboringVideoClip(clip,1);
+      el('clip-start').disabled=el('clip-end').disabled=el('trim').disabled=!clip||videoLocked;
+      el('clip-start').value=clip?clip.start.toFixed(2):'';
+      el('clip-end').value=clip?clip.end.toFixed(2):'';
+    }
+    function paintTimedSelection(){
+      const rows=[
+        ['text-track','.text-clip','textId',S.selectedText],
+        ['subtitle-track','.subtitle-clip','textId',S.selectedText],
+        ['sticker-track','.sticker-clip','stickerId',S.selectedSticker],
+        ['image-track','.image-layer-clip','layerId',S.selectedLayer?.type==='image'?S.selectedLayer.id:null],
+        ['audio-track','.audio-layer-clip','layerId',S.selectedLayer?.type==='audio'?S.selectedLayer.id:null],
+        ['text-track','.text-transform-keyframe','textKeyframeId',S.selectedTextKeyframe],
+        ['subtitle-track','.text-transform-keyframe','textKeyframeId',S.selectedTextKeyframe],
+        ['track','.zoom-keyframe-marker','zoomKeyframeId',S.selectedZoomKeyframe],
+      ];
+      for(const [track,selector,key,selected] of rows){
+        el(track).querySelectorAll(selector).forEach(node=>node.classList.toggle('selected',node.dataset[key]===selected));
+      }
+      el('image-track').querySelectorAll('.image-keyframe-marker').forEach(node=>{
+        node.classList.toggle('selected',layerSelected('image',node.dataset.imageId)&&node.dataset.imageKf===S.selectedImageKeyframe);
+      });
+    }
+    function refreshTimelineSelection(){
+      // The clip ranges, lane geometry and media nodes remain mounted between edits.
+      paintTimelineVideoSelection();
+      paintTimedSelection();
+      const videoLocked=isTrackLocked('video');
+      el('track').classList.toggle('track-locked',videoLocked);
+      el('video-label').classList.toggle('track-locked',videoLocked);
+      el('video-label').classList.toggle('active-video-track',S.activeVideoTrack===1);
+      document.querySelectorAll('[data-extra-video-label]').forEach(label=>{
+        label.classList.toggle('active-video-track',+label.dataset.extraVideoLabel===S.activeVideoTrack);
+      });
+      drawClipSelectionControls();
+      drawClipInspector();drawImageInspector();drawStudioLayerInspector();
+      if(el('clip-inspector').classList.contains('hidden'))drawSubtitleEditor();
+      drawAnimations();drawVideoEffects();drawFilters();window.StudioLibrary?.refreshLookSelection();
+      window.StudioTemplates?.refreshSourceSelection();
+      revealActiveVideoTrack();
+      applyVideoEffectPreview();
+      drawPlayhead();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();
+      scheduleAutosave();
+    }
     function drawClips(){
       ensureClipTimelinePositions();if(typeof normalizeVideoRipple==='function')normalizeVideoRipple();const track=el('track'),total=outDuration(),trackWidth=Math.max(34,total*S.zoom);prepareVideoTrackNodes(trackWidth);track.style.width=trackWidth+'px';el('timeline-content').style.width=(trackWidth+TIMELINE_GUTTER+24)+'px';
       drawRuler(total);
@@ -1753,14 +1804,9 @@
         const duration=clipOutputDuration(c),fadeInWidth=Math.min(50,Math.max(0,c.audioFadeIn/duration*100)),fadeOutWidth=Math.min(50,Math.max(0,c.audioFadeOut/duration*100)),fadeMarkup=(fadeInWidth>.1?'<span class="audio-fade in" style="width:'+fadeInWidth+'%">FADE IN</span>':'')+(fadeOutWidth>.1?'<span class="audio-fade out" style="width:'+fadeOutWidth+'%">FADE OUT</span>':'');
         const zoomMarkup=normalizedZoomKeyframes(c).map(frame=>'<span class="zoom-keyframe-marker '+(frame.id===S.selectedZoomKeyframe?'selected':'')+'" data-zoom-keyframe-id="'+frame.id+'" data-zoom-keyframe-time="'+frame.time+'" style="left:'+(frame.time/duration*100)+'%" title="Zoom '+Math.round(frame.scale)+'% · Saydamlık '+Math.round(frame.opacity)+'% · Odak '+Math.round(frame.x)+','+Math.round(frame.y)+' · '+ft(clipTimelineStart(c)+frame.time)+'"></span>').join('');
         b.innerHTML='<span class="clip-shade absolute inset-0"></span><span class="clip-wave-band"><img class="clip-waveform" src="'+waveUrl+'" loading="lazy" draggable="false" alt="Ses dalga formu"></span>'+fadeMarkup+zoomMarkup+'<b class="absolute z-20 top-2 left-3 text-[10px] bg-slate-950/70 px-1.5 py-1 rounded">K'+(i+1)+'</b>'+badges+'<span class="absolute z-20 bottom-2 left-3 text-[10px] font-mono whitespace-nowrap">'+escapeHtml(c.name||'Video')+' · '+ft(c.start)+' → '+ft(c.end)+'</span>';
-        b.querySelectorAll('.zoom-keyframe-marker').forEach(marker=>{marker.onpointerdown=event=>{event.preventDefault();event.stopPropagation()};marker.onclick=event=>{event.preventDefault();event.stopPropagation();S.selectedVideoClipIds=[c.clipId];S.selected=S.preview=i;S.activeVideoTrack=c.videoTrack||1;S.selectedZoomKeyframe=marker.dataset.zoomKeyframeId;seekOutputTime(clipTimelineStart(c)+(+marker.dataset.zoomKeyframeTime||0));drawClips()}});appendTrimHandles(b,'video',i);b.onclick=event=>{if(S.suppressClick){S.suppressClick=false;return}const at=timelineTimeAtClientX(event.clientX);select(i,false);pausePreview();seekOutputTime(Math.max(clipTimelineStart(c),Math.min(clipTimelineEnd(c)-.001,at)))};b.onpointerdown=e=>beginClipDrag(e,i,b);b.oncontextmenu=e=>openContextMenu(e,{type:'video',index:i});if(isVideoTrackLocked(c))b.classList.add('track-locked');
+        b.querySelectorAll('.zoom-keyframe-marker').forEach(marker=>{marker.onpointerdown=event=>{event.preventDefault();event.stopPropagation()};marker.onclick=event=>{event.preventDefault();event.stopPropagation();S.selectedVideoClipIds=[c.clipId];S.selected=S.preview=i;S.activeVideoTrack=c.videoTrack||1;S.selectedZoomKeyframe=marker.dataset.zoomKeyframeId;seekOutputTime(clipTimelineStart(c)+(+marker.dataset.zoomKeyframeTime||0));refreshTimelineSelection()}});appendTrimHandles(b,'video',i);b.onclick=event=>{if(S.suppressClick){S.suppressClick=false;return}const at=timelineTimeAtClientX(event.clientX);select(i,false);pausePreview();seekOutputTime(Math.max(clipTimelineStart(c),Math.min(clipTimelineEnd(c)-.001,at)))};b.onpointerdown=e=>beginClipDrag(e,i,b);b.oncontextmenu=e=>openContextMenu(e,{type:'video',index:i});if(isVideoTrackLocked(c))b.classList.add('track-locked');
         el('video-track-'+c.videoTrack).appendChild(b);addThumbnail(b,c,S.sourceToken)});
-      const valid=S.selected>=0&&S.selected<S.clips.length,has=S.clips.length>0;
-      const actionTrack=timelineSelectedTrack(),actionLocked=isTrackLocked(actionTrack);
-      el('split').disabled=actionLocked||(actionTrack==='video'?!has:actionTrack!=='audio');
-      el('remove').disabled=actionLocked||(actionTrack==='video'&&!valid);el('reset').disabled=!has||timelineResetLocked();el('left').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],-1)||isTrackLocked('video');el('right').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],1)||isTrackLocked('video');paintHistoryControls();outputJobs.draw();
-      el('clip-start').disabled=el('clip-end').disabled=el('trim').disabled=!valid||isTrackLocked('video');
-      el('clip-start').value=valid?S.clips[S.selected].start.toFixed(2):'';el('clip-end').value=valid?S.clips[S.selected].end.toFixed(2):'';
+      drawClipSelectionControls();paintHistoryControls();outputJobs.draw();
       const summaryText=S.clips.length+' klip · '+total.toFixed(2)+' sn çıktı';el('summary').textContent=summaryText;el('summary-top').textContent=summaryText;drawClipInspector();drawImageInspector();drawStudioLayerInspector();drawTexts();drawPlayhead();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();drawAnimations();drawVideoEffects();drawFilters();window.multiTrackPreview?.paint();applyVideoEffectPreview();drawTrackControls();syncProjectAudio(true);window.StudioLibrary?.refreshLookSelection();if(typeof drawRippleButton==='function')drawRippleButton();if(typeof paintTimelineVideoSelection==='function')paintTimelineVideoSelection();window.StudioTemplates?.refreshSources();scheduleAutosave();
     }
     function drawRuler(total){
@@ -1886,7 +1932,16 @@
       }
       S.cancelPreviewSource=cleanup;mv.addEventListener('loadedmetadata',ready,{once:true});
     }
-    function select(i,seek=false){S.selectedVideoClipIds=S.clips[i]?[S.clips[i].clipId]:[];resetLiveTransition();S.selected=i;if(S.clips[i])S.activeVideoTrack=S.clips[i].videoTrack||1;S.preview=i;S.selectedText=null;S.selectedSticker=null;S.selectedLayer=null;S.selectedZoomKeyframe=null;showTextProperties();drawClips();if(seek&&S.clips[i])setPreviewSource(i,undefined,false)}
+    function select(i,seek=false){
+      const clip=S.clips[i];
+      S.selectedVideoClipIds=clip?[clip.clipId]:[];
+      resetLiveTransition();
+      S.selected=S.preview=i;
+      if(clip)S.activeVideoTrack=clip.videoTrack||1;
+      S.selectedText=S.selectedSticker=S.selectedLayer=S.selectedZoomKeyframe=null;
+      showTextProperties();refreshTimelineSelection();
+      if(seek&&clip)setPreviewSource(i,undefined,false);
+    }
     function splitVideoTarget(outputTime){const contains=clip=>clip&&outputTime>clipTimelineStart(clip)+.05&&outputTime<clipTimelineEnd(clip)-.05,index=contains(S.clips[S.selected])?S.selected:S.clips.findIndex(clip=>contains(clip)&&(!Number.isFinite(S.activeVideoTrack)||(clip.videoTrack||1)===S.activeVideoTrack)),clip=S.clips[index],elapsed=clip?(outputTime-clipTimelineStart(clip))*Math.max(.01,+clip.speed||1):0;return clip?{index,clip,sourceTime:clip.reverse?clip.end-elapsed:clip.start+elapsed}:null}
     function splitClip(){const outputTime=currentOutputTime(),target=splitVideoTarget(outputTime);if(!target)return log('manual-log','Oynatma kafasını seçili kanaldaki video klibinin içine getirin.','error');if(isVideoTrackLocked(target.clip))return log('manual-log','Video kanalı kilitli.','error');const {clip:c,sourceTime:t,index:splitAt}=target,wasPlaying=!!isPreviewPlaying();remember();const splitRelative=outputTime-clipTimelineStart(c),boundaryState=zoomStateAtRelativeTime(c,splitRelative),frames=normalizedZoomKeyframes(c);let leftFrames=[],rightFrames=[];if(frames.length){leftFrames=frames.filter(frame=>frame.time<=splitRelative+.001).map(frame=>({...frame}));rightFrames=frames.filter(frame=>frame.time>splitRelative+.001).map(frame=>({...frame,id:'Z'+S.nextZoomKeyframeId++,time:frame.time-splitRelative}));if(!leftFrames.some(frame=>Math.abs(frame.time-splitRelative)<=.001))leftFrames.push({id:'Z'+S.nextZoomKeyframeId++,time:splitRelative,...boundaryState});rightFrames.unshift({id:'Z'+S.nextZoomKeyframeId++,time:0,...boundaryState})}const left={...c,...(c.reverse?{start:t}:{end:t}),timelineStart:clipTimelineStart(c),zoomKeyframes:leftFrames},right={...c,clipId:newClipId(),...(c.reverse?{end:t}:{start:t}),zoomKeyframes:rightFrames};right.timelineStart=clipTimelineEnd(left);S.transitions=S.transitions.map(item=>item.leftClipId===c.clipId?{...item,leftClipId:right.clipId}:item);S.clips.splice(splitAt,1,left,right);clampClipTransitions();S.selected=S.preview=splitAt+1;S.selectedZoomKeyframe=null;resetLiveTransition();drawClips();setPreviewSource(S.preview,t,wasPlaying);log('manual-log',ft(outputTime)+' noktasından bölündü'+(frames.length?'; zoom keyframeleri iki klibe korundu.':'.'),'info')}
     function splitAudioLayer(){if(isTrackLocked('audio'))return log('manual-log','Ses kanalı kilitli.','error');const selected=S.selectedLayer;if(selected?.type!=='audio')return;const time=currentOutputTime(),inside=item=>item&&time>item.start+.05&&time<item.end-.05,preferred=S.audioLayers.find(x=>x.id===selected.id),item=inside(preferred)?preferred:S.audioLayers.find(inside);if(!item)return log('manual-log','Oynatma kafasını ses klibinin içine getirin.','error');remember();const right={...item,id:'A'+S.nextLayerId++,start:time,sourceStart:(+item.sourceStart||0)+(time-item.start)};item.end=time;S.audioLayers.push(right);S.selectedLayer={type:'audio',id:right.id};drawClips();log('manual-log',ft(time)+' noktasından ses kesildi.','info')}
@@ -2002,7 +2057,7 @@
       else if(type==='fadeblack'){transitionVideo.style.opacity=p>=.5?'1':'0';flash.style.opacity=String(1-Math.abs(p*2-1))}
     }
     function refreshPlaybackSelection(){
-      document.querySelectorAll('#track .clip').forEach(node=>node.classList.toggle('selected',+node.dataset.index===S.selected));const clip=S.clips[S.selected];if(clip){el('clip-start').value=clip.start.toFixed(2);el('clip-end').value=clip.end.toFixed(2)}drawVideoEffects();applyVideoEffectPreview();drawPlayhead();if(typeof paintTimelineVideoSelection==='function')paintTimelineVideoSelection();
+      paintTimelineVideoSelection();drawClipSelectionControls();drawVideoEffects();applyVideoEffectPreview();drawPlayhead();
     }
     function advancePreviewClip(){
       const currentIndex=S.preview,nextIndex=currentIndex+1,current=S.clips[currentIndex],next=S.clips[nextIndex],transition=S.transitions.find(x=>x.boundary===currentIndex);if(!current)return;
@@ -2024,7 +2079,25 @@
     mv.onseeked=()=>{if(window.multiTrackPreview?.enabled())return;S.seeking=false;syncProjectAudio(true);if(S.pendingTransitionToken){const token=S.pendingTransitionToken;S.pendingTransitionToken=0;requestAnimationFrame(()=>{if(S.liveTransition?.token===token)resetLiveTransition();if(!!isPreviewPlaying())prepareUpcomingTransition()})}else if(!!isPreviewPlaying())prepareUpcomingTransition()};
     mv.ontimeupdate=()=>{if(window.multiTrackPreview?.enabled())return;const clip=S.clips[S.preview],value=ft(currentOutputTime())+' / '+ft(outDuration());el('timecode').textContent=value;el('timecode-top').textContent=value;if(!S.liveTransition)applyVideoEffectPreview();drawPlayhead();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();syncProjectAudio()};
     function currentOutputTime(){if(window.multiTrackPreview?.enabled())return window.multiTrackPreview.time();if(Number.isFinite(S.timelineCursor))return S.timelineCursor;const c=S.clips[S.preview];if(!c)return 0;const base=clipTimelineStart(c),speed=+c.speed||1,live=S.liveTransition,transitionVideo=el('transition-video');if(live?.handoff&&live.boundary+1===S.preview&&transitionVideo.readyState>=2)return base+Math.max(0,Math.min(clipOutputDuration(c),(transitionVideo.currentTime-c.start)/speed));return base+Math.max(0,Math.min(clipOutputDuration(c),(mv.currentTime-c.start)/speed))}
-    function seekOutputTime(value){if(window.multiTrackPreview?.enabled())return window.multiTrackPreview.seek(value);resetLiveTransition();const total=outDuration(),wanted=Math.max(0,Math.min(Math.max(0,total-.001),value));ensureClipTimelinePositions();const index=S.clips.findIndex(c=>wanted>=clipTimelineStart(c)-.001&&wanted<=clipTimelineEnd(c)+.001);if(index<0){pausePreview();S.timelineCursor=wanted;S.previewGap=true;drawPlayhead();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();const valueText=ft(wanted)+' / '+ft(total);el('timecode').textContent=valueText;el('timecode-top').textContent=valueText;return}const c=hydrateClip(S.clips[index]),d=clipOutputDuration(c),changed=S.selected!==index||S.activeVideoFileId!==(c.fileId||S.manualId);S.preview=S.selected=index;setPreviewSource(index,c.start+Math.max(0,Math.min(d,wanted-clipTimelineStart(c)))*(+c.speed||1),false,false);if(changed)drawClips();else{drawPlayhead();drawClipInspector()}}
+    function seekOutputTime(value){
+      if(window.multiTrackPreview?.enabled())return window.multiTrackPreview.seek(value);
+      resetLiveTransition();
+      const total=outDuration(),wanted=Math.max(0,Math.min(Math.max(0,total-.001),value));
+      const index=S.clips.findIndex(clip=>wanted>=clipTimelineStart(clip)-.001&&wanted<=clipTimelineEnd(clip)+.001);
+      if(index<0){
+        pausePreview();S.timelineCursor=wanted;S.previewGap=true;
+        drawPlayhead();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();
+        const valueText=ft(wanted)+' / '+ft(total);
+        el('timecode').textContent=valueText;el('timecode-top').textContent=valueText;
+        return;
+      }
+      const clip=hydrateClip(S.clips[index]),elapsed=Math.max(0,Math.min(clipOutputDuration(clip),wanted-clipTimelineStart(clip)));
+      const changed=S.selected!==index||S.activeVideoFileId!==(clip.fileId||S.manualId);
+      S.preview=S.selected=index;
+      setPreviewSource(index,clip.start+elapsed*(+clip.speed||1),false,false);
+      if(changed)refreshTimelineSelection();
+      else{drawPlayhead();drawClipInspector()}
+    }
     function drawPlayhead(){const p=el('playhead'),total=outDuration(),time=total?currentOutputTime():0;window.StudioTransport?.update(time,total);if(!total){p.classList.add('hidden');return}const x=TIMELINE_GUTTER+time*S.zoom;p.style.left=x+'px';p.classList.remove('hidden');if(!!isPreviewPlaying()){const box=el('timeline');if(x>box.scrollLeft+box.clientWidth-80||x<box.scrollLeft+TIMELINE_GUTTER+14)box.scrollLeft=Math.max(0,x-TIMELINE_GUTTER-44)}}
     function scrubAt(clientX){
       const box=el('timeline'),viewport=box.getBoundingClientRect(),edge=56,maxScroll=Math.max(0,box.scrollWidth-box.clientWidth);
@@ -2033,8 +2106,12 @@
       const rect=el('timeline-content').getBoundingClientRect(),safeX=Math.max(viewport.left,Math.min(viewport.right,clientX)),time=(safeX-rect.left-TIMELINE_GUTTER)/S.zoom;
       const target=snapTimelineTime(time,{min:0,max:outDuration(),includePlayhead:false});if(Math.abs(target-currentOutputTime())>.0001)seekOutputTime(target);
     }
-    function beginScrub(e){
-      e.preventDefault();pausePreview();S.selectedText=null;S.selectedSticker=null;if(S.selectedLayer?.type!=='audio')S.selectedLayer=null;let pointerX=e.clientX,active=true,frame=0;
+    function beginScrub(e,{selectionChanged=false}={}){
+      e.preventDefault();pausePreview();
+      const clearedTimedSelection=S.selectedText||S.selectedSticker||(S.selectedLayer&&S.selectedLayer.type!=='audio');
+      S.selectedText=null;S.selectedSticker=null;if(S.selectedLayer?.type!=='audio')S.selectedLayer=null;
+      if(selectionChanged||clearedTimedSelection){showTextProperties();refreshTimelineSelection()}
+      let pointerX=e.clientX,active=true,frame=0;
       const tick=()=>{if(!active)return;scrubAt(pointerX);frame=requestAnimationFrame(tick)};
       const move=event=>{pointerX=event.clientX;scrubAt(pointerX)};
       const up=()=>{active=false;cancelAnimationFrame(frame);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);window.removeEventListener('pointercancel',up);clearTimelineSnapGuide()};
@@ -2460,13 +2537,19 @@
       const up=event=>finish(event,false),cancel=event=>finish(event,true),key=event=>{if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();cancel(event)}};
       window.addEventListener('pointermove',move,{passive:false});window.addEventListener('pointerup',up);window.addEventListener('pointercancel',cancel);window.addEventListener('blur',cancel);window.addEventListener('keydown',key,true);
     }
+    function revealActiveVideoTrack(compact=window.matchMedia('(min-width:1100px) and (min-height:650px)').matches,
+      height=parseFloat(el('video-track-'+S.activeVideoTrack)?.style.height)||0){
+      if(!compact||setTimelineDropTarget.type||S.selected<0||S.selectedText||S.selectedSticker||S.selectedLayer)return;
+      const box=el('timeline'),top=S.videoLaneTops?.[S.activeVideoTrack]??S.timelineVideoTop;
+      if(box.clientHeight>0&&(top<box.scrollTop||top+height>box.scrollTop+box.clientHeight))box.scrollTop=Math.max(0,top-44);
+    }
     function drawTexts(){
       const track=el('text-track'),subtitleTrack=el('subtitle-track'),total=outDuration(),trackWidth=Math.max(34,total*S.zoom),regular=S.texts.filter(item=>item.kind!=='subtitle'),subtitles=S.texts.filter(item=>item.kind==='subtitle');track.innerHTML='';subtitleTrack.innerHTML='';track.style.width=subtitleTrack.style.width=trackWidth+'px';el('text-count').textContent=regular.length+' metin';
       const makeLanes=items=>{const ends=[],map=new Map();[...items].sort((a,b)=>a.start-b.start||a.end-b.end).forEach(item=>{let lane=ends.findIndex(end=>end<=item.start+.001);if(lane<0){lane=ends.length;ends.push(item.end)}else ends[lane]=item.end;map.set(item.id,lane)});return {count:Math.max(1,ends.length),map}};
       const compact=window.matchMedia('(min-width:1100px) and (min-height:650px)').matches,textLanes=makeLanes(regular),subtitleLanes=makeLanes(subtitles),geometry=timelineRowGeometry({compact,counts:timelineOptionalCounts(),textLanes:textLanes.count,subtitleLanes:subtitleLanes.count,imageKeyframes:S.imageLayers.some(item=>item.transformKeyframes?.length),videoTracks:ensureVideoTracks().length,dropTarget:setTimelineDropTarget.type||null}),{videoTop,videoHeight,timelineHeight}=geometry;
       for(const[type,row]of Object.entries(geometry.rows)){const node=el(type+'-track'),label=el(type+'-label');node.classList.toggle('timeline-row-empty',!row.visible);label.classList.toggle('timeline-row-empty',!row.visible);node.classList.toggle('timeline-row-drop-target',row.temporary);node.dataset.dropLabel={sticker:'Stickerı buraya bırakın',text:'Metni buraya bırakın',subtitle:'Altyazı',image:'Görseli buraya bırakın',audio:'Ses dosyasını buraya bırakın'}[type];node.style.top=row.top+'px';node.style.height=row.height+'px';label.style.top=(row.top+row.height/2-12)+'px'}
       S.timelineVideoTop=videoTop;el('track-separator').style.top=(videoTop-5)+'px';el('track').style.top=videoTop+'px';el('track').style.height=videoHeight+'px';el('video-label').style.top=(videoTop+videoHeight/2-12)+'px';el('timeline').style.height=timelineHeight+'px';el('timeline-content').style.height=timelineHeight+'px';drawEmptyTrackLockMenu();
-      layoutVideoTracks(videoTop,videoHeight,trackWidth);const activeTop=S.videoLaneTops[S.activeVideoTrack]??videoTop;const timelineViewport=el('timeline');if(!setTimelineDropTarget.type&&compact&&S.selected>=0&&!S.selectedText&&!S.selectedSticker&&!S.selectedLayer&&timelineViewport.clientHeight>0&&(activeTop<timelineViewport.scrollTop||activeTop+videoHeight>timelineViewport.scrollTop+timelineViewport.clientHeight))timelineViewport.scrollTop=Math.max(0,activeTop-44);
+      layoutVideoTracks(videoTop,videoHeight,trackWidth);revealActiveVideoTrack(compact,videoHeight);
       const paint=(items,target,lanes,type)=>items.forEach(item=>{hydrateText(item);const b=document.createElement('button'),duration=Math.max(.05,item.end-item.start),keyframes=normalizedTextKeyframes(item).map(frame=>'<span class="text-transform-keyframe '+(frame.id===S.selectedTextKeyframe?'selected':'')+'" data-text-keyframe-id="'+frame.id+'" data-text-keyframe-time="'+frame.time+'" style="left:'+(frame.time/duration*100)+'%" title="Metin '+Math.round(frame.scale)+'% · Saydamlık '+Math.round(frame.opacity)+'%"></span>').join('');b.className=(type==='subtitle'?'subtitle-clip ':'text-clip ')+(item.id===S.selectedText?'selected':'');b.style.left=(item.start*S.zoom)+'px';b.style.top=((lanes.get(item.id)||0)*42+4)+'px';b.style.width=Math.max(0,duration*S.zoom)+'px';b.dataset.textId=item.id;b.innerHTML=keyframes+'<span class="timed-clip-label"><b class="block text-[10px] truncate">'+escapeHtml(item.text)+'</b><span data-timeline-time class="text-[9px] opacity-70">'+ft(item.start)+' → '+ft(item.end)+'</span></span>';b.querySelectorAll('[data-text-keyframe-id]').forEach(marker=>{marker.onpointerdown=event=>{event.preventDefault();event.stopPropagation()};marker.onclick=event=>{event.preventDefault();event.stopPropagation();selectText(item.id,false);S.selectedTextKeyframe=marker.dataset.textKeyframeId;seekOutputTime(item.start+(+marker.dataset.textKeyframeTime||0));drawTexts();showTextProperties()}});appendTrimHandles(b,type,item.id);b.onclick=()=>{if(S.suppressTextClipClick)return;selectText(item.id,true)};b.onpointerdown=e=>beginTextClipDrag(e,item.id,b);b.oncontextmenu=e=>openContextMenu(e,{type,id:item.id});if(isTrackLocked(type))b.classList.add('track-locked');target.appendChild(b)});
       paint(regular,track,textLanes.map,'text');paint(subtitles,subtitleTrack,subtitleLanes.map,'subtitle');drawStickerTimeline();drawTimelineMediaLayers();drawTransitions();drawSubtitleEditor();
     }

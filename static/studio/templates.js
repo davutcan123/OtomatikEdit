@@ -382,18 +382,30 @@
     library.results.querySelectorAll('[data-apply-template]').forEach(button => { button.disabled = disabled; });
   }
 
+  function preferredClipSource() {
+    const clip = !S.selectedText && !S.selectedLayer && !S.selectedSticker && S.clips[S.selected];
+    return clip ? 'clip:' + clip.clipId : '';
+  }
+
+  function refreshSourceSelection() {
+    if (!library || library.sourceChoice !== null) return;
+    const value = preferredClipSource();
+    if (library.source.value === value) return;
+    library.source.value = value;
+    if (library.source.selectedIndex < 0) library.source.value = '';
+    updateApplyControls();
+  }
+
   function refreshSources(force = false) {
     if (!library) return;
     const clips = S.clips.map(clip => [clip.clipId, clipSource(clip)]).filter(([, source]) => source);
     const assets = S.mediaAssets.filter(item => item.kind === 'video' && item.fileId);
-    const preferred = !S.selectedText && !S.selectedLayer && !S.selectedSticker ? S.clips[S.selected]?.clipId : null;
-    const signature = JSON.stringify([workspaceGeneration, S.activeTimelineId, preferred,
+    const signature = JSON.stringify([workspaceGeneration, S.activeTimelineId,
       clips.map(([id, source]) => [id, source.name]), assets.map(item => [item.id, item.name])]);
-    if (!force && signature === library.sourceSignature) return;
+    if (!force && signature === library.sourceSignature) { refreshSourceSelection(); return; }
     const sameWorkspace = library.workspaceGeneration === workspaceGeneration;
     const sameTimeline = library.timelineId === S.activeTimelineId;
     const existing = sameWorkspace && sameTimeline ? library.sourceChoice : null;
-    library.sourceChoice = existing;
     library.sourceSignature = signature;
     library.workspaceGeneration = workspaceGeneration;
     library.timelineId = S.activeTimelineId;
@@ -404,8 +416,9 @@
       option('demo', 'Şablonun örnek videosunu kullan'),
     );
     const valid = value => [...library.source.options].some(item => item.value === value);
-    library.source.value = existing !== null && valid(existing) ? existing
-      : preferred && valid('clip:' + preferred) ? 'clip:' + preferred : '';
+    const preferred = preferredClipSource();
+    library.sourceChoice = existing !== null && valid(existing) ? existing : null;
+    library.source.value = library.sourceChoice ?? (valid(preferred) ? preferred : '');
     updateApplyControls();
   }
 
@@ -461,7 +474,7 @@
     Promise.resolve(window.StudioFonts?.ready).then(renderLibrary);
   }
 
-  window.StudioTemplates = { applyTemplate, replayCreation, refreshSources };
+  window.StudioTemplates = { applyTemplate, replayCreation, refreshSources, refreshSourceSelection };
   window.addEventListener('studio:section', event => {
     if (event.detail?.id === 'templates') {
       mountLibrary();

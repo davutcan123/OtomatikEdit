@@ -40,7 +40,7 @@ function fixture(){
 }
 
 test('clicking a video channel label clears stale selection and targets its clip for the cut shortcut',()=>{
-  const{c}=fixture(),labels=new Map();
+  const{c}=fixture(),labels=new Map();let selectionRefreshes=0;c.refreshTimelineSelection=()=>selectionRefreshes++;
   for(const id of [1,2]){const title={append(node){this.close=node}};labels.set(id,{querySelector:()=>title,querySelectorAll:()=>[],classList:{toggle(){}}})}
   c.document.createElement=()=>({setAttribute(){}});
   c.el=()=>labels.get(1);c.document.querySelector=()=>labels.get(2);
@@ -50,6 +50,7 @@ test('clicking a video channel label clears stale selection and targets its clip
   labels.get(2).querySelector().onclick();
   assert.equal(c.S.activeVideoTrack,2);assert.equal(c.S.selected,1);assert.equal(c.S.selectedText,null);assert.equal(c.splitVideoTarget(2).clip.clipId,'b');
   c.outputTime=8;labels.get(1).querySelector().onclick();assert.equal(c.S.selected,-1);assert.equal(c.S.activeVideoTrack,1);
+  assert.equal(selectionRefreshes,2);
 });
 
 test('channel deletion protects the base/locked lanes, confirms content and supports undo without removing media',()=>{
