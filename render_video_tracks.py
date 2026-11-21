@@ -1,6 +1,8 @@
 """Track layout and source-space crop helpers shared by render and snapshots."""
 import math
 
+from render_audio import join_audio
+
 
 def normalize_video_track(value=1):
     if isinstance(value, bool):
@@ -110,11 +112,11 @@ def compose_video_tracks(lines, segments, segment_durations, transitions, total_
                 if transition:
                     overlap = transition["duration"]
                     crossfade(video, f"[v{right}]", transition, max(0, duration - overlap), next_video)
-                    lines.append(f"{audio}[a{right}]acrossfade=d={overlap:.8f}:c1=tri:c2=tri{next_audio}")
+                    lines.append(join_audio(audio, f"[a{right}]", next_audio, overlap=f"{overlap:.8f}"))
                     duration += segment_durations[right] - overlap
                 else:
                     lines.append(f"{video}[v{right}]concat=n=2:v=1:a=0{next_video}")
-                    lines.append(f"{audio}[a{right}]concat=n=2:v=0:a=1{next_audio}")
+                    lines.append(join_audio(audio, f"[a{right}]", next_audio))
                     duration += segment_durations[right]
                 video, audio = next_video, next_audio
             tracks.append((video, audio))
