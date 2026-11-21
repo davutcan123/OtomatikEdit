@@ -105,7 +105,63 @@ class SnapshotTests(unittest.TestCase):
             self.assertGreater(image.getpixel((160, 90))[2], 230)
             self.assertGreater(sum(min(pixel) > 210 for pixel in image.crop((90, 0, 230, 60)).getdata()), 30)
             self.assertEqual(len(job["video_inputs"]), 2)
-            self.assertAlmostEqual(job["snapshot"]["transition_elapsed"], .25)
+            self.assertAlmostEqual(job["snapshot"]["transition_elapsed"], 7 / 30)
+
+    def test_off_grid_snapshot_uses_one_tick_for_transition_animation_and_layers(self):
+        clips = [
+            {"fileId": "halves.mp4", "start": 0, "end": .55, "timelineStart": 0,
+             "animation": "fadein", "animationDuration": .5},
+            {"fileId": "time.mp4", "start": .3, "end": .85, "timelineStart": .55},
+        ]
+        start, end = .445, .8
+        with TestClient(self.backend.app) as client:
+            for composite in ("false", "true"):
+                with self.subTest(composite=composite):
+                    layers = {
+                        "timeline_composite": composite,
+                        "transitions": json.dumps([{"boundary": 0, "type": "fade", "duration": .23}]),
+                        "images": json.dumps([{"fileId": "overlay.png", "start": start, "end": end,
+                                               "x": 16, "y": 75, "scale": 12}]),
+                        "texts": json.dumps([{"text": "TICK", "start": start, "end": end, "size": 120,
+                                              "x": 50, "y": 20, "outlineWidth": 0, "shadow": False}]),
+                        "stickers": json.dumps([{"preset": "heart", "start": start, "end": end,
+                                                 "x": 75, "y": 75, "scale": 14}]),
+                    }
+                    first, job = self.capture(client, clips, 13 / 30, canvas_height="1080", **layers)
+                    same, same_job = self.capture(client, clips, 13 / 30 + .029, canvas_height="1080", **layers)
+                    next_frame, next_job = self.capture(client, clips, 14 / 30, canvas_height="1080", **layers)
+                    self.assertEqual(first.tobytes(), same.tobytes())
+                    self.assertEqual(job["snapshot"]["timeline_time"], same_job["snapshot"]["timeline_time"])
+                    self.assertEqual(job["snapshot"]["timeline_time"], 13 / 30)
+                    self.assertEqual(next_job["snapshot"]["timeline_time"], 14 / 30)
+                    self.assertNotEqual(first.getpixel((100, 90)), next_frame.getpixel((100, 90)))
+                    for kind in ("texts", "images", "stickers"):
+                        self.assertEqual(job[kind], [])
+                        self.assertEqual(same_job[kind], [])
+                        self.assertEqual(len(next_job[kind]), 1)
+
+                    payload = {"file_id": clips[0]["fileId"], "segments": json.dumps(clips),
+                               "width": "320", "height": "180", "fmt": "mp4", "fps": "30",
+                               "hardware": "cpu", **layers}
+                    response = client.post("/start-render", data=payload, headers=self.headers)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    render_id = response.json()["job_id"]
+                    events = client.get("/stream-events/" + render_id, headers=self.headers).text
+                    self.assertIn(f"/download/{render_id}/mp4", events)
+                    output = Path(self.backend.OUTPUT_DIR) / f"out_{render_id}.mp4"
+                    rgb = subprocess.run(
+                        [self.backend.FFMPEG_BIN, "-v", "error", "-i", str(output),
+                         "-vf", "select='between(n,13,14)'", "-fps_mode", "passthrough", "-frames:v", "2",
+                         "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                        check=True, capture_output=True, timeout=20,
+                    ).stdout
+                    frame_bytes = 320 * 180 * 3
+                    self.assertEqual(len(rgb), 2 * frame_bytes)
+                    for index, png in enumerate((first, next_frame)):
+                        video_frame = Image.frombytes("RGB", (320, 180), rgb[index * frame_bytes:(index + 1) * frame_bytes])
+                        for point in ((100, 90), (51, 135), (240, 135)):
+                            for actual, expected in zip(png.getpixel(point), video_frame.getpixel(point)):
+                                self.assertAlmostEqual(actual, expected, delta=10, msg=(index, point))
 
     def test_opacity_and_fade_use_original_clip_time(self):
         with TestClient(self.backend.app) as client:

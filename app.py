@@ -2099,8 +2099,9 @@ def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
     timing = plan_render_timing(segments, ruler_transitions, multitrack=multitrack, layer_duration=layer_duration)
     spans = plan_video_frames(segments, timing, ruler_transitions, fps, multitrack=multitrack)
     final_frame = max(0, first_output_frame(timing.output_duration, fps) - 1)
-    time_at = min(max(0.0, timeline_time), final_frame / fps)
-    frame = displayed_output_frame(time_at, fps)
+    frame = displayed_output_frame(min(max(0.0, timeline_time), final_frame / fps), fps)
+    # Source sampling, transition progress and overlays share the displayed tick.
+    time_at = frame / fps
     sources = {source["fileId"]: source for source in job["video_inputs"]}
 
     def track_selection(indices):
@@ -2115,17 +2116,13 @@ def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
                 end_time = segments[left]["timelineStart"] + timing.clips[left].clock.duration
                 first = first_output_frame(end_time - transition["duration"], fps)
             if first <= frame < spans[left].end:
-                progress = time_at - first / fps
+                progress = (frame - first) / fps
                 overlap = (spans[left].end - first) / fps
-                left_elapsed = time_at - spans[left].picture_start / fps - timing.clips[left].preroll
-                right_elapsed = (time_at - spans[right].picture_start / fps - timing.clips[right].preroll
-                                 if multitrack else progress)
                 right_frame = frame - (spans[right].picture_start if multitrack else first)
-                chosen = [(left, left_elapsed, frame - spans[left].picture_start), (right, right_elapsed, right_frame)]
+                chosen = [(left, frame - spans[left].picture_start), (right, right_frame)]
                 return chosen, {**transition, "duration": overlap}, progress
         return ([
-            (index, (frame - spans[index].picture_start) / fps - timing.clips[index].preroll,
-             frame - spans[index].picture_start)
+            (index, frame - spans[index].picture_start)
             for index in indices if spans[index].picture_start <= frame < spans[index].end
         ], None, 0.0)
 
@@ -2143,7 +2140,7 @@ def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
         selected, transition_at, transition_elapsed = track_selection(range(len(segments)))
     snapshot_segments = []
     snapshot_sources = []
-    for index, (original_index, elapsed, body_frame) in enumerate(selected):
+    for index, (original_index, body_frame) in enumerate(selected):
         seg = segments[original_index]
         clip_timing = timing.clips[original_index]
         span = spans[original_index]
@@ -2169,8 +2166,8 @@ def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
             "snapshot_samples": samples, "snapshot_frame": body_frame - first, "snapshot_preroll": clip_timing.preroll,
         })
         snapshot_segments.append({**seg, "fileId": identifier, "timelineStart": 0,
-                                  "snapshot_elapsed": max(0, elapsed)})
-    selected_clip_frames = {segments[index].get("clipId"): local_frame for index, _, local_frame in selected}
+                                  "snapshot_elapsed": max(0, sampling_elapsed)})
+    selected_clip_frames = {segments[index].get("clipId"): local_frame for index, local_frame in selected}
     frame_us = output_frame_time_us(frame, fps)
 
     def prepare_layer(item):
@@ -2178,7 +2175,11 @@ def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
                 "snapshot_layer_duration": item["end"] - item["start"], "_reference_height": canvas_height}
 
     for kind in ("texts", "stickers"):
-        job[kind] = [prepare_layer(item) for item in job[kind] if item["start"] <= time_at <= item["end"]]
+        job[kind] = [
+            prepare_layer(item) for item in job[kind]
+            if item["start"] <= time_at <= item["end"]
+            and (item.get("kind") != "subtitle" or time_at < item["end"])
+        ]
     snapshot_images = []
     for item in job["images"]:
         owner = item.get("ownerClipId") if multitrack else None
