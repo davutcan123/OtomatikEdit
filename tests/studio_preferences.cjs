@@ -108,3 +108,23 @@ test('failed browser storage writes restore the last confirmed value', async () 
   assert.equal(api.get('layout').panel,'baseline');
   assert.equal(preferences(undefined,storage).api.get('layout').panel,'baseline');
 });
+
+test('subscriber-triggered writes are queued after the value being announced', async () => {
+  const writes=[];
+  const {api}=preferences(async (_url, options)=>{
+    if(options.method!=='PUT')return {ok:true,json:async()=>({})};
+    writes.push(JSON.parse(options.body));
+    return {ok:true};
+  });
+  await api.ready;
+  let followup;
+  api.subscribe((key,value)=>{
+    if(key==='favorites'&&value[0]==='text:first'){
+      followup=api.set('favorites',['text:second']);
+    }
+  });
+  await api.set('favorites',['text:first']);
+  await followup;
+  assert.deepEqual(writes,[['text:first'],['text:second']]);
+  assert.deepEqual(Array.from(api.get('favorites')),['text:second']);
+});

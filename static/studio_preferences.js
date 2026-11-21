@@ -67,7 +67,6 @@
       const change = ++revision;
       pending.set(key, change);
       values[key] = snapshot;
-      notify(key);
       const write = orderedWrite.catch(() => {}).then(async () => {
         await ready;
         if (desktop) {
@@ -89,6 +88,7 @@
         finish?.();
       });
       orderedWrite = write;
+      notify(key);
       return write;
     },
     subscribe(callback) {
