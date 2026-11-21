@@ -1,6 +1,7 @@
 """The desktop installer must never race an upload, saved project, or job."""
 import asyncio
 import importlib.util
+import io
 import os
 from pathlib import Path
 import tempfile
@@ -10,6 +11,7 @@ from unittest.mock import patch
 
 import httpx
 from fastapi.responses import Response
+from PIL import Image
 from starlette.background import BackgroundTask
 
 
@@ -91,7 +93,9 @@ class DesktopUpdateTests(unittest.IsolatedAsyncioTestCase):
             yield b'--sample\r\nContent-Disposition: form-data; name="file"; filename="image.png"\r\nContent-Type: image/png\r\n\r\n'
             entered.set()
             await release.wait()
-            yield b"image bytes\r\n--sample--\r\n"
+            image = io.BytesIO()
+            Image.new("RGB", (4, 4)).save(image, "PNG")
+            yield image.getvalue() + b"\r\n--sample--\r\n"
 
         upload = asyncio.create_task(self.client.post("/upload", content=upload_chunks(),
                                      headers={"Content-Type": "multipart/form-data; boundary=sample"}))

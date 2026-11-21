@@ -12,8 +12,10 @@ import shutil
 import multiprocessing
 import time
 import secrets
+import tempfile
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from urllib.parse import quote
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
@@ -594,10 +596,19 @@ def get_video_duration(filepath: str) -> float:
         "default=noprint_wrappers=1:nokey=1", filepath
     ]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode:
+        return 0.0
     try:
-        return float(result.stdout.strip())
+        duration = float(result.stdout.strip())
     except ValueError:
         return 0.0
+    return duration if math.isfinite(duration) and duration > 0 else 0.0
+
+
+def is_gif_image(filepath: str) -> bool:
+    with open(filepath, "rb") as source:
+        return source.read(6) in {b"GIF87a", b"GIF89a"}
+
 
 def get_video_dimensions(filepath: str) -> tuple[int, int]:
     import subprocess
@@ -640,6 +651,53 @@ def get_media_kind(filename: str, content_type: str = "") -> str | None:
             return kind
     prefix = (content_type or "").split("/", 1)[0].lower()
     return prefix if prefix in SUPPORTED_MEDIA_EXTENSIONS else None
+
+
+def validate_uploaded_media(filepath, media_kind):
+    import subprocess
+
+    if media_kind == "image":
+        from PIL import Image
+
+        try:
+            with Image.open(filepath) as image:
+                image.load()
+        except (OSError, ValueError, Image.DecompressionBombError) as exc:
+            raise ValueError("Görsel dosyası okunamadı") from exc
+        return 0.0
+
+    duration = get_video_duration(filepath)
+    if duration <= 0:
+        raise ValueError("Medya dosyası okunamadı veya süresi belirlenemedi")
+    stream, limit = ("0:V:0", "-frames:v") if media_kind == "video" else ("0:a:0", "-frames:a")
+    result = subprocess.run(
+        [FFMPEG_BIN, "-v", "error", "-nostdin", "-xerror", "-abort_on", "empty_output",
+         "-i", filepath, "-map", stream, limit, "1", "-f", "null", "-"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        raise ValueError("Medya dosyasında okunabilir görüntü veya ses bulunamadı")
+    return duration
+
+
+def store_uploaded_media(source, filepath, media_kind):
+    # Publish only after the whole multipart file has been copied and checked.
+    # A random temporary name retains the type hint without using client text.
+    staged_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=UPLOAD_DIR, prefix=".upload-", suffix=os.path.splitext(filepath)[1], delete=False,
+        ) as buffer:
+            staged_path = buffer.name
+            shutil.copyfileobj(source, buffer)
+        duration = validate_uploaded_media(staged_path, media_kind)
+        os.replace(staged_path, filepath)
+        staged_path = None
+        return duration
+    finally:
+        if staged_path is not None:
+            os.unlink(staged_path)
+
 
 def alpha_mask_expression(mask: str, scale: float = 100, x: float = 50, y: float = 50) -> str:
     size = max(0.1, min(1.5, scale / 100))
@@ -1259,7 +1317,7 @@ def create_sticker_overlay(path: str, item: dict, width: int, height: int):
 
 async def detect_silence(filepath: str, threshold: float, min_duration: float):
     cmd = [
-        FFMPEG_BIN, "-i", filepath,
+        FFMPEG_BIN, "-nostdin", "-xerror", "-i", filepath, "-map", "0:a:0",
         "-af", f"silencedetect=noise={threshold}dB:d={min_duration}",
         "-f", "null", "-"
     ]
@@ -1268,9 +1326,12 @@ async def detect_silence(filepath: str, threshold: float, min_duration: float):
         stderr=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE
     )
-    stdout, stderr = await proc.communicate()
-    output = stderr.decode('utf-8', errors='ignore')
-    
+    _, stderr = await proc.communicate()
+    output = stderr.decode('utf-8', errors='replace')
+    if proc.returncode:
+        detail = next((line for line in reversed(output.splitlines()) if line.strip()), "")
+        raise RuntimeError(f"Sessizlik tespiti başarısız oldu. {detail}")
+
     silences = []
     current_start = None
     for line in output.split('\n'):
@@ -1665,18 +1726,22 @@ async def run_analysis_job(job_id: str):
         await q.put({"type": "log", "message": f"Analiz başlatıldı..."})
         
         duration = await asyncio.to_thread(get_video_duration, filepath)
+        if duration <= 0:
+            raise ValueError("Medya dosyası okunamadı veya süresi belirlenemedi")
         await q.put({"type": "log", "message": f"Video süresi: {duration:.2f} saniye"})
-        
-        await q.put({"type": "log", "message": f"Sessizlik tespiti yapılıyor... (Eşik: {job['threshold']}dB, Süre: {job['duration']}s)"})
-        silences = await detect_silence(filepath, job['threshold'], job['duration'])
-        
-        keyword_segments = []
-        if job["keywords"].strip():
-            words_to_find = [w.strip().lower() for w in job["keywords"].split(",") if w.strip()]
-            await q.put({"type": "log", "message": f"Kelimeler girildi: {words_to_find}. Whisper başlatılıyor..."})
-            keyword_segments = await detect_keywords(filepath, words_to_find, q)
+
+        silences, keyword_segments = [], []
+        if await asyncio.to_thread(video_has_audio, filepath):
+            await q.put({"type": "log", "message": f"Sessizlik tespiti yapılıyor... (Eşik: {job['threshold']}dB, Süre: {job['duration']}s)"})
+            silences = await detect_silence(filepath, job['threshold'], job['duration'])
+            if job["keywords"].strip():
+                words_to_find = [w.strip().lower() for w in job["keywords"].split(",") if w.strip()]
+                await q.put({"type": "log", "message": f"Kelimeler girildi: {words_to_find}. Whisper başlatılıyor..."})
+                keyword_segments = await detect_keywords(filepath, words_to_find, q)
+            else:
+                await q.put({"type": "log", "message": "Kelime alanı boş, Whisper atlandı. Sadece sessizlikler kesilecek."})
         else:
-            await q.put({"type": "log", "message": "Kelime alanı boş, Whisper atlandı. Sadece sessizlikler kesilecek."})
+            await q.put({"type": "log", "message": "Ses kanalı bulunamadı. Video kesilmeden korundu."})
         
         valid_segments, merged_exclusions = calculate_valid_segments(duration, silences, keyword_segments)
         
@@ -1753,6 +1818,12 @@ def freeze_snapshot_expressions(filters, elapsed, fps):
     return re.sub(r"'([^']*)'", lambda match: "'" + snapshot_time_expression(match.group(1), elapsed, fps) + "'", filters)
 
 
+def layer_time_expression(expression, item, fps, snapshot, variable="t"):
+    if snapshot:
+        return snapshot_time_expression(expression, item["snapshot_elapsed"], fps)
+    return re.sub(r"\bt\b", f"max(0,{variable}-{item['start']:.8f})", expression)
+
+
 def image_effect_chain(lines, source, label, effect, intensity):
     """Apply existing color presets without discarding an imported PNG's alpha.
 
@@ -1791,9 +1862,7 @@ def append_animated_image(lines, source, destination, item, index, width, height
     )
 
     def local(expression, variable="t"):
-        if snapshot:
-            return snapshot_time_expression(expression, item["snapshot_elapsed"], fps)
-        return re.sub(r"\bt\b", f"max(0,{variable}-{item['start']:.8f})", expression)
+        return layer_time_expression(expression, item, fps, snapshot, variable)
 
     scale = zoom_keyframe_scale_expression(100, frames)
     opacity = zoom_keyframe_opacity_expression(item.get("opacity", 100), frames)
@@ -2066,8 +2135,16 @@ async def run_render_job(job_id: str):
                     item["path"] = masked_path
                     item["backgroundMode"] = "none"
                 else:
-                    item["_brushAnimationDuration"] = await asyncio.to_thread(get_video_duration, item["path"])
                     animated_brush_images.append((index, item))
+        streamed_images = {index for index, _ in animated_brush_images}
+        for index, item in enumerate(image_items):
+            # The GIF demuxer has its own frame delays and cannot take image2's
+            # framerate or loop options, even for a single-frame GIF.
+            if index in streamed_images or await asyncio.to_thread(is_gif_image, item["path"]):
+                streamed_images.add(index)
+                if snapshot:
+                    item["_streamDuration"] = await asyncio.to_thread(get_video_duration, item["path"])
+
         brush_video_paths = []
         brush_video_indices = {}
         brush_input_start = (len(video_inputs) + len(text_overlay_paths)
@@ -2089,6 +2166,22 @@ async def run_render_job(job_id: str):
             await asyncio.to_thread(mask_image.save, mask_path, "PNG")
             brush_image_indices[index] = brush_input_start + len(brush_video_paths)
             brush_video_paths.append(mask_path)
+
+        def image_stream_filters(index, item, label, start):
+            filters = "format=rgba"
+            if index not in streamed_images:
+                return filters
+            filters += f",fps={target_fps}"
+            if snapshot:
+                elapsed = max(0, item.get("snapshot_elapsed", 0))
+                duration = item.get("_streamDuration", 0)
+                if duration > 0:
+                    elapsed %= duration
+                filters += f",trim=start={elapsed:.8f},setpts=PTS-STARTPTS"
+            if index in brush_image_indices:
+                filters += brush_video_filter(brush_image_indices[index], label, target_fps)
+            # Compose moving images from the first timeline frame of the layer.
+            return filters + f",setpts=PTS-STARTPTS+{start:.8f}/TB"
 
         lines = []
         n = len(segments)
@@ -2350,12 +2443,18 @@ async def run_render_job(job_id: str):
                 or (seg.get("backgroundMode") == "brush" and bool(seg.get("brushStrokes")))
                 or mask in {"circle", "ellipse", "rounded"}
             )
-            if snapshot:
-                video_filters = freeze_snapshot_expressions(video_filters, seg["snapshot_elapsed"], target_fps)
-                video_filters = video_filters.replace(
-                    f":fps={target_fps}",
-                    f":fps={target_fps},setpts=PTS+{source_info['snapshot_base']:.8f}/TB",
-                )
+            if ",zoompan=" in video_filters:
+                # zoompan emits one frame per input and generates its own PTS.
+                # Feed the speed-adjusted output cadence so the frame it picks
+                # and the EOF timestamp both use the intended output clock.
+                video_filters = video_filters.replace(",zoompan=", f",fps={target_fps},zoompan=", 1)
+                if snapshot:
+                    # The short decoded window carries clip-local timestamps.
+                    # Each zoompan resets them, so restore them after each one.
+                    video_filters = video_filters.replace(
+                        f":fps={target_fps}",
+                        f":fps={target_fps},setpts=PTS+{source_info['snapshot_base']:.8f}/TB",
+                    )
             snapshot_trim = f",trim=start={seg.get('snapshot_trim_time', seg['snapshot_elapsed']):.8f}" if snapshot else ""
             if needs_canvas:
                 compact_zoom_filter = ""
@@ -2489,6 +2588,10 @@ async def run_render_job(job_id: str):
                 )
             else:
                 fast_path_segments += 1
+                if snapshot:
+                    video_filters = freeze_snapshot_expressions(video_filters, seg["snapshot_elapsed"], target_fps)
+                elif preroll:
+                    video_filters = shift_clip_filter_time(video_filters, preroll, target_fps)
                 video_filters += (
                     f",setsar=1,fps={target_fps},settb=AVTB{snapshot_trim},"
                     f"setpts=N/({target_fps}*TB),format=yuv420p"
@@ -2503,16 +2606,14 @@ async def run_render_job(job_id: str):
                     image_item.get("mask", "none"), image_item.get("maskScale", 100),
                     image_item.get("maskX", 50), image_item.get("maskY", 50))
                 mask_filters = (
-                    "format=rgba"
-                    + (brush_video_filter(brush_image_indices[image_index], f"ownedbrush{image_index}", target_fps)
-                       if image_index in brush_image_indices else "")
+                    image_stream_filters(image_index, image_item, f"ownedbrush{image_index}", gap_before)
                     + f",scale={render_width}:{render_height}:force_original_aspect_ratio=increase,"
                     f"crop={render_width}:{render_height},"
                     f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{mask_expression}'"
                 )
                 if image_item.get("maskFeather", 0) >= 1:
                     mask_filters += f",gblur=sigma={image_item['maskFeather'] / 3:.5f}:planes=8"
-                lines.append(f"[{mask_input}:v]{mask_filters},fps={target_fps},settb=AVTB,setpts=N/({target_fps}*TB){mask_label}")
+                lines.append(f"[{mask_input}:v]{mask_filters},fps={target_fps},settb=AVTB{mask_label}")
                 next_label = f"[v{i}]" if mask_number == len(clip_masks) - 1 else f"[v{i}mask{mask_number}]"
                 lines.append(f"{clip_output_label}{mask_label}overlay=0:0:format=auto:"
                              f"enable='gte(t,{gap_before:.8f})':eof_action=pass:shortest=1,format=yuva444p,settb=AVTB{next_label}")
@@ -2560,13 +2661,16 @@ async def run_render_job(job_id: str):
             audio_filters += f",volume={clip_volume:.6f}"
             if gap_before >= .001:
                 audio_filters += f",adelay={round(gap_before * 1000)}:all=1"
+            audio_duration = segment_durations[i]
             if source_info.get("hasAudio", True):
-                lines.append(f"[{input_index}:a]{audio_filters}[a{i}]")
-            else:
+                # Separate audio concat/crossfade otherwise advances at decoded
+                # audio EOF, which may precede the clip boundary.
                 lines.append(
-                    f"anullsrc=r=48000:cl=stereo,atrim=duration={clip_duration + preroll + gap_before},"
-                    f"asetpts=PTS-STARTPTS,volume={clip_volume:.6f}[a{i}]"
+                    f"[{input_index}:a]{audio_filters},aresample=48000,"
+                    f"apad=whole_dur={audio_duration:.8f},atrim=duration={audio_duration:.8f}[a{i}]"
                 )
+            else:
+                lines.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={audio_duration:.8f}[a{i}]")
 
         current_video = "[v0]"
         current_audio = "[a0]"
@@ -2626,7 +2730,9 @@ async def run_render_job(job_id: str):
             scaled_label = f"[imageasset{index}]"
             next_label = f"[imagev{index}]"
             image_mask = image_item.get("mask", "none")
-            background_filters = ["format=rgba"]
+            background_filters = [
+                image_stream_filters(index, image_item, f"imagebrush{index}", image_item["start"])
+            ]
             if image_item.get("backgroundMode") == "chroma":
                 chroma_color = image_item.get("keyColor", "#00FF00").lstrip("#")
                 similarity = image_item.get("keySimilarity", 25) / 100
@@ -2635,17 +2741,6 @@ async def run_render_job(job_id: str):
                     f"colorkey=0x{chroma_color}:{similarity:.5f}:{blend:.5f}"
                 )
             background_prefix = ",".join(background_filters)
-            if index in brush_image_indices:
-                if snapshot:
-                    elapsed = max(0, image_item.get("snapshot_elapsed", 0))
-                    source_duration = image_item.get("_brushAnimationDuration", 0)
-                    if source_duration > 0:
-                        elapsed %= source_duration
-                    # GIF frame timestamps mark changes, not every displayed
-                    # frame. Expand held frames before taking the current one.
-                    background_prefix += f",fps={target_fps},trim=start={elapsed:.8f},setpts=PTS-STARTPTS"
-                background_prefix += brush_video_filter(brush_image_indices[index], f"imagebrush{index}", target_fps)
-                background_prefix += f",fps={target_fps},setpts=PTS-STARTPTS+{image_item['start']:.8f}/TB"
             if image_mask in {"circle", "ellipse", "rounded"}:
                 mask_expression = alpha_mask_expression(
                     image_mask, image_item.get("maskScale", 100),
@@ -2715,31 +2810,26 @@ async def run_render_job(job_id: str):
             if frames:
                 text_scale = zoom_keyframe_scale_expression(100, frames)
                 text_opacity = zoom_keyframe_opacity_expression(100, frames)
-                text_opacity = re.sub(r"\bt\b", "T", text_opacity)
+                text_scale = layer_time_expression(text_scale, text_item, target_fps, snapshot)
+                text_opacity = layer_time_expression(text_opacity, text_item, target_fps, snapshot, "T")
                 source_width, source_height = text_overlay_sizes[index]
                 maximum_scale = max(1.0, max(frame.get("scale", 100) for frame in frames) / 100)
                 padded_width = max(4, int(math.ceil(source_width * maximum_scale / 2) * 2 + 4))
                 padded_height = max(4, int(math.ceil(source_height * maximum_scale / 2) * 2 + 4))
                 text_x = zoom_keyframe_focus_expression(frames, "x", text_item.get("x", 50))
                 text_y = zoom_keyframe_focus_expression(frames, "y", text_item.get("y", 50))
-                relative_time = f"(t-{text_item['start']:.8f})"
-                text_x = re.sub(r"\bt\b", relative_time, text_x)
-                text_y = re.sub(r"\bt\b", relative_time, text_y)
-                if snapshot:
-                    elapsed = text_item["snapshot_elapsed"]
-                    text_scale = snapshot_time_expression(text_scale, elapsed, target_fps)
-                    text_opacity = snapshot_time_expression(text_opacity, elapsed, target_fps)
-                    text_x = snapshot_time_expression(text_x, elapsed, target_fps)
-                    text_y = snapshot_time_expression(text_y, elapsed, target_fps)
+                text_x = layer_time_expression(text_x, text_item, target_fps, snapshot)
+                text_y = layer_time_expression(text_y, text_item, target_fps, snapshot)
                 animated_label = f"[textasset{index}]"
+                # Evaluate opacity on fixed-size input pixels and center the
+                # changing scale on a constant canvas for overlay framesync.
                 lines.append(
                     f"{overlay_input}format=rgba,"
-                    f"scale=w='max(2,trunc(iw*({text_scale})/2)*2)':"
-                    f"h='max(2,trunc(ih*({text_scale})/2)*2)':eval=frame,"
                     "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
                     f"a='alpha(X,Y)*({text_opacity})',"
-                    f"pad={padded_width}:{padded_height}:x='(ow-iw)/2':y='(oh-ih)/2':"
-                    f"color=black@0{animated_label}"
+                    f"scale=w='max(2,trunc(iw*({text_scale})/2)*2)':"
+                    f"h='max(2,trunc(ih*({text_scale})/2)*2)':eval=frame,"
+                    f"rotate=0:ow={padded_width}:oh={padded_height}:c=none,setsar=1{animated_label}"
                 )
                 overlay_input = animated_label
                 x_expr = f"W*({text_x})-w/2"
@@ -2819,7 +2909,7 @@ async def run_render_job(job_id: str):
             for overlay_path in text_overlay_paths + sticker_overlay_paths:
                 cmd.extend(["-threads", "1", "-framerate", str(target_fps), "-i", overlay_path])
             for index, image_item in enumerate(image_items):
-                if index in brush_image_indices:
+                if index in streamed_images:
                     cmd.extend(["-threads", "1", "-stream_loop", "-1"])
                     cmd.extend(["-i", image_item["path"]])
                 else:
@@ -3206,24 +3296,25 @@ async def delete_project(project_id: str):
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    import shutil
-    safe_name = os.path.basename(file.filename or "dosya")
+    safe_name = os.path.basename((file.filename or "dosya").replace("\\", "/")) or "dosya"
     media_kind = get_media_kind(safe_name, file.content_type or "")
     if not media_kind:
         raise HTTPException(400, "Desteklenmeyen dosya türü")
-    file_id = str(uuid.uuid4()) + "_" + safe_name
+    filename = safe_name
+    if os.name == "nt":
+        filename = re.sub(r'[<>:"|?*\x00-\x1f]', "_", filename).rstrip(" .")
+    file_id = f"{uuid.uuid4()}_{filename}"
     filepath = os.path.join(UPLOAD_DIR, file_id)
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    duration = 0.0
-    if media_kind in {"video", "audio"}:
-        duration = await asyncio.to_thread(get_video_duration, filepath)
+    try:
+        duration = await asyncio.to_thread(store_uploaded_media, file.file, filepath, media_kind)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {
         "file_id": file_id,
         "name": safe_name,
         "media_kind": media_kind,
         "duration": duration,
-        "url": f"/video/{file_id}",
+        "url": f"/video/{quote(file_id, safe='')}",
     }
 
 @app.post("/start-analysis")
