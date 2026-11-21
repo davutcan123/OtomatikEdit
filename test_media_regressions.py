@@ -53,6 +53,7 @@ class MediaRegressionTests(unittest.TestCase):
         first, second = Image.new("RGB", (48, 48), "yellow"), Image.new("RGB", (48, 48), "lime")
         first.save(cls.uploads / "animated.gif", save_all=True, append_images=[second], duration=[300, 300], loop=0)
         first.save(cls.uploads / "static.gif")
+        first.save(cls.uploads / "fractional.gif", save_all=True, append_images=[second], duration=[80, 60], loop=0)
         first.save(cls.uploads / "still.png")
 
     @classmethod
@@ -193,6 +194,68 @@ class MediaRegressionTests(unittest.TestCase):
                 self.assertGreater(pixel[1], 215, pixel)
                 self.assertEqual(pixel[0] > 180, name == "static.gif", pixel)
 
+    def test_gif_snapshot_matches_continuous_frames_through_off_grid_loops(self):
+        clips = [
+            {"fileId": "changing.mp4", "start": 0, "end": .5},
+            {"fileId": "changing.mp4", "start": 0, "end": 1.5, "timelineStart": .5},
+        ]
+        for start, brush in ((0, False), (.021, True), (1 / 30, False)):
+            start_us = round(start * 1_000_000)
+            layer = {"fileId": "fractional.gif", "start": start, "end": .98, "scale": 50}
+            if start == 1 / 30:
+                layer["animation"] = "breathe"
+            if brush:
+                layer.update(backgroundMode="brush", brushStrokes=[{
+                    "size": 30, "points": [{"x": .5, "y": .5}],
+                }])
+            output = self.export(clips, images=[layer])
+            pixels = self.ffmpeg("-i", str(output), "-vf", "crop=2:2:80:48",
+                                 "-pix_fmt", "rgb24", "-f", "rawvideo", "-")
+
+            def classify(pixel):
+                red, green, _ = pixel
+                return "background" if green < 40 else "yellow" if red > 180 else "green"
+
+            for frame_index in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 17, 21, 25, 29, 30):
+                frame_us = frame_index * 1_000_000 // 30
+                elapsed_us = frame_us - start_us
+                color = ("background" if elapsed_us < 0 or frame_us > 980000
+                         else "yellow" if elapsed_us % 140000 < 80000 else "green")
+                with self.subTest(start=start, frame=frame_index):
+                    offset = frame_index * 12
+                    self.assertEqual(classify(pixels[offset:offset + 3]), color)
+                    # Request a time within the displayed frame, including just
+                    # after the written layer end when frame 29 is still visible.
+                    snapshot_time = .027 if frame_index == 0 and brush else frame_index / 30 + .02
+                    snapshot = self.export(clips, snapshot_time=snapshot_time, images=[layer])
+                    self.assertEqual(classify(self.frame(snapshot).getpixel((80, 48))), color)
+
+    def test_clip_owned_gif_uses_same_frame_timestamps_on_both_sides_of_track_overlay(self):
+        clip = {"clipId": "owner", "fileId": "changing.mp4", "start": 0, "end": 2, "videoTrack": 1}
+        image = {"fileId": "fractional.gif", "start": 0, "end": 2, "scale": 50,
+                 "mask": "circle", "ownerClipId": "owner", "ownerVideoTrack": 1}
+        output = self.export([clip], multitrack=True, images=[image])
+        for frame_index in (5, 8, 11, 17, 20):
+            elapsed = frame_index / 30
+            expected_yellow = (frame_index * 1_000_000 // 30) % 140000 < 80000
+            with self.subTest(frame_index=frame_index):
+                snapshot = self.export([clip], snapshot_time=elapsed, multitrack=True, images=[image])
+                # Seek slightly before the exact tick to include that frame.
+                for pixels in (self.frame(output, elapsed - .001), self.frame(snapshot)):
+                    red, green, _ = pixels.getpixel((80, 48))
+                    self.assertGreater(green, 210)
+                    self.assertEqual(red > 180, expected_yellow)
+
+    def test_gif_snapshot_reduces_a_late_timeline_time_to_one_cycle(self):
+        clip = {"fileId": "changing.mp4", "start": 0, "end": 2, "timelineStart": 10_000}
+        layer = {"fileId": "fractional.gif", "start": .021, "end": 10_001, "scale": 50}
+        for time, expected_yellow in ((10_000, True), (10_000 + 1 / 30, False)):
+            with self.subTest(time=time):
+                snapshot = self.export([clip], snapshot_time=time, images=[layer])
+                red, green, _ = self.frame(snapshot).getpixel((80, 48))
+                self.assertGreater(green, 200)
+                self.assertEqual(red > 180, expected_yellow)
+
     def test_text_scale_and_opacity_match_snapshot_at_delayed_layer_time(self):
         clip = {"fileId": "full-audio.mp4", "start": 0, "end": 2}
         item = {"text": "TEST", "start": .8, "end": 2, "size": 220, "x": 50, "y": 50,
@@ -214,7 +277,7 @@ class MediaRegressionTests(unittest.TestCase):
 
     def test_upload_quotes_paths_and_discards_unreadable_or_wrong_stream_files(self):
         for source, filename, content_type, expected_kind in (
-            ("changing.mp4", "Örnek #1?.mp4", "video/mp4", "video"),
+            ("changing.mp4", "Örnek #1?.MP4", "application/octet-stream", "video"),
             ("silence.wav", "audio.wav", "audio/wav", "audio"),
             ("animated.gif", "animated.gif", "image/gif", "image"),
             ("still.png", "still.png", "image/png", "image"),
@@ -226,6 +289,7 @@ class MediaRegressionTests(unittest.TestCase):
                 result = response.json()
                 self.assertEqual(result["name"], filename)
                 self.assertEqual(result["media_kind"], expected_kind)
+                self.assertEqual(self.backend.get_media_kind(result["file_id"]), expected_kind)
                 self.assertEqual(result["url"], "/video/" + quote(result["file_id"], safe=""))
                 self.assertEqual(self.client.get(result["url"]).content, data)
                 if expected_kind != "image":
@@ -239,6 +303,21 @@ class MediaRegressionTests(unittest.TestCase):
             with self.subTest(filename=filename):
                 response = self.client.post("/upload", files={"file": (filename, data, content_type)})
                 self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(set(self.uploads.iterdir()), before)
+
+    def test_upload_rejects_usable_payloads_with_extensions_the_editor_cannot_open(self):
+        before = set(self.uploads.iterdir())
+        for source, filename, mime in (
+            ("changing.mp4", "video.bin", "video/mp4"),
+            ("silence.wav", "audio", "audio/wav"),
+            ("still.png", "image.unknown", "image/png"),
+        ):
+            with self.subTest(filename=filename):
+                response = self.client.post(
+                    "/upload", files={"file": (filename, (self.uploads / source).read_bytes(), mime)},
+                )
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn("Dosya uzantısı desteklenmiyor", response.json()["detail"])
                 self.assertEqual(set(self.uploads.iterdir()), before)
 
     def test_analysis_checks_silencedetect_errors_and_accepts_video_without_audio(self):

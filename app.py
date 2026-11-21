@@ -36,7 +36,9 @@ from render_video_tracks import (normalize_video_track, normalize_source_crop, s
                                  video_track_groups, next_track_clip, shift_clip_filter_time,
                                  compose_video_tracks)
 from render_audio import atempo_chain, clip_audio_filter, join_audio, mix_audio_layers
-from render_timing import ClipClock, normalize_zoom_cadence, plan_render_timing, snapshot_source_window
+from render_timing import (ClipClock, MICROSECONDS_PER_SECOND, align_output_frame_timestamps,
+                           display_frame_time_us, gif_clock_filters, normalize_zoom_cadence,
+                           plan_render_timing, snapshot_source_window)
 
 RUNTIME_PATHS = resolve_runtime_paths(__file__)
 BASE_DIR = str(RUNTIME_PATHS.source_dir)
@@ -739,13 +741,9 @@ def video_has_audio(filepath: str) -> bool:
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return bool(result.stdout.strip())
 
-def get_media_kind(filename: str, content_type: str = "") -> str | None:
+def get_media_kind(filename: str) -> str | None:
     extension = os.path.splitext(filename.lower())[1]
-    for kind, extensions in SUPPORTED_MEDIA_EXTENSIONS.items():
-        if extension in extensions:
-            return kind
-    prefix = (content_type or "").split("/", 1)[0].lower()
-    return prefix if prefix in SUPPORTED_MEDIA_EXTENSIONS else None
+    return next((kind for kind, extensions in SUPPORTED_MEDIA_EXTENSIONS.items() if extension in extensions), None)
 
 
 def validate_uploaded_media(filepath, media_kind):
@@ -1941,6 +1939,15 @@ def image_effect_chain(lines, source, label, effect, intensity):
     return f"[{label}]"
 
 
+def image_visibility_expression(item):
+    start, end = item["start"], item["end"]
+    if item.get("_gif"):
+        start_us = round(start * MICROSECONDS_PER_SECOND)
+        end_us = round(end * MICROSECONDS_PER_SECOND)
+        return f"between(round(t*{MICROSECONDS_PER_SECOND}),{start_us},{end_us})"
+    return f"between(t,{start},{end})"
+
+
 def append_animated_image(lines, source, destination, item, index, width, height,
                           base_width, base_height, fps, snapshot):
     """Compose an image object on a fixed RGBA surface at its own local time.
@@ -2017,7 +2024,7 @@ def append_animated_image(lines, source, destination, item, index, width, height
         lines.append(f"[{label}sharp][{label}blur]blend=all_expr='A*(1-({blur_amount}))+B*({blur_amount})'[{label}soft]")
         label += "soft"
     lines.append(f"{destination}[{label}]overlay=x='{local(x)}':y='{local(y)}':eval=frame:"
-                 f"enable='between(t,{item['start']},{item['end']})':eof_action=pass:shortest=1[imagev{index}]")
+                 f"enable='{image_visibility_expression(item)}':eof_action=pass:shortest=1[imagev{index}]")
     return f"[imagev{index}]"
 
 
@@ -2089,13 +2096,38 @@ def prepare_snapshot_job(job, timeline_time, canvas_height=1080):
         snapshot_segments.append({**seg, "fileId": identifier, "timelineStart": 0,
                                   "snapshot_elapsed": max(0, elapsed), "snapshot_trim_time": window.trim_time})
     selected_clip_ids = {seg.get("clipId") for seg, _ in selected}
-    for kind in ("texts", "stickers", "images"):
-        job[kind] = [
-            {**item, "start": 0, "end": 1, "snapshot_elapsed": time_at - item["start"],
-             "snapshot_layer_duration": item["end"] - item["start"], "_reference_height": canvas_height}
-            for item in job[kind] if (item.get("ownerClipId") in selected_clip_ids
-                if multitrack and item.get("ownerClipId") else item["start"] <= time_at <= item["end"])
-        ]
+    frame_us = display_frame_time_us(time_at, fps)
+    image_starts = {seg.get("clipId"): seg["timelineStart"] for seg, _ in selected}
+    if multitrack:
+        for transition in job["transitions"]:
+            right = segments[next_track_clip(segments, transition["boundary"])]
+            if right.get("clipId") in image_starts:
+                image_starts[right.get("clipId")] -= transition["duration"]
+
+    def prepare_layer(item):
+        return {**item, "start": 0, "end": 1, "snapshot_elapsed": time_at - item["start"],
+                "snapshot_layer_duration": item["end"] - item["start"], "_reference_height": canvas_height}
+
+    for kind in ("texts", "stickers"):
+        job[kind] = [prepare_layer(item) for item in job[kind] if item["start"] <= time_at <= item["end"]]
+    snapshot_images = []
+    for item in job["images"]:
+        owner = item.get("ownerClipId") if multitrack else None
+        visible = item["start"] <= time_at <= item["end"]
+        start_us = round(item["start"] * MICROSECONDS_PER_SECOND)
+        end_us = round(item["end"] * MICROSECONDS_PER_SECOND)
+        frame_visible = start_us <= frame_us <= end_us
+        active = owner in selected_clip_ids if owner else visible or frame_visible
+        if not active:
+            continue
+        if owner:
+            start_us = round(image_starts[owner] * MICROSECONDS_PER_SECOND)
+        snapshot_images.append({
+            **prepare_layer(item), "_snapshot_visible": bool(owner) or visible,
+            "_snapshot_frame_visible": bool(owner) or frame_visible,
+            "_snapshot_frame_elapsed_us": frame_us - start_us,
+        })
+    job["images"] = snapshot_images
     job.update({"type": "snapshot", "format": "png", "segments": snapshot_segments,
                 "video_inputs": snapshot_sources, "audio_layers": [], "transitions": [],
                 "snapshot": {"timeline_time": time_at, "transition": transition_at,
@@ -2137,7 +2169,12 @@ async def run_render_job(job_id: str):
         total_duration = render_timing.output_duration
         text_items = job.get("texts", [])
         sticker_items = job.get("stickers", [])
-        image_items = job.get("images", [])
+        image_items = []
+        for item in job.get("images", []):
+            gif = await asyncio.to_thread(is_gif_image, item["path"])
+            visibility = "_snapshot_frame_visible" if gif else "_snapshot_visible"
+            if item.get(visibility, True):
+                image_items.append({**item, "_gif": gif})
         owned_masks = {}
         if multitrack:
             for image_index, image_item in enumerate(image_items):
@@ -2181,7 +2218,7 @@ async def run_render_job(job_id: str):
             sticker_overlay_positions.append((x, y))
         
         # Prepare static selections once, without modifying imported assets.
-        image_items = [dict(item) for item in image_items]
+        gif_inputs = {index for index, item in enumerate(image_items) if item["_gif"]}
         animated_brush_images = []
         for index, item in enumerate(image_items):
             if item.get("backgroundMode") == "brush" and item.get("brushStrokes"):
@@ -2190,17 +2227,20 @@ async def run_render_job(job_id: str):
                 prepared = await asyncio.to_thread(create_brushed_image, item["path"], masked_path, item)
                 if prepared:
                     item["path"] = masked_path
+                    gif_inputs.discard(index)
                     item["backgroundMode"] = "none"
                 else:
                     animated_brush_images.append((index, item))
-        streamed_images = {index for index, _ in animated_brush_images}
-        for index, item in enumerate(image_items):
-            # The GIF demuxer has its own frame delays and cannot take image2's
-            # framerate or loop options, even for a single-frame GIF.
-            if index in streamed_images or await asyncio.to_thread(is_gif_image, item["path"]):
-                streamed_images.add(index)
-                if snapshot:
-                    item["_streamDuration"] = await asyncio.to_thread(get_video_duration, item["path"])
+        # The GIF demuxer cannot take image2's frame rate or loop options.
+        streamed_images = gif_inputs | {index for index, _ in animated_brush_images}
+        if snapshot:
+            stream_durations = {}
+            for index in sorted(streamed_images):
+                item = image_items[index]
+                path = item["path"]
+                if path not in stream_durations:
+                    stream_durations[path] = await asyncio.to_thread(get_video_duration, path)
+                item["_streamDuration"] = stream_durations[path]
 
         brush_video_paths = []
         brush_video_indices = {}
@@ -2228,17 +2268,24 @@ async def run_render_job(job_id: str):
             filters = "format=rgba"
             if index not in streamed_images:
                 return filters
-            filters += f",fps={target_fps}"
-            if snapshot:
-                elapsed = max(0, item.get("snapshot_elapsed", 0))
-                duration = item.get("_streamDuration", 0)
-                if duration > 0:
-                    elapsed %= duration
-                filters += f",trim=start={elapsed:.8f},setpts=PTS-STARTPTS"
+            if index in gif_inputs:
+                filters += "," + gif_clock_filters(
+                    target_fps, start=start, snapshot_elapsed_us=item.get("_snapshot_frame_elapsed_us"),
+                    cycle_duration=item.get("_streamDuration", 0),
+                )
+            else:
+                filters += f",fps={target_fps}"
+                if snapshot:
+                    elapsed = max(0, item.get("snapshot_elapsed", 0))
+                    duration = item.get("_streamDuration", 0)
+                    if duration > 0:
+                        elapsed %= duration
+                    filters += f",trim=start={elapsed:.8f},setpts=PTS-STARTPTS"
             if index in brush_image_indices:
                 filters += brush_video_filter(brush_image_indices[index], label, target_fps)
-            # Compose moving images from the first timeline frame of the layer.
-            return filters + f",setpts=PTS-STARTPTS+{start:.8f}/TB"
+            if index not in gif_inputs:
+                filters += f",setpts=PTS-STARTPTS+{start:.8f}/TB"
+            return filters
 
         lines = []
         n = len(segments)
@@ -2633,6 +2680,10 @@ async def run_render_job(job_id: str):
                 lines.append(
                     f"[{input_index}:v]{video_filters}{visible_filter}{gap_video_filter}{clip_output_label}"
                 )
+            if any(image_index in gif_inputs for image_index, _ in clip_masks):
+                aligned_clip = f"[clipgifclock{i}]"
+                lines.append(f"{clip_output_label}{align_output_frame_timestamps(target_fps)}{aligned_clip}")
+                clip_output_label = aligned_clip
             for mask_number, (image_index, image_item) in enumerate(clip_masks):
                 mask_input = len(video_inputs) + len(text_overlay_paths) + len(sticker_overlay_paths) + image_index
                 mask_label = f"[ownedmask{image_index}]"
@@ -2647,7 +2698,9 @@ async def run_render_job(job_id: str):
                 )
                 if image_item.get("maskFeather", 0) >= 1:
                     mask_filters += f",gblur=sigma={image_item['maskFeather'] / 3:.5f}:planes=8"
-                lines.append(f"[{mask_input}:v]{mask_filters},fps={target_fps},settb=AVTB{mask_label}")
+                if image_index not in gif_inputs:
+                    mask_filters += f",fps={target_fps},settb=AVTB"
+                lines.append(f"[{mask_input}:v]{mask_filters}{mask_label}")
                 next_label = f"[v{i}]" if mask_number == len(clip_masks) - 1 else f"[v{i}mask{mask_number}]"
                 lines.append(f"{clip_output_label}{mask_label}overlay=0:0:format=auto:"
                              f"enable='gte(t,{gap_before:.8f})':eof_action=pass:shortest=1,format=yuva444p,settb=AVTB{next_label}")
@@ -2704,6 +2757,11 @@ async def run_render_job(job_id: str):
             lines.append(f"{current_video}tpad=stop_duration={tail:.8f}:stop_mode=add:color=black[tailvideo]")
             lines.append(f"{current_audio}apad=pad_dur={tail:.8f},atrim=duration={total_duration:.8f}[tailaudio]")
             current_video, current_audio = "[tailvideo]", "[tailaudio]"
+
+        if any(item["_gif"] and not (multitrack and item.get("ownerClipId")) for item in image_items):
+            # Clip joins can leave ticks a microsecond off the shared frame grid.
+            lines.append(f"{current_video}{align_output_frame_timestamps(target_fps)}[imageclockbase]")
+            current_video = "[imageclockbase]"
 
         for index, image_item in enumerate(image_items):
             if multitrack and image_item.get("ownerClipId"):
@@ -2777,7 +2835,7 @@ async def run_render_job(job_id: str):
                 scaled_label = f"[imagestatic{index}]"
             lines.append(
                 f"{current_video}{scaled_label}overlay=x='{x_expr}':y='{y_expr}':"
-                f"enable='between(t,{image_item['start']},{image_item['end']})':"
+                f"enable='{image_visibility_expression(image_item)}':"
                 f"eof_action=pass:shortest=1{next_label}"
             )
             current_video = next_label
@@ -3292,12 +3350,12 @@ async def delete_project(project_id: str):
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     safe_name = os.path.basename((file.filename or "dosya").replace("\\", "/")) or "dosya"
-    media_kind = get_media_kind(safe_name, file.content_type or "")
-    if not media_kind:
-        raise HTTPException(400, "Desteklenmeyen dosya türü")
     filename = safe_name
     if os.name == "nt":
         filename = re.sub(r'[<>:"|?*\x00-\x1f]', "_", filename).rstrip(" .")
+    media_kind = get_media_kind(filename)
+    if not media_kind:
+        raise HTTPException(400, "Dosya uzantısı desteklenmiyor. Desteklenen bir video, ses veya görsel dosyası seçin.")
     file_id = f"{uuid.uuid4()}_{filename}"
     filepath = os.path.join(UPLOAD_DIR, file_id)
     try:

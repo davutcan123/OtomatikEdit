@@ -1,4 +1,5 @@
 """Shared source, clip and timeline clocks for FFmpeg render and snapshots."""
+import math
 from dataclasses import dataclass
 
 from render_video_tracks import next_track_clip
@@ -146,3 +147,38 @@ def normalize_zoom_cadence(filters, fps, *, snapshot_base=None):
     if snapshot_base is not None:
         filters = filters.replace(f":fps={fps}", f":fps={fps},setpts=PTS+{snapshot_base:.8f}/TB")
     return filters
+
+
+MICROSECONDS_PER_SECOND = 1_000_000
+
+
+def display_frame_time_us(time, fps):
+    """Return the timestamp of the export frame still displayed at this time."""
+    frame = math.floor(time * fps + 1e-7)
+    return frame * MICROSECONDS_PER_SECOND // fps
+
+
+def align_output_frame_timestamps(fps):
+    """Use the same AVTB tick for a frame on either side of framesync."""
+    return f"settb=AVTB,setpts=trunc(round(PTS*TB*{fps})*{MICROSECONDS_PER_SECOND}/{fps})"
+
+
+def gif_clock_filters(fps, *, start=0, snapshot_elapsed_us=None, cycle_duration=0):
+    """Sample GIF timestamps on the timeline frame grid or a snapshot at zero."""
+    if snapshot_elapsed_us is None:
+        offset = round(start * MICROSECONDS_PER_SECOND)
+        fps_opts = ""
+    else:
+        cycle_us = round(cycle_duration * MICROSECONDS_PER_SECOND)
+        elapsed = max(0, snapshot_elapsed_us)
+        # Reuse one source cycle without advancing through the preceding loops.
+        offset = -(elapsed % cycle_us) if cycle_us > 0 else 0
+        fps_opts = ":start_time=0"
+    # Round timestamps up so a GIF frame first appears on or after its
+    # source timestamp. The same rule samples the reduced cycle at PTS zero.
+    # Match the main stream's AVTB frame timestamps. Implicit framesync
+    # rescaling can round the secondary tick up by one microsecond.
+    return (
+        f"settb=AVTB,setpts=PTS-STARTPTS{offset:+d},fps={fps}:round=up{fps_opts},"
+        + align_output_frame_timestamps(fps)
+    )
