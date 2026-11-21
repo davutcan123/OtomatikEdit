@@ -32,14 +32,26 @@ async function click(selector){
 }
 async function dragToTrack(selector,time,targetId=null){
   await evaluate(`el('timeline').scrollTop=Math.max(0,el('image-track').offsetTop-60);el('timeline').scrollLeft=0;document.querySelector(${json(selector)}).scrollIntoView({block:'nearest',inline:'nearest'})`);await twoFrames();
-  const points=await evaluate(`(()=>{const source=document.querySelector(${json(selector)}),a=source.getBoundingClientRect(),target=${targetId?`document.querySelector(${json(imageSelector(targetId))})`:`el('image-track')`},b=target.getBoundingClientRect(),track=el('image-track').getBoundingClientRect();return{from:{x:a.left+a.width/2,y:a.top+a.height/2},to:{x:track.left+${time}*S.zoom,y:b.top+b.height/2},viewport:{width:innerWidth,height:innerHeight},ready:source.contains(document.elementFromPoint(a.left+a.width/2,a.top+a.height/2))}})()`);
+  const points=await evaluate(`(()=>{const source=document.querySelector(${json(selector)}),r=source.getBoundingClientRect();const x=r.left+r.width/2,y=r.top+r.height/2;return{from:{x,y},viewport:{width:innerWidth,height:innerHeight},ready:source.contains(document.elementFromPoint(x,y))}})()`);
   assert.ok(points.ready,`Drag source must be visible: ${selector}`);
   const send=(type,p)=>window.webContents.sendInputEvent({type,button:'left',clickCount:1,x:Math.round(p.x),y:Math.round(p.y)});
   send('mouseDown',points.from);send('mouseMove',{x:points.from.x+12,y:points.from.y+12});await twoFrames();
-  // The first image lane is intentionally absent until the drag starts.
-  points.to=await evaluate(`(()=>{const target=${targetId?`document.querySelector(${json(imageSelector(targetId))})`:`el('image-track')`},b=target.getBoundingClientRect(),track=el('image-track').getBoundingClientRect();return{x:track.left+${time}*S.zoom,y:b.top+b.height/2}})()`);
-  assert.ok(points.to.x>=0&&points.to.x<points.viewport.width&&points.to.y>=0&&points.to.y<points.viewport.height,`Drag target must be inside the actual viewport: ${JSON.stringify(points)}`);
   assert.ok(await evaluate(`!el('drag-ghost').classList.contains('hidden')`),'Dragging must show a static drag preview');
+  const targetSelector=targetId?imageSelector(targetId):'#image-track';
+  const dropPoint=()=>evaluate(`(()=>{
+    const target=document.querySelector(${json(targetSelector)}),row=target.getBoundingClientRect(),track=el('image-track').getBoundingClientRect();
+    const x=Math.round(track.left+${time}*S.zoom),y=Math.round(row.top+row.height/2);
+    return{x,y,reachable:target.contains(document.elementFromPoint(x,y))};
+  })()`);
+  // The empty image lane appears after the drag starts. Scroll down while holding
+  // the pointer when the stacked layout puts the lane beyond the viewport.
+  points.to=await dropPoint();
+  if(!points.to.reachable){
+    await evaluate(`document.querySelector(${json(targetSelector)}).scrollIntoView({block:'center',inline:'nearest'})`);
+    await twoFrames();
+    points.to=await dropPoint();
+  }
+  assert.ok(points.to.reachable,`Drag target must be reachable: ${JSON.stringify(points)}`);
   send('mouseMove',points.to);await twoFrames();send('mouseUp',points.to);await twoFrames();await waitForVideo();
   (proof.drags??=[]).push({selector,time,targetId,points,result:await evaluate(`({images:S.imageLayers.map(x=>({id:x.id,start:x.start,end:x.end})),log:el('manual-log').textContent.slice(-900)})`)});
 }
@@ -105,6 +117,7 @@ async function checkImageKeyframes(first,second){
   assert.equal(await evaluate(`parseFloat(document.querySelector('[data-image-kf="${a.transformKeyframes[1].id}"]').style.left)`),160);
   await evaluate('undoEdit()');await waitForVideo();await twoFrames();
   await evaluate(`selectImageKeyframe(${json(first)},${json(a.transformKeyframes[0].id)})`);await waitForVideo();await twoFrames();
+  await evaluate(`el('preview-stage').scrollIntoView({block:'center',inline:'nearest'})`);await twoFrames();
   const handle=await evaluate(`(()=>{const node=document.querySelector(${json(overlaySelector(first)+' .transform-handle.scale')}),r=node.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;return{x,y,reachable:node.contains(document.elementFromPoint(x,y))}})()`);
   assert.ok(handle.reachable,'Image scaling handle must be reachable in the player');
   window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,x:Math.round(handle.x),y:Math.round(handle.y)});
