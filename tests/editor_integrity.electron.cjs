@@ -202,9 +202,82 @@ async function checkAsyncResults() {
   assert.equal(await evaluate("el('analyze').disabled"), true);
 }
 
+async function importVideo(fileName) {
+  await evaluate(`(() => {
+    const selection=new DataTransfer();
+    selection.items.add(new File(['fixture'],${json(fileName)},{type:'video/mp4'}));
+    el('manual-file').files=selection.files;
+    el('manual-file').dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+}
+
+async function seedLayers() {
+  await evaluate(`(() => {
+    S.texts.push({...TEXT_STYLES.classic,id:'base',text:'Existing title',start:0,end:3,x:50,y:50});
+    S.stickers.push({id:'sticker',preset:'star',name:'Star',start:0,end:2,x:50,y:50,scale:18});
+    S.imageLayers.push({id:'image',name:'Image',fileId:'image.svg',src:'/video/image.svg',start:0,end:3});
+    S.audioLayers.push({id:'audio',name:'Audio',fileId:'source.mp4',src:'/video/source.mp4',start:0,end:3,sourceStart:0,volume:1});
+    drawClips();addTextPreset('pop',1);
+  })()`);
+}
+
+async function checkMediaPlacement() {
+  const blank = () => evaluate(`restoreProject({name:'Layer fixture',timelines:[{id:'TL1',name:'Existing timeline',state:emptyTimelineState()}]})`);
+  const layerState = () => evaluate(`[S.texts.map(item=>item.id),S.stickers.map(item=>item.id),S.imageLayers.map(item=>item.id),S.audioLayers.map(item=>item.id),S.history.length]`);
+  await blank();await seedLayers();
+  const existing = await layerState();
+  await importVideo('source-regular.mp4');
+  await waitFor(() => evaluate('S.mediaAssets.length===1&&el("status").textContent==="Dosyalar hazır"'), 'imported media available in the bin');
+  assert.equal(await evaluate('S.clips.length'), 0);
+  assert.equal(await evaluate('S.manualId'), null);
+  assert.deepEqual(await layerState(), existing);
+
+  await blank();
+  await importVideo('source-delayed.mp4');
+  await waitFor(() => deferred.get('video-metadata'), 'video metadata request');
+  assert.equal(await evaluate('S.clips.length'), 0);
+  await seedLayers();
+  const editedWhileWaiting = await layerState();
+  deferred.get('video-metadata')();
+  await waitFor(() => evaluate('S.mediaAssets[0]?.duration===12&&el("status").textContent==="Dosyalar hazır"'), 'metadata returned');
+  assert.equal(await evaluate('S.clips.length'), 0);
+  assert.deepEqual(await layerState(), editedWhileWaiting, 'pending metadata preserves every lane and undo history');
+  await evaluate('undoEdit()');
+  assert.equal(await evaluate('S.texts.length'), 1);
+
+  const verifyTransfer = async ({ locked, populated }) => {
+    await blank();if(populated)await seedLayers();
+    if(locked)await evaluate('videoTrackState(1).locked=true;drawClips()');
+    await evaluate(`autoResult({duration:12,valid_segments:[{start:1,end:3},{start:4,end:7}]},'source.mp4','Auto video');switchTab('auto')`);
+    await click('#to-manual');
+    const createsTimeline = locked||populated;
+    const actual = await evaluate(`(() => {
+      const payload=projectPayload(),original=payload.timelines.find(item=>item.id==='TL1').state;
+      return {count:payload.timelines.length,active:S.activeTimelineId,originalLocked:original.videoTracks[0].locked,
+        originalLayers:[original.texts.length,original.stickers.length,original.imageLayers.length,original.audioLayers.length],
+        clips:S.clips.map(item=>[item.timelineStart,item.start,item.end]),analyzed:payload.autoCutter.data.valid_segments.length};
+    })()`);
+    assert.equal(actual.count,createsTimeline?2:1);
+    assert.equal(actual.active==='TL1',!createsTimeline);
+    assert.equal(actual.originalLocked,locked);
+    assert.deepEqual(actual.originalLayers,populated?[2,1,1,1]:[0,0,0,0]);
+    assert.deepEqual(actual.clips,[[0,1,3],[2,4,7]]);
+    assert.equal(actual.analyzed,2);
+    if(createsTimeline){
+      await click('[data-timeline-id="TL1"]');
+      assert.equal(await evaluate('S.clips.length'),0);
+      assert.equal(await evaluate('S.texts.length'),populated?2:0);
+      assert.equal(await evaluate('videoTrackState(1).locked'),locked);
+    }
+  };
+  await verifyTransfer({locked:false,populated:true});
+  await verifyTransfer({locked:true,populated:false});
+  await verifyTransfer({locked:false,populated:false});
+}
+
 function serve() {
   const counts = { subtitle: 0, auto: 0 };
-  let delayedOpen = true;
+  let delayedOpen = true, metadataReleased = false;
   return http.createServer(async (req, res) => {
     const route = new URL(req.url, 'http://fixture').pathname;
     const reply = (value, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' });res.end(json(value)); };
@@ -215,12 +288,21 @@ function serve() {
       if (!fs.existsSync(filename)) return res.writeHead(204).end();
       res.writeHead(200, { 'Content-Type': route.endsWith('.css') ? 'text/css' : 'text/javascript' });
       res.end(fs.readFileSync(filename));
-    } else if (route === '/video/source.mp4') {
-      const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
-      const start = range ? +range[1] : 0, end = range?.[2] ? Math.min(+range[2], video.length - 1) : video.length - 1;
-      res.writeHead(range ? 206 : 200, { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes',
-        'Content-Length': end - start + 1, ...(range && { 'Content-Range': `bytes ${start}-${end}/${video.length}` }) });
-      res.end(video.subarray(start, end + 1));
+    } else if (route === '/video/source.mp4' || route === '/video/delayed.mp4') {
+      const sendVideo = () => {
+        const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
+        const start = range ? +range[1] : 0, end = range?.[2] ? Math.min(+range[2], video.length - 1) : video.length - 1;
+        res.writeHead(range ? 206 : 200, { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes',
+          'Content-Length': end - start + 1, ...(range && { 'Content-Range': `bytes ${start}-${end}/${video.length}` }) });
+        res.end(video.subarray(start, end + 1));
+      };
+      if (route === '/video/delayed.mp4' && !metadataReleased) {
+        const queued = deferred.get('video-metadata');
+        deferred.set('video-metadata', () => { metadataReleased = true;queued?.();sendVideo(); });
+      } else sendVideo();
+    } else if (route === '/video/image.svg') {
+      res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
+      res.end('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>');
     } else if (route === '/projects' && req.method === 'POST') {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
@@ -237,8 +319,12 @@ function serve() {
       else if (id === 'A' && delayedOpen) { delayedOpen = false;deferred.set('load-A', () => reply(projects.get(id))); }
       else reply(projects.get(id));
     } else if (route === '/upload') {
-      for await (const chunk of req) { void chunk; }
-      reply({ file_id: 'source.mp4' });
+      const chunks=[];
+      for await (const chunk of req) chunks.push(chunk);
+      const body=Buffer.concat(chunks).toString();
+      if(body.includes('source-delayed.mp4'))reply({ file_id:'delayed.mp4',media_kind:'video',duration:0 });
+      else if(body.includes('source-regular.mp4'))reply({ file_id:'source.mp4',media_kind:'video',duration:12 });
+      else reply({ file_id:'source.mp4' });
     } else if (route === '/start-analysis' || route === '/start-subtitles') {
       for await (const chunk of req) { void chunk; }
       const type = route === '/start-analysis' ? 'auto' : 'subtitle';
@@ -266,7 +352,8 @@ app.whenReady().then(async () => {
   await checkProjectRaces();
   await checkTimingLocksAndPixels();
   await checkAsyncResults();
-  console.log('Verified project races, unsaved edits, clip collision and lane locks, chroma pixels, and delayed or invalid analysis.');
+  await checkMediaPlacement();
+  console.log('Verified project races, unsaved edits, clip collision and lane locks, chroma pixels, delayed or invalid analysis, and non-destructive video placement.');
 }).catch(async error => {
   console.error(error);
   if(win)console.error(await evaluate(`({name:el('project-name').value, id:S.projectId, status:el('project-save-state').textContent,
