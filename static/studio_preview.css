@@ -17,3 +17,28 @@
   border-radius: 5px;
 }
 .studio-preview-controls :focus-visible { outline: 2px solid #8ad8fe; outline-offset: 2px; }
+
+.preview-actions .studio-preview-controls {
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding-block: 0;
+  color: var(--studio-muted);
+}
+.preview-actions .studio-preview-controls select,
+.preview-actions .studio-preview-controls button {
+  min-height: 25px;
+  padding: 3px 6px;
+  background: var(--studio-raised);
+  border-color: var(--studio-border);
+  white-space: nowrap;
+}
+.preview-actions .studio-preview-controls [role=status] {
+  max-width: 16ch;
+  font-size: 10px;
+  line-height: 12px;
+}
+.preview-actions .studio-preview-controls [role=status]:empty { display: none; }
+@media (max-width: 650px) {
+  .preview-actions { flex-wrap: wrap; }
+  .preview-actions .studio-preview-controls { flex-wrap: wrap; }
+}

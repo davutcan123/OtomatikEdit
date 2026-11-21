@@ -329,7 +329,11 @@
                 <div class="min-w-0 flex-1"><h2 id="media-title-top" class="font-black text-sm truncate">Henüz video yüklenmedi</h2><p id="canvas-info-top" class="text-[10px] text-blue-300 mt-1">YouTube Full HD · 1920×1080 · 16:9</p></div>
               </div>
             </div>
-            <div class="export-action">
+            <div class="export-action preview-actions">
+              <div class="studio-preview-controls" data-preview-controls="manual" hidden>
+                <label>Önizleme <select><option value="normal">Normal</option><option value="light">Hafif</option></select></label>
+                <span role="status"></span><button type="button" hidden>Tekrar dene</button>
+              </div>
               <button id="snapshot-open" type="button" class="snapshot-action" title="Oynatma çizgisindeki kareyi fotoğraf olarak kaydet">Kare yakala</button>
             </div>
             <div class="preview-controls">
@@ -339,10 +343,6 @@
                 <details class="preview-shortcut-menu"><summary>Kısayollar ⌨</summary><div class="preview-shortcuts"><span><kbd>B</kbd> Kes</span><span><kbd>Space</kbd> Oynat</span><span><kbd>Delete</kbd> Sil</span><span><kbd>⌘/Ctrl Z</kbd> Geri al</span><span><kbd>⌘/Ctrl C · V</kbd> Kopyala / yapıştır</span><span><kbd>← / →</kbd> Kesite atla</span></div></details>
                 <div class="text-right whitespace-nowrap"><div id="timecode-top" class="font-mono text-xs">00:00.00 / 00:00.00</div><div id="summary-top" class="text-[10px] text-slate-500 mt-1">0 klip · 0 sn çıktı</div></div>
             </div>
-          </div>
-          <div class="studio-preview-controls" data-preview-controls="manual" hidden>
-            <label>Önizleme <select><option value="normal">Normal</option><option value="light">Hafif</option></select></label>
-            <span role="status"></span><button type="button" hidden>Tekrar dene</button>
           </div>
           <div id="preview-shell" class="bg-black rounded-xl relative flex items-center justify-center overflow-hidden w-full">
             <div id="preview-stage" class="relative bg-black overflow-hidden w-full" style="aspect-ratio:16/9">

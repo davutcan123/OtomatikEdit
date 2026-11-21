@@ -9,13 +9,32 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'otomatik-studio-layout-'));
 app.setPath('userData', path.join(artifacts, 'profile'));
-const template = fs.readFileSync(path.join(root, 'templates/index.html'), 'utf8');
+const template = fs.readFileSync(path.join(root, 'templates/index.html'), 'utf8').replace('{{ studio_preview }}', 'available');
 const imageTypes = {'.css':'text/css','.js':'application/javascript','.jpg':'image/jpeg','.mp4':'video/mp4','.wav':'audio/wav'};
 let window, server;
 const evalPage = code => window.webContents.executeJavaScript(code);
 const frames = () => evalPage('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
 async function screenshot(name) {
   fs.writeFileSync(path.join(artifacts,name+'.png'),(await window.webContents.capturePage()).toPNG());
+}
+async function waitFor(expression) {
+  return evalPage(`new Promise((resolve,reject)=>{
+    const deadline=performance.now()+8000;
+    const poll=()=> (${expression}) ? resolve() : performance.now()>deadline ?
+      reject(new Error(${JSON.stringify('Timed out waiting for '+expression)})) : requestAnimationFrame(poll);
+    poll();
+  })`);
+}
+async function clickPlay() {
+  const point = await evalPage(`(() => {
+    const button=el('studio-play-toggle'), rect=button.getBoundingClientRect();
+    const x=Math.floor(rect.left+rect.width/2), y=Math.floor(rect.top+rect.height/2);
+    return button.contains(document.elementFromPoint(x,y)) ? {x,y} : null;
+  })()`);
+  assert.ok(point, 'The player transport must receive pointer events');
+  window.webContents.sendInputEvent({type:'mouseMove',...point});
+  window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});
+  window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});
 }
 async function inspect() {
   return evalPage(`(() => {
@@ -26,13 +45,13 @@ async function inspect() {
     return {width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,scrollHeight:document.documentElement.scrollHeight,
       core:bounds('manual-core'),preview:bounds('preview-panel'),stage:bounds('preview-stage'),shell:bounds('preview-shell'),
       assets:bounds('asset-editor'),assetContent:bounds('asset-editor-content'),inspector:bounds('right-editor-column'),timeline:bounds('timeline'),
-      timelinePanel:bounds('timeline-panel'),dock:bounds('manual-status-dock'),render:bounds('manual-render-top'),snapshot:bounds('snapshot-open')};
+      timelinePanel:bounds('timeline-panel'),dock:bounds('manual-status-dock'),render:bounds('manual-render-top'),snapshot:bounds('snapshot-open'),transport:bounds('studio-player-transport')};
   })()`);
 }
 function serve(req, res) {
   const route = new URL(req.url,'http://fixture').pathname;
   if (route === '/') {res.writeHead(200,{'Content-Type':'text/html'});res.end(template);return;}
-  if (route.startsWith('/static/') || route === '/video/studio-fixture.mp4') {
+  if (route.startsWith('/static/') || route === '/preview/studio-fixture.mp4') {
     const dir = path.join(root,'static'), file = route.startsWith('/static/') ? path.join(root,route) : path.join(dir,'studio/demo/alpine-tour.mp4');
     if (!file.startsWith(dir+path.sep)||!fs.existsSync(file)) return res.writeHead(404).end();
     const data = fs.readFileSync(file), range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
@@ -64,11 +83,8 @@ app.whenReady().then(async () => {
     restoreProject({name:'Alp vadisi · İlk kurgu',mediaAssets:[asset],timelines:[{id:'TL1',name:'Dağ rotası',state:emptyTimelineState()}]});
     addProjectAssetAt(S.mediaAssets[0],0);seekOutputTime(1.6);
   })()`);
-  await evalPage(`new Promise((resolve,reject)=>{
-    const deadline=performance.now()+8000;
-    const poll=()=>mv.readyState>=2&&!mv.seeking?resolve():performance.now()>deadline?reject(new Error('Sample video not ready')):requestAnimationFrame(poll);
-    poll();
-  })`);
+  await waitFor("mv.readyState>=2 && !mv.seeking && mv.currentSrc.includes('/preview/studio-fixture.mp4')");
+  assert.match(await evalPage(`document.querySelector('[data-preview-controls="manual"] [role=status]').textContent`), /hazır/);
   await frames();await screenshot('studio-edit-1440x900');
   assert.ok(await evalPage(`!mv.controls&&el('studio-play-toggle').getAttribute('aria-label')==='Oynat'&&S.zoom>=50`));
   await evalPage(`(() => {
@@ -84,7 +100,14 @@ app.whenReady().then(async () => {
     assert.ok(view.assets.right<view.preview.left&&view.preview.right<view.inspector.left,'Three distinct top work areas');
     assert.ok(Math.abs(view.assets.top-view.preview.top)<2&&Math.abs(view.preview.top-view.inspector.top)<2,'Top panels should align');
     assert.ok(view.stage.width>150&&Math.abs(view.stage.width/view.stage.height-16/9)<.015,'Player frame remains 16:9');
-    assert.ok(view.shell.height>=210&&view.timeline.height>=190,'Preview and timeline have usable height');
+    assert.ok(view.stage.height>=219&&view.timeline.height>=199,'Preview and timeline have usable height');
+    assert.ok(view.transport.bottom<=view.preview.bottom,'The full transport stays inside the player');
+    if (height<=740) {
+      await clickPlay();
+      await waitFor("el('studio-play-toggle').getAttribute('aria-label')==='Duraklat' && !mv.paused");
+      await clickPlay();
+      await waitFor("el('studio-play-toggle').getAttribute('aria-label')==='Oynat' && mv.paused");
+    }
     assert.ok(view.preview.bottom<=view.timelinePanel.top&&view.timeline.bottom<=view.dock.top,'Timeline stays in a separate lower row');
     assert.ok(Math.abs(view.timelinePanel.left-view.core.left)<2&&Math.abs(view.timelinePanel.right-view.core.right)<2,'Timeline spans the entire workbench');
     assert.ok(view.assetContent.scrollHeight>view.assetContent.clientHeight,'Catalog scrolls independently');

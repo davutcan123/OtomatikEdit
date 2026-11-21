@@ -157,6 +157,8 @@
   .studio-shell .studio-header, .studio-shell:has(#manual.active) > .studio-header { flex-basis: 45px; height: 45px; }
   .studio-shell > main.studio-main { padding: 5px; }
   .studio-shell #manual > div { grid-template-rows: minmax(286px,1.12fr) minmax(269px,1fr) 32px; gap: 4px; }
+  .studio-shell #manual-core #preview-panel { padding: 6px; }
+  .studio-shell .preview-toolbar { margin-bottom: 4px; gap: 3px 6px; }
   .studio-shell #timeline-panel { padding: 4px 6px; }
 }
 @media (max-width: 1099px), (max-height: 679px) {
