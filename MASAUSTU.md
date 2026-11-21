@@ -56,7 +56,7 @@ Otomatik altyazı için önce bir video klibi seçin ve **Altyazı → Otomatik 
 
 **Ctrl/Cmd+K** veya **Ara** komut aramasını açar. **M** oynatma noktasına işaretçi ekler. İşaretçileri adlandırabilir ve zaman çizelgesinde yeniden ziyaret edebilirsiniz. **I** ve **O** giriş ve çıkış noktasını belirler. Üstteki **Dışa aktar** penceresinde **İşaretli aralık** seçildiğinde o aralık ayrı video olarak kaydedilir.
 
-İlerleme alanındaki **Durdur** video, GIF, MP3, otomatik kırpıcı çıktısı veya PNG kare hazırlığını iptal eder. Yarım dosya temizlenir ve aynı ayarlarla yeniden dışa aktarabilirsiniz. Başka bir proje veya zaman çizelgesi açıkken üstteki **Çıktılar** düğmesinden süren işi bulun ve o işin **Durdur** düğmesini kullanın.
+İlerleme alanındaki **Durdur** video, GIF, MP3, otomatik kırpıcı çıktısı veya PNG kare hazırlığını iptal eder. Yarım dosya temizlenir ve aynı ayarlarla yeniden dışa aktarabilirsiniz. Başka bir proje veya zaman çizelgesi açıkken üstteki **Çıktılar** düğmesinden süren işi bulun ve o işin **Durdur** düğmesini kullanın. **Renderı durdur ve kapat** aynı temizliği kapanışta başlatır. Uygulama zorla kapatılırsa bir sonraki açılışta artık kullanılmadığı doğrulanan geçici render dosyaları temizlenir.
 
 Dışa aktarma tamamlandığında etkin projede kaydetme konumu sorulur. Konum seçimini iptal ettiyseniz veya başka bir projeye geçtiyseniz tamamlanan dosyayı **Son çıktılar** içinden tekrar kaydedebilirsiniz. **Terminal** işlem kayıtlarını ayrı bir pencerede açar.
 
