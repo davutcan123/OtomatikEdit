@@ -6,10 +6,30 @@ const screenshot=async name=>fs.promises.writeFile(path.join(artifacts,name+'.pn
 const send=(type,p)=>window.webContents.sendInputEvent({type,button:'left',clickCount:1,x:Math.round(p.x),y:Math.round(p.y)});
 async function click(selector){await evaluate(`document.querySelector(${j(selector)}).scrollIntoView({block:'nearest',inline:'nearest'})`);await frames();const p=await evaluate(`(()=>{const n=document.querySelector(${j(selector)}),r=n.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;return{x,y,reachable:!n.disabled&&n.contains(document.elementFromPoint(x,y)),hit:document.elementFromPoint(x,y)?.id}})()`);assert.ok(p.reachable,'Reachable control '+selector+' '+j(p));send('mouseDown',p);send('mouseUp',p);await frames()}
 async function ready(){await evaluate(`new Promise((resolve,reject)=>{const start=performance.now(),check=()=>{const image=el('media-overlay').querySelector('.preview-image');if(mv.readyState>=2&&!mv.seeking&&image?.complete&&image.naturalWidth)return resolve();if(performance.now()-start>10000)return reject(new Error('Brush media not ready'));setTimeout(check,20)};check()})`);await frames()}
-async function stroke(points){const coords=await evaluate(`(()=>{const r=brushTargetRect(activeBrushTarget());return ${j(points)}.map(p=>({x:r.left+p[0]*r.width,y:r.top+p[1]*r.height}))})()`);assert.equal(await evaluate(`el('brush-canvas').classList.contains('painting')`),true);send('mouseDown',coords[0]);for(const p of coords.slice(1)){send('mouseMove',p);await frames()}send('mouseUp',coords.at(-1));await frames()}
+async function revealPreview(){
+  // At narrow widths the inspector sits below the preview and clicking a control scrolls the page.
+  await evaluate(`el('preview-stage').scrollIntoView({block:'center',inline:'nearest'})`);
+  await frames();
+}
+async function stroke(points){
+  await revealPreview();
+  assert.equal(await evaluate(`el('brush-canvas').classList.contains('painting')`),true);
+  const coords=await evaluate(`(()=>{
+    const rect=brushTargetRect(activeBrushTarget());
+    return ${j(points)}.map(([u,v])=>{
+      const x=Math.round(rect.left+u*rect.width),y=Math.round(rect.top+v*rect.height);
+      return {x,y,hit:document.elementFromPoint(x,y)?.id};
+    });
+  })()`);
+  assert.ok(coords.every(point=>point.hit==='brush-canvas'),'Stroke must hit the visible brush canvas '+j(coords));
+  send('mouseDown',coords[0]);
+  for(const point of coords.slice(1)){send('mouseMove',point);await frames()}
+  send('mouseUp',coords.at(-1));
+  await frames();
+}
 async function guide(){return evaluate(`(()=>{const canvas=el('brush-canvas'),data=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;let pixels=0,max=0;for(let i=3;i<data.length;i+=4){if(data[i])pixels++;max=Math.max(max,data[i])}return{pixels,max,painting:S.brushPainting}})()`)}
 async function guidePoint(x,y){return evaluate(`(()=>{const canvas=el('brush-canvas'),stage=el('preview-stage').getBoundingClientRect(),target=brushTargetRect(activeBrushTarget()),dx=(target.left-stage.left+target.width*${x})*canvas.width/stage.width,dy=(target.top-stage.top+target.height*${y})*canvas.height/stage.height;return canvas.getContext('2d').getImageData(Math.floor(dx),Math.floor(dy),1,1).data[3]})()`)}
-async function previewPixels(){const points=await evaluate(`(()=>{const r=el('media-overlay').querySelector('[data-layer-id="I1"]').getBoundingClientRect();return{left:[r.left+r.width*.35,r.top+r.height*.6],center:[r.left+r.width*.5,r.top+r.height*.6],outside:[r.left+r.width*.9,r.top+r.height*.3]}})()`),pixels={};for(const[key,[x,y]]of Object.entries(points)){const image=await window.webContents.capturePage({x:Math.round(x),y:Math.round(y),width:1,height:1}),b=image.toBitmap();pixels[key]=[b[2],b[1],b[0]]}return pixels}
+async function previewPixels(){await revealPreview();const points=await evaluate(`(()=>{const r=el('media-overlay').querySelector('[data-layer-id="I1"]').getBoundingClientRect();return{left:[r.left+r.width*.35,r.top+r.height*.6],center:[r.left+r.width*.5,r.top+r.height*.6],outside:[r.left+r.width*.9,r.top+r.height*.3]}})()`),pixels={};for(const[key,[x,y]]of Object.entries(points)){const image=await window.webContents.capturePage({x:Math.round(x),y:Math.round(y),width:1,height:1}),b=image.toBitmap();pixels[key]=[b[2],b[1],b[0]]}return pixels}
 // Allow modest capture offsets while still distinguishing saturated red/blue.
 const red=p=>p[0]>220&&p[1]<50&&p[2]<50,blue=p=>p[2]>220&&p[0]<50&&p[1]<50;
 async function mask(){return evaluate(`(async()=>{const item=selectedImageLayer(),source=el('media-overlay').querySelector('.preview-image'),image=new Image();await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=reject;image.src=buildBrushMaskUrl(item,source)});const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);return{left:ctx.getImageData(image.width*.35,image.height*.6,1,1).data[3],center:ctx.getImageData(image.width*.5,image.height*.6,1,1).data[3],right:ctx.getImageData(image.width*.65,image.height*.6,1,1).data[3],outside:ctx.getImageData(image.width*.9,image.height*.15,1,1).data[3],applied:item.brushApplied,masked:source.style.maskImage.startsWith('url(')}})()`)}
