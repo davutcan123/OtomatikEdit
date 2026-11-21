@@ -80,9 +80,12 @@ Hedef işletim sisteminde tüm bağımlılıkları kurduktan sonra:
 
 ```sh
 npm test
-python -m unittest test_runtime_paths test_desktop_backend test_snapshot
+python -m unittest discover -p "test*.py"
+npm run test:electron
 npm run dist
 ```
+
+`npm run test:electron`, `tests/*.electron.cjs` dosyalarını sırayla, ayrı geçici Electron profillerinde çalıştırır. GitHub Actions, her iki platformda aynı Node.js 22, Python ve Electron test komutlarını kullanır.
 
 `npm run dist`, yerel CSS'yi üretir, Python motorunu PyInstaller ile paketler ve Electron kurulumunu `dist` içine oluşturur. Python ve FFmpeg **aynı işletim sistemi/mimarisinde** paketlenmelidir; macOS'tan Windows motoru çapraz derlenmez. Windows'ta FFmpeg eksikse önce `python windows_setup.py` çalıştırılır. Gerektiğinde `SMART_EDITOR_FFMPEG` ve `SMART_EDITOR_FFPROBE` tam yolları verilebilir.
 
@@ -94,7 +97,7 @@ Hiçbir kullanıcı videosu/projesi, geliştirme ortamı veya model önbelleği 
 
 `electron . --smoke-test` yalnız geçici bir proje klasöründe açılış, token koruması, CSS, gerçek H.264 oynatma, proje kaydı/kurtarma ve kısa MP4 render kontrolü yapar. Paketlenmiş uygulamanın çalıştırılabilir dosyasına da `--smoke-test` verilebilir; test kullanıcı kayıtlarını değiştirmez.
 
-Windows CI ayrıca gerçek NSIS güncelleme zincirini sınar: üretimdeki güncelleme denetleyicisini kullanan iki küçük test sürümü oluşturur, eskisini geçici dizine kurar, yenisini yerel test sunucusundan özet doğrulamasıyla indirir ve yeniden açılan sürümde proje kurtarma kaydı ile medya dosyasının korunduğunu kontrol eder. Bu test yalnız tek kullanımlık GitHub Windows çalışanında çalışır; test uygulamaları ve yerel güncelleme adresi yayın paketlerine alınmaz. Asıl editörün açılış/render kontrolleri bundan ayrı çalışır.
+Windows CI, kaynak başlatıcısının bağımlılık denetimini geçici bir dizinde sahte pip ve uygulamayla sınar. Ayrıca gerçek NSIS güncelleme zincirini sınar: üretimdeki güncelleme denetleyicisini kullanan iki küçük test sürümü oluşturur, eskisini geçici dizine kurar, yenisini yerel test sunucusundan özet doğrulamasıyla indirir ve yeniden açılan sürümde proje kurtarma kaydı ile medya dosyasının korunduğunu kontrol eder. Bu test yalnız tek kullanımlık GitHub Windows çalışanında çalışır; test uygulamaları ve yerel güncelleme adresi yayın paketlerine alınmaz. Asıl editörün açılış/render kontrolleri bundan ayrı çalışır.
 
 ## Sorun giderme
 

@@ -27,7 +27,7 @@ if errorlevel 1 (
 rem Recheck dependencies when the requirements file changes.
 set "HASH_FILE=.req-hash"
 set "NEW_HASH="
-for /f %%h in ('".venv-windows\Scripts\python.exe" -c "import hashlib; from pathlib import Path; print(hashlib.sha256(Path('requirements.txt').read_bytes()).hexdigest())"') do set "NEW_HASH=%%h"
+for /f %%h in ('.venv-windows\Scripts\python.exe -c "import hashlib; from pathlib import Path; print(hashlib.sha256(Path('requirements.txt').read_bytes()).hexdigest())"') do set "NEW_HASH=%%h"
 if not defined NEW_HASH goto failed
 set "OLD_HASH="
 if exist "%HASH_FILE%" set /p OLD_HASH=<"%HASH_FILE%"
