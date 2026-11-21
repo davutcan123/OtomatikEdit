@@ -77,6 +77,8 @@
   <link rel="stylesheet" href="/static/video_tracks.css">
   <link rel="stylesheet" href="/static/timeline_tools.css">
   <link rel="stylesheet" href="/static/studio-workspace.css">
+  <link rel="stylesheet" href="/static/studio/library.css">
+  <link rel="stylesheet" href="/studio/font-faces.css">
 </head>
 <body class="studio-shell text-slate-100 min-h-screen">
   <dialog id="desktop-update-dialog" aria-labelledby="desktop-update-heading" aria-describedby="desktop-update-message">
@@ -456,11 +458,20 @@
                   <label class="inspector-switch pb-2"><input id="subtitle-replace" type="checkbox" checked class="accent-cyan-500"> Bu klibin önceki altyazılarını değiştir</label>
                   <button id="subtitle-generate" type="button" class="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 rounded-lg px-4 py-2 text-[11px] font-black">Konuşmayı analiz et</button>
                 </div>
+                <div class="studio-font-field">
+                  <label>Yazı tipi<select id="subtitle-font-family"><option value="default">Varsayılan</option></select></label>
+                  <label>Kalınlık<select id="subtitle-font-weight"><option value="style">Stile göre</option><option value="400">Normal</option><option value="700">Kalın</option></select></label>
+                </div>
                 <div id="subtitle-progress" class="hidden"><div class="h-2 bg-slate-800 rounded overflow-hidden"><div class="h-full bg-cyan-400 transition-all" style="width:0"></div></div><p class="text-[10px] text-slate-400 mt-2">Hazırlanıyor…</p></div>
                 <p id="subtitle-status" class="inspector-note">Müzik ve sessizlikler atlanır; yalnızca konuşmalar cümle cümle ALTYAZI kanalına eklenir.</p>
                 <div id="subtitle-editor" class="hidden border border-cyan-500/30 bg-slate-950/70 rounded-xl p-3 space-y-3">
                   <div class="flex items-center justify-between gap-3"><b class="text-[11px] text-cyan-200">Seçili altyazı</b><button id="subtitle-delete" type="button" class="bg-rose-700 hover:bg-rose-600 rounded-lg px-3 py-2 text-[10px] font-bold">Altyazıyı sil</button></div>
                   <label class="text-[10px] text-slate-400">Metin<input id="subtitle-content" maxlength="200" class="block w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></label>
+                  <div class="studio-font-field">
+                    <label>Yazı tipi<select id="subtitle-selected-font-family"><option value="default">Varsayılan</option></select></label>
+                    <label>Kalınlık<select id="subtitle-selected-font-weight"><option value="400">Normal</option><option value="700">Kalın</option></select></label>
+                    <button type="button" data-open-studio-fonts>Yazı tipi kitaplığı</button>
+                  </div>
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
                     <label class="text-[10px] text-slate-400">Stil<select id="subtitle-selected-style" class="block w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"><option value="classic">Başlık</option><option value="pop">Vurgu</option><option value="neon">Neon</option><option value="alert">Duyuru</option><option value="pink">Trend</option><option value="minimal">Sade</option><option value="lime">Enerji</option></select></label>
                     <label class="text-[10px] text-slate-400">Yazı rengi<input id="subtitle-color" type="color" value="#FFFFFF" class="block mt-1 w-16 h-9 bg-slate-900 border border-slate-700 rounded p-1"></label>
@@ -563,6 +574,11 @@
                   <label class="text-[9px] text-slate-400">Başlangıç<input id="text-start" type="number" min="0" step=".01" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></label>
                   <label class="text-[9px] text-slate-400">Bitiş<input id="text-end" type="number" min="0" step=".01" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></label>
                   <label class="text-[9px] text-slate-400">Arka plan<input id="text-bg-opacity" type="range" min="0" max="1" step=".05" value="0" class="block mt-2 w-full accent-amber-500"></label>
+                </div>
+                <div class="studio-font-field">
+                  <label>Yazı tipi<select id="text-font-family"><option value="default">Varsayılan</option></select></label>
+                  <label>Kalınlık<select id="text-font-weight"><option value="400">Normal</option><option value="700">Kalın</option></select></label>
+                  <button type="button" data-open-studio-fonts>Yazı tipi kitaplığı</button>
                 </div>
                 <details class="inspector-section mt-3" id="text-keyframe-section"><summary>Metin zoom / saydamlık keyframeleri</summary><div class="inspector-section-content space-y-3">
                   <div class="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
@@ -999,7 +1015,7 @@
     const clipSettings=()=>({effect:'none',filter:'none',speed:1,volume:1,muted:false,reverse:false,fit:'cover',scale:100,opacity:100,x:50,y:50,rotation:0,flipX:false,flipY:false,zoomKeyframes:[],backgroundMode:'none',keyColor:'#00ff00',keySimilarity:25,keyBlend:8,brushMode:'keep',brushSize:12,brushStrokes:[],brushVersion:0,brushApplied:false,blendMode:'normal',stabilization:'none',sharpen:0,denoise:0,deflicker:false,opticalFlow:false,motionBlur:0,autoReframe:false,relight:0,audioFadeIn:0,audioFadeOut:0,normalizeAudio:false,enhanceVoice:false,noiseReduction:false,voiceChanger:'none',audioBalance:0,channelMode:'stereo',brightness:100,contrast:100,saturation:100,temperature:0,exposure:0,tint:0,fade:0,lut:'none',hue:0,lightness:0,curvePreset:'none',shadows:0,highlights:0,mask:'none',maskScale:100,maskX:50,maskY:50,maskFeather:0,maskImageId:'',maskImageFileId:'',maskImageSrc:'',maskImageName:'',animation:'none',animationDuration:.5});
     const hydrateClip=clip=>{clip.videoTrack=Math.max(1,Math.floor(+clip.videoTrack||1));if(typeof clip.clipId!=='string'||!clip.clipId)clip.clipId=newClipId();const defaults=clipSettings();Object.keys(defaults).forEach(key=>{if(clip[key]===undefined||clip[key]===null)clip[key]=defaults[key]});if(!Array.isArray(clip.brushStrokes))clip.brushStrokes=[];if(!Array.isArray(clip.zoomKeyframes))clip.zoomKeyframes=[];clip.zoomKeyframes=clip.zoomKeyframes.map(frame=>({id:String(frame.id||('Z'+S.nextZoomKeyframeId++)),time:+frame.time,scale:+frame.scale,x:Number.isFinite(+frame.x)?+frame.x:50,y:Number.isFinite(+frame.y)?+frame.y:50,opacity:Number.isFinite(+frame.opacity)?+frame.opacity:clip.opacity,easing:normalizeZoomEasing(frame.easing)})).filter(frame=>Number.isFinite(frame.time)&&Number.isFinite(frame.scale)).sort((a,b)=>a.time-b.time);return clip};
     const copy=a=>{ensureClipIdentities(a);return a.map(x=>hydrateClip({...x,start:+x.start,end:+x.end,crop:x.crop?{...x.crop}:undefined,zoomKeyframes:(x.zoomKeyframes||[]).map(frame=>({...frame})),brushStrokes:(x.brushStrokes||[]).map(stroke=>({...stroke,points:(stroke.points||[]).map(point=>({...point}))}))}));};
-    const hydrateText=item=>{if(!Array.isArray(item.transformKeyframes))item.transformKeyframes=[];item.transformKeyframes=item.transformKeyframes.map(frame=>({id:String(frame.id||('TZ'+S.nextZoomKeyframeId++)),time:+frame.time,scale:Number.isFinite(+frame.scale)?+frame.scale:100,x:Number.isFinite(+frame.x)?+frame.x:item.x,y:Number.isFinite(+frame.y)?+frame.y:item.y,opacity:Number.isFinite(+frame.opacity)?+frame.opacity:100,easing:normalizeZoomEasing(frame.easing)})).filter(frame=>Number.isFinite(frame.time)&&Number.isFinite(frame.scale)).sort((a,b)=>a.time-b.time);return item};
+    const hydrateText=item=>{if(typeof item.fontFamily!=='string')item.fontFamily='default';if(!Array.isArray(item.transformKeyframes))item.transformKeyframes=[];item.transformKeyframes=item.transformKeyframes.map(frame=>({id:String(frame.id||('TZ'+S.nextZoomKeyframeId++)),time:+frame.time,scale:Number.isFinite(+frame.scale)?+frame.scale:100,x:Number.isFinite(+frame.x)?+frame.x:item.x,y:Number.isFinite(+frame.y)?+frame.y:item.y,opacity:Number.isFinite(+frame.opacity)?+frame.opacity:100,easing:normalizeZoomEasing(frame.easing)})).filter(frame=>Number.isFinite(frame.time)&&Number.isFinite(frame.scale)).sort((a,b)=>a.time-b.time);return item};
     const copyTexts=a=>a.map(x=>({...x,transformKeyframes:(x.transformKeyframes||[]).map(frame=>({...frame}))}));
     const copyTransitions=a=>a.map(x=>({...x}));
     const imageLayerSettings=()=>({x:50,y:50,scale:55,rotation:0,opacity:100,transformKeyframes:[],animation:'none',animationDuration:1,effect:'none',effectIntensity:100,filter:'none',filterIntensity:100,backgroundMode:'none',keyColor:'#00ff00',keySimilarity:25,keyBlend:8,brushMode:'keep',brushSize:12,brushStrokes:[],brushVersion:0,brushApplied:false});
@@ -2112,7 +2128,7 @@
     function escapeHtml(value){const node=document.createElement('span');node.textContent=value;return node.innerHTML}
     function selectText(id,seek=true){S.selectedText=id;S.selectedTextKeyframe=null;S.selectedSticker=null;S.selectedLayer=null;drawTexts();showTextProperties();const item=selectedText();if(seek&&item)seekOutputTime(Math.min(item.end-.01,item.start+.01));if(item?.kind==='subtitle'){switchClipInspectorTab('video');el('subtitle-section').open=true}drawTextOverlay()}
     function showTextProperties(){
-      const item=selectedText(),fields=el('text-fields'),empty=el('text-empty');fields.classList.toggle('hidden',!item);empty.classList.toggle('hidden',!!item);if(!item)return;
+      const item=selectedText(),fields=el('text-fields'),empty=el('text-empty');window.StudioFonts?.refreshSelection();fields.classList.toggle('hidden',!item);empty.classList.toggle('hidden',!!item);if(!item)return;
       hydrateText(item);el('text-content').value=item.text;el('text-color').value=item.color;el('text-outline').value=item.outlineColor;el('text-size').value=item.size;el('text-size-value').textContent=Math.round(item.size);el('text-x').value=item.x;el('text-y').value=item.y;el('text-start').value=item.start.toFixed(2);el('text-end').value=item.end.toFixed(2);el('text-bg-opacity').value=item.backgroundOpacity;drawSubtitleEditor();drawTextKeyframeEditor();
     }
     function updateSelectedText(){
@@ -2124,7 +2140,7 @@
     function hexRgba(hex,alpha){const value=hex.replace('#',''),r=parseInt(value.slice(0,2),16),g=parseInt(value.slice(2,4),16),b=parseInt(value.slice(4,6),16);return 'rgba('+r+','+g+','+b+','+alpha+')'}
     function drawTextOverlay(){
       const overlay=el('text-overlay'),stage=el('preview-stage'),time=currentOutputTime();overlay.innerHTML='';
-      S.texts.filter(item=>time>=item.start&&time<=item.end&&(item.kind==='subtitle'?S.trackState.subtitle.visible:S.trackState.text.visible)).sort((a,b)=>(a.id===S.selectedText)-(b.id===S.selectedText)).forEach(item=>{hydrateText(item);const active=item.id===S.selectedText,type=item.kind==='subtitle'?'subtitle':'text',wrap=document.createElement('div'),content=document.createElement('div'),scale=stage.clientHeight/Math.max(1,S.canvas.height),motion=textTransformAtTime(item,time);wrap.className='preview-transform '+(active?'active':'');wrap.dataset.textId=item.id;wrap.style.left=motion.x+'%';wrap.style.top=motion.y+'%';wrap.style.opacity=String(motion.opacity/100);wrap.style.transform='translate(-50%,-50%) rotate('+(item.rotation||0)+'deg) scale('+(motion.scale/100)+')';wrap.style.zIndex=active?30:10;content.className='preview-text-content';content.textContent=item.text;content.style.fontSize=Math.max(10,item.size*scale)+'px';content.style.color=item.color;content.style.webkitTextStroke=Math.max(0,item.outlineWidth*scale)+'px '+item.outlineColor;content.style.textShadow=item.shadow?'0 '+Math.max(2,4*scale)+'px '+Math.max(2,8*scale)+'px rgba(0,0,0,.8)':'none';content.style.background=item.backgroundOpacity?hexRgba(item.background,item.backgroundOpacity):'transparent';content.style.borderRadius=Math.max(4,10*scale)+'px';wrap.appendChild(content);if(active)appendTransformHandles(wrap,type,item.id);wrap.onpointerdown=e=>beginOverlayTransform(e,type,item.id,'move',wrap);overlay.appendChild(wrap)});
+      S.texts.filter(item=>time>=item.start&&time<=item.end&&(item.kind==='subtitle'?S.trackState.subtitle.visible:S.trackState.text.visible)).sort((a,b)=>(a.id===S.selectedText)-(b.id===S.selectedText)).forEach(item=>{hydrateText(item);const active=item.id===S.selectedText,type=item.kind==='subtitle'?'subtitle':'text',wrap=document.createElement('div'),content=document.createElement('div'),scale=stage.clientHeight/Math.max(1,S.canvas.height),motion=textTransformAtTime(item,time);wrap.className='preview-transform '+(active?'active':'');wrap.dataset.textId=item.id;wrap.style.left=motion.x+'%';wrap.style.top=motion.y+'%';wrap.style.opacity=String(motion.opacity/100);wrap.style.transform='translate(-50%,-50%) rotate('+(item.rotation||0)+'deg) scale('+(motion.scale/100)+')';wrap.style.zIndex=active?30:10;content.className='preview-text-content';content.textContent=item.text;window.StudioFonts?.paintPreview(content,item);content.style.fontSize=Math.max(10,item.size*scale)+'px';content.style.color=item.color;content.style.webkitTextStroke=Math.max(0,item.outlineWidth*scale)+'px '+item.outlineColor;content.style.textShadow=item.shadow?'0 '+Math.max(2,4*scale)+'px '+Math.max(2,8*scale)+'px rgba(0,0,0,.8)':'none';content.style.background=item.backgroundOpacity?hexRgba(item.background,item.backgroundOpacity):'transparent';content.style.borderRadius=Math.max(4,10*scale)+'px';wrap.appendChild(content);if(active)appendTransformHandles(wrap,type,item.id);wrap.onpointerdown=e=>beginOverlayTransform(e,type,item.id,'move',wrap);overlay.appendChild(wrap)});
     }
     function appendTransformHandles(node,type,id){
       const scale=document.createElement('span'),rotate=document.createElement('span');scale.className='transform-handle scale';scale.textContent='↘';scale.title='Büyüt / küçült';rotate.className='transform-handle rotate';rotate.textContent='↻';rotate.title='Döndür';scale.onpointerdown=e=>beginOverlayTransform(e,type,id,'scale',node);rotate.onpointerdown=e=>beginOverlayTransform(e,type,id,'rotate',node);node.append(scale,rotate)
@@ -2160,7 +2176,7 @@
     // AUTOMATIC SUBTITLES
     const subtitleKey=clip=>[clip.fileId||S.manualId,(+clip.start).toFixed(3),(+clip.end).toFixed(3),clipTimelineStart(clip).toFixed(3)].join(':');
     function drawSubtitleEditor(){
-      const item=selectedText(),editor=el('subtitle-editor'),isSubtitle=item?.kind==='subtitle';editor.classList.toggle('hidden',!isSubtitle);if(!isSubtitle)return;
+      const item=selectedText(),editor=el('subtitle-editor'),isSubtitle=item?.kind==='subtitle';window.StudioFonts?.refreshSelection();editor.classList.toggle('hidden',!isSubtitle);if(!isSubtitle)return;
       el('subtitle-content').value=item.text;el('subtitle-selected-style').value=item.styleName||'classic';el('subtitle-color').value=item.color||'#FFFFFF';el('subtitle-size').value=item.size||72;el('subtitle-size-value').textContent=Math.round(item.size||72);
     }
     function updateSelectedSubtitle(){
@@ -2185,6 +2201,8 @@
       const isCurrent=()=>activeSubtitleJob===job&&job.generation===timelineGeneration;
       const sourceKey=subtitleKey(clip),speed=clip.speed||1,reverse=clip.reverse,replace=el('subtitle-replace').checked;
       const styleName=el('subtitle-style').value,targetLanguage=el('subtitle-language').value,form=new FormData();
+      const fontFamily=window.StudioFonts?.normalize(el('subtitle-font-family')?.value)||'default';
+      const fontWeight=el('subtitle-font-weight')?.value||'style';
       form.append('file_id',clip.fileId||S.manualId);form.append('clip_start',clip.start);form.append('clip_end',clip.end);
       form.append('timeline_start',clipTimelineStart(clip));form.append('speed',speed);form.append('target_language',targetLanguage);
       button.disabled=true;progress.classList.remove('hidden');bar.style.width='4%';label.textContent='Konuşma bölümleri hazırlanıyor…';
@@ -2211,7 +2229,7 @@
         if(created.length){
           remember();
           if(replace)S.texts=S.texts.filter(item=>item.kind!=='subtitle'||item.sourceKey!==sourceKey);
-          const items=created.map(cue=>({id:'T'+S.nextTextId++,...style,...cue,x:50,y:87,rotation:0,kind:'subtitle',styleName,sourceKey,targetLanguage,transformKeyframes:[]}));
+          const items=created.map(cue=>({id:'T'+S.nextTextId++,...style,...cue,fontFamily,bold:fontWeight==='style'?style.bold:fontWeight==='700',x:50,y:87,rotation:0,kind:'subtitle',styleName,sourceKey,targetLanguage,transformKeyframes:[]}));
           S.texts.push(...items);S.selectedText=items[0].id;S.selectedSticker=null;S.selectedLayer=null;
           drawClips();showTextProperties();seekOutputTime(items[0].start+.01);
         }
@@ -2572,5 +2590,6 @@
   <script src="/static/studio_preferences.js"></script>
   <script src="/static/video_tracks.js"></script>
   <script src="/static/timeline_tools.js"></script>
+  <script src="/static/studio/fonts.js"></script>
 </body>
 </html>

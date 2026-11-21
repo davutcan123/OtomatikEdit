@@ -1,0 +1,11 @@
+[
+  {"id":"barlow","name":"Barlow","category":"sans","files":{"400":"Barlow-Regular.ttf","700":"Barlow-Bold.ttf"}},
+  {"id":"barlowcondensed","name":"Barlow Condensed","category":"sans","files":{"400":"BarlowCondensed-Regular.ttf","700":"BarlowCondensed-Bold.ttf"}},
+  {"id":"crimsontext","name":"Crimson Text","category":"serif","files":{"400":"CrimsonText-Regular.ttf","700":"CrimsonText-Bold.ttf"}},
+  {"id":"spacemono","name":"Space Mono","category":"mono","files":{"400":"SpaceMono-Regular.ttf","700":"SpaceMono-Bold.ttf"}},
+  {"id":"dmseriftext","name":"DM Serif Text","category":"serif","files":{"400":"DMSerifText-Regular.ttf"}},
+  {"id":"archivoblack","name":"Archivo Black","category":"display","files":{"400":"ArchivoBlack-Regular.ttf"}},
+  {"id":"ibmplexmono","name":"IBM Plex Mono","category":"mono","files":{"400":"IBMPlexMono-Regular.ttf","700":"IBMPlexMono-Bold.ttf"}},
+  {"id":"instrumentserif","name":"Instrument Serif","category":"serif","files":{"400":"InstrumentSerif-Regular.ttf"}},
+  {"id":"fahkwang","name":"Fahkwang","category":"display","files":{"400":"Fahkwang-Regular.ttf","700":"Fahkwang-Bold.ttf"}}
+]

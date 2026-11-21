@@ -36,6 +36,7 @@ from render_image_animation import image_animation_expressions
 from render_video_tracks import (normalize_video_track, normalize_source_crop, source_crop_filter,
                                  video_track_groups, next_track_clip, shift_clip_filter_time,
                                  compose_video_tracks)
+from studio_fonts import bundled_font_path, font_face_css, normalize_font_family
 from render_audio import atempo_chain, clip_audio_filter, join_audio, mix_audio_layers
 from render_timing import (ClipClock, MICROSECONDS_PER_SECOND, align_output_frame_timestamps,
                            display_frame_time_us, gif_clock_filters, normalize_zoom_cadence,
@@ -1012,6 +1013,7 @@ def normalize_text_items(items, total_duration: float) -> list[dict]:
             "backgroundOpacity": max(0.0, min(background_opacity, 1.0)),
             "shadow": bool(item.get("shadow", True)),
             "bold": bool(item.get("bold", True)),
+            "fontFamily": normalize_font_family(RESOURCE_DIR, item.get("fontFamily")),
             "rotation": max(-3600.0, min(rotation, 3600.0)),
             "transformKeyframes": transform_keyframes,
         })
@@ -1254,8 +1256,9 @@ def create_text_overlay(path: str, item: dict, width: int, height: int):
 
     reference_height = item.get("_reference_height", 1080)
     font_size = max(12, int(height * item["size"] / reference_height))
-    font_path = FONT_BOLD if item.get("bold", True) else FONT_REGULAR
-    font = ImageFont.truetype(font_path, font_size)
+    bold = item.get("bold", True)
+    font_path = bundled_font_path(RESOURCE_DIR, item.get("fontFamily"), bold)
+    font = ImageFont.truetype(font_path or (FONT_BOLD if bold else FONT_REGULAR), font_size)
     stroke_width = max(0, int(height * item["outlineWidth"] / reference_height))
     text = item["text"]
     measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
@@ -3091,17 +3094,22 @@ async def index(request: Request):
         # External code is restricted to these bundled entry points, not every
         # same-origin upload or future route. Inline scripts remain hash-only.
         bundled_scripts = [str(request.base_url).rstrip("/") + "/static/" + name
-                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js")]
+                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js")]
         script_sources = " ".join([*hashes, *bundled_scripts])
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             f"script-src {script_sources}; "
-            "style-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; font-src 'self'; "
             "img-src 'self' blob: data:; media-src 'self' blob: data:; "
             "connect-src 'self'; object-src 'none'; frame-src 'none'; "
             "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         )
     return response
+
+
+@app.get("/studio/font-faces.css")
+def studio_font_stylesheet():
+    return Response(font_face_css(RESOURCE_DIR), media_type="text/css")
 
 
 # ══════════════════════════════════════════════════════════

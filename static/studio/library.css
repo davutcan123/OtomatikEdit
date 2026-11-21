@@ -1,0 +1,89 @@
+.studio-library {
+  display: grid;
+  gap: .65rem;
+  min-width: 0;
+}
+.studio-library-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem;
+}
+.studio-library :is(button, input:not([type="checkbox"]), select),
+.studio-font-field select,
+.studio-font-field button {
+  border: 1px solid #394052;
+  border-radius: .45rem;
+  background: #171923;
+  color: #e9e8f4;
+  padding: .4rem .55rem;
+  font-size: .75rem;
+}
+.studio-library :is(button, input, select):focus-visible,
+.studio-font-field :is(select, button):focus-visible {
+  outline: 2px solid #b8a0ff;
+  outline-offset: 2px;
+}
+.studio-library button:disabled,
+.studio-font-field :is(select, button):disabled {
+  opacity: .5;
+}
+.studio-library-controls :is(input[type="text"], input[type="search"]) {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+.studio-library-controls label {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  font-size: .75rem;
+  color: #c4c8db;
+}
+.studio-library-context,
+.studio-library-message {
+  margin: 0;
+  font-size: .75rem;
+  color: #aeb4ca;
+}
+.studio-library-message:empty { display: none; }
+.studio-library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr));
+  gap: .6rem;
+}
+.studio-font-card {
+  display: grid;
+  gap: .45rem;
+  min-width: 0;
+  border: 1px solid #303647;
+  border-radius: .65rem;
+  padding: .65rem;
+  background: #11131d;
+}
+.studio-library-card-head,
+.studio-library-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+}
+.studio-library-card-head h3 { font-size: .85rem; font-weight: 700; }
+.studio-library-card-foot span { color: #b0b7cd; font-size: .67rem; }
+.studio-library .studio-library-favorite { padding: .15rem .4rem; line-height: 1.15; font-size: 1.05rem; }
+.studio-library-favorite[aria-pressed="true"] { color: #ffda77; }
+.studio-font-sample {
+  margin: 0;
+  color: #f4f0ff;
+  line-height: 1.24;
+  font-size: 1.55rem;
+  overflow-wrap: anywhere;
+}
+.studio-font-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  align-items: center;
+  margin-block-start: .5rem;
+}
+.studio-font-field label { color: #b0b7cd; font-size: .68rem; }
+.studio-font-field :is(select, button) { margin-inline-start: .25rem; }

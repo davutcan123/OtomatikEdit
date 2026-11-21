@@ -86,7 +86,7 @@ class DesktopBackendTests(unittest.TestCase):
             directives = dict(item.strip().split(" ", 1) for item in policy.split(";") if item.strip())
             allowed_scripts = set(directives["script-src"].split())
             bundled_scripts = {"http://testserver/static/" + name for name in (
-                "editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js",
+                "editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js",
             )}
             self.assertEqual(allowed_scripts, {
                 "'sha256-" + base64.b64encode(hashlib.sha256(script.encode("utf-8")).digest()).decode("ascii") + "'"
