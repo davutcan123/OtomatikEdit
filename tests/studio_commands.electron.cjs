@@ -127,6 +127,84 @@ async function checkInspectorHistory() {
     ['Studio fixture','Yeni başlık',sliderEnd,0,0]);
 }
 
+async function checkExpandedPalette() {
+  async function searchCommand(term, action) {
+    await evaluate(`(()=>{el('preview-shortcuts').click();const field=el('studio-command-panel').querySelector('input');
+      field.value=${JSON.stringify(term)};field.dispatchEvent(new Event('input'))})()`);
+    assert.equal(await evaluate("el('studio-command-panel').open"),true);
+    return evaluate(`(()=>{const item=document.querySelector('[data-studio-run="${action}"]');
+      return item?{disabled:item.disabled,label:item.textContent}:null})()`);
+  }
+  async function runCommand(term,action) {
+    const command=await searchCommand(term,action);
+    assert.ok(command&&!command.disabled,action+' is enabled');
+    await evaluate(`document.querySelector('[data-studio-run="${action}"]').click()`);
+    assert.equal(await evaluate("el('studio-command-panel').open"),false);
+  }
+  await evaluate("S.zoom=3;drawClips()");
+  assert.ok(await searchCommand('sigdir','fitTimeline'));
+  await key('Enter');
+  assert.ok(await evaluate('S.zoom>3'));
+  await searchCommand('sigdir','fitTimeline');
+  assert.equal(await evaluate(`document.querySelector('[data-studio-binding="fitTimeline"]').textContent`),'Ata');
+  await evaluate(`document.querySelector('[data-studio-binding="fitTimeline"]').click()`);
+  await key('F',['shift']);
+  await waitFor(() => evaluate("StudioPreferences.get('shortcuts',{}).fitTimeline==='Shift+KeyF'"));
+  await key('Escape');
+  await cursor(1);
+  await evaluate('S.zoom=3;drawClips()');
+  await key('F',['shift']);
+  assert.ok(await evaluate('S.zoom>3'),'An initially unbound command can be assigned and executed');
+  const magnet=await evaluate('S.timelineMagnet');
+  await runCommand('miknatis','toggleMagnet');
+  assert.equal(await evaluate('S.timelineMagnet'),!magnet);
+  const ripple=await evaluate('S.timelineRipple');
+  await runCommand('bosluk','toggleRipple');
+  assert.equal(await evaluate('S.timelineRipple'),!ripple);
+  await evaluate('undoEdit()');
+  assert.equal(await evaluate('S.timelineRipple'),ripple);
+
+  for(const [name,id,panel] of [
+    ['altyazi','captions','studio-captions'],['sablon','templates','studio-templates'],
+    ['yazi tipi','fonts','studio-fonts'],['muzik','sounds','studio-sounds'],['medya','media','project-library'],
+  ]){
+    await runCommand(name,'library-'+id);
+    assert.equal(await evaluate(`el('${panel}').classList.contains('hidden')`),false);
+  }
+
+  const copied=await evaluate('selectedText().text');
+  await runCommand('kopyala','copy');
+  assert.equal(await evaluate('timelineClipboard.item.text'),copied);
+  await cursor(4);
+  await runCommand('yapistir','paste');
+  assert.equal(await evaluate('selectedText().start'),4);
+  const id=await evaluate('selectedText().id');
+  await evaluate("timelineClipboard.item.text='Panodaki özgün içerik'");
+  await evaluate('seekOutputTime(2.5)');
+  await waitFor(() => evaluate('Math.abs(currentOutputTime()-2.5)<.001'));
+  await runCommand('cogalt','duplicate');
+  assert.deepEqual(await evaluate('[selectedText().text,selectedText().start,selectedText().id!=='+JSON.stringify(id)+',timelineClipboard.item.text]'),
+    [copied,2.5,true,'Panodaki özgün içerik']);
+  await evaluate("toggleTrackAction('text','lock')");
+  assert.equal((await searchCommand('ogeyi sil','delete')).disabled,true);
+  await key('Escape');
+  assert.equal(await evaluate('S.texts.length'),3);
+  await evaluate("toggleTrackAction('text','lock')");
+  await runCommand('ogeyi sil','delete');
+  assert.equal(await evaluate('S.texts.length'),2);
+  await cursor(1);
+  await key('V',[mod]);
+  assert.equal(await evaluate('S.texts.length'),3,'Existing native paste still fires once');
+  assert.equal(await evaluate('selectedText().text'),'Panodaki özgün içerik');
+
+  await cursor(1);
+  await key('K',[mod]);
+  await evaluate("el('studio-command-panel').querySelector('input').focus()");
+  await key('V',[mod]);
+  assert.equal(await evaluate('S.texts.length'),3,'Palette search keeps native clipboard focus');
+  await key('Escape');
+}
+
 async function route(request, response, media) {
   const pathname = new URL(request.url, 'http://fixture').pathname;
   const json = value => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(value)); };
@@ -281,7 +359,8 @@ app.whenReady().then(async () => {
   await evaluate('switchTimeline("two")');
   assert.deepEqual(await evaluate('[S.studioTimeline,S.history.length,S.redoHistory.length]'), [null, 0, 0]);
   await checkInspectorHistory();
-  console.log('Native studio keys, preference conflict and reset, marker undo and per-timeline output ranges verified.');
+  await checkExpandedPalette();
+  console.log('Native shortcuts, command palette, preference edits, per-timeline range and inspector undo/redo verified.');
 }).catch(error => {
   console.error(error);
   process.exitCode = 1;

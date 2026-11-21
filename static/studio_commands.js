@@ -19,7 +19,21 @@
     { id: 'rangeIn', label: 'Çıktı giriş noktasını koy', chord: 'KeyI', timeline: true, media: true, run: () => setRangePoint('in') },
     { id: 'rangeOut', label: 'Çıktı çıkış noktasını koy', chord: 'KeyO', timeline: true, media: true, run: () => setRangePoint('out') },
     { id: 'rangeClear', label: 'Çıktı aralığını temizle', chord: 'Alt+KeyX', timeline: true, range: true, run: clearRange },
+    { id: 'fitTimeline', assignable: true, label: 'Zaman çizelgesini sığdır', keywords: 'timeline yakınlaştır', timeline: true, media: true, run: () => fitTimeline() },
+    { id: 'toggleMagnet', assignable: true, label: 'Mıknatıs hizalamasını aç veya kapat', timeline: true, run: () => el('timeline-magnet').click() },
+    { id: 'toggleRipple', assignable: true, label: 'Boşluk kapatmayı aç veya kapat', keywords: 'ripple', timeline: true, run: () => toggleVideoRipple() },
+    { id: 'copy', label: 'Seçili öğeyi kopyala', fixed: 'Mod+KeyC', timeline: true, available: () => !!timelineSelectionForCopy(), run: () => timelineCopySelection() },
+    { id: 'paste', label: 'Oynatma başına yapıştır', fixed: 'Mod+KeyV', timeline: true, available: () => timelineClipboard?.projectTimelines === S.timelines, run: () => timelinePasteClipboard() },
+    { id: 'duplicate', assignable: true, label: 'Seçili öğeyi oynatma başında çoğalt', timeline: true, available: () => !!timelineSelectionForCopy(), run: () => timelineDuplicateSelection() },
+    { id: 'delete', label: 'Seçili öğeyi sil', fixed: 'Delete', alias: 'Backspace', timeline: true, available: canDeleteSelection, run: () => removeTimelineSelection() },
     { id: 'export', label: 'Dışa aktarma ayarlarını aç', timeline: true, media: true, run: () => setExportModal(true) },
+    ...[
+      ['media', 'Medya kütüphanesini aç'],
+      ['sounds', 'Ses ve müzik kütüphanesini aç'],
+      ['captions', 'Altyazı kütüphanesini aç'],
+      ['templates', 'Şablon kütüphanesini aç'],
+      ['fonts', 'Yazı tipi kütüphanesini aç'],
+    ].map(([section, label]) => ({ id: 'library-' + section, assignable: true, label, keywords: 'kitaplık', run: () => window.StudioWorkspace.openSection(section) })),
   ];
   const reserved = new Set([
     'KeyB', 'Shift+KeyB', 'Space', 'Shift+Space', 'Delete', 'Backspace', 'ArrowLeft', 'ArrowRight', 'Shift+ArrowLeft', 'Shift+ArrowRight',
@@ -231,7 +245,7 @@
     return chord.split('+').map(key => keys[key] || key.replace(/^(Key|Digit)/, '')).join(mac ? '' : '+');
   }
   function configuredBindings(overrides) {
-    const customised = commands.filter(command => command.chord);
+    const customised = commands.filter(command => command.chord || command.assignable);
     const assigned = new Map(customised.map(command => {
       const chord = normalizedChord(overrides?.[command.id]);
       return [command.id, chord && !reserved.has(chord) ? chord : command.chord];
@@ -245,6 +259,13 @@
       if (!conflicts.length) return assigned;
       for (const command of conflicts) assigned.set(command.id, command.chord);
     }
+  }
+
+  function canDeleteSelection() {
+    const selection = timelineSelectionForCopy();
+    if (!selection) return false;
+    if (selection.type === 'video') return !selectedTimelineVideos().some(isVideoTrackLocked);
+    return !isTrackLocked(selection.type);
   }
 
   function active(command) {
@@ -327,12 +348,13 @@
     const term = text(query.value.trim());
     for (const command of commands) {
       const keys = [bindings.get(command.id) || command.fixed, command.alias].filter(Boolean).map(bindingLabel);
-      if (!text(command.label + ' ' + keys.join(' ')).includes(term)) continue;
+      if (!text([command.label, command.keywords, ...keys].join(' ')).includes(term)) continue;
       const row = document.createElement('div');
       row.className = 'studio-command-row';
       const run = button(command.label, { 'data-studio-run': command.id });
       run.disabled = !active(command);
       run.onclick = () => {
+        if (!active(command)) { redrawPalette(); return; }
         if (command.id === 'palette') { query.focus(); return; }
         palette.close();
         command.run();
@@ -343,9 +365,10 @@
         keysNode.textContent = keys.join(' / ');
         row.append(keysNode);
       }
-      if (command.chord) {
-        const edit = button('Değiştir', {
-          'data-studio-binding': command.id, 'aria-label': command.label + ' kısayolunu değiştir',
+      if (command.chord || command.assignable) {
+        const verb = keys.length ? 'değiştir' : 'ata';
+        const edit = button(keys.length ? 'Değiştir' : 'Ata', {
+          'data-studio-binding': command.id, 'aria-label': command.label + ' kısayolunu ' + verb,
         });
         edit.onclick = () => {
           recording = command.id;

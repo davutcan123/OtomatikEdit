@@ -39,9 +39,9 @@ function timelineSelectionForCopy() {
   return video ? {type:'video', item:video} : null;
 }
 
-function timelineCopySelection() {
+function timelineCopySelection({ announce = true } = {}) {
   if (timelineToolsBlocked()) return false;
-  if (selectedTimelineVideos().length > 1) return copyTimelineVideoGroup();
+  if (selectedTimelineVideos().length > 1) return copyTimelineVideoGroup(announce);
   const selection = timelineSelectionForCopy();
   if (!selection) return false;
   const item = JSON.parse(JSON.stringify(selection.item));
@@ -52,7 +52,7 @@ function timelineCopySelection() {
     item.name = item.name || S.manualName;
   }
   timelineClipboard = {type:selection.type, item, projectTimelines:S.timelines};
-  log('manual-log', (item.name || item.text || 'Seçili öğe') + ' kopyalandı. Oynatma kafasını yerleştirip Ctrl/Cmd+V ile yapıştırın.', 'info');
+  if (announce) log('manual-log', (item.name || item.text || 'Seçili öğe') + ' kopyalandı. Oynatma kafasını yerleştirip Ctrl/Cmd+V ile yapıştırın.', 'info');
   return true;
 }
 
@@ -124,6 +124,15 @@ function timelinePasteClipboard() {
   return item;
 }
 
+function timelineDuplicateSelection() {
+  const previous = timelineClipboard;
+  try {
+    return timelineCopySelection({ announce: false }) && timelinePasteClipboard();
+  } finally {
+    timelineClipboard = previous;
+  }
+}
+
 function timelineClipboardKeydown(event) {
   if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.isComposing) return;
   const key = event.key.toLowerCase();
@@ -185,7 +194,7 @@ function deleteTimelineVideoSelection() {
   return true;
 }
 
-function copyTimelineVideoGroup() {
+function copyTimelineVideoGroup(announce = true) {
   const items = selectedTimelineVideos();
   if (items.length < 2) return false;
   const ids = new Set(items.map(item => item.clipId));
@@ -193,7 +202,7 @@ function copyTimelineVideoGroup() {
     items:JSON.parse(JSON.stringify(items.map(item => ({...item,fileId:item.fileId||S.manualId,
       src:item.src||'/video/'+encodeURIComponent(item.fileId||S.manualId),name:item.name||S.manualName})))),
     transitions:JSON.parse(JSON.stringify(S.transitions.filter(item => ids.has(item.leftClipId)&&ids.has(item.rightClipId))))};
-  log('manual-log',items.length+' video klibi birlikte kopyalandı.','info');
+  if (announce) log('manual-log',items.length+' video klibi birlikte kopyalandı.','info');
   return true;
 }
 

@@ -63,7 +63,7 @@
 .studio-shell #canvas-info-top { display: none; }
 .studio-shell .preview-controls { gap: 7px; }
 .studio-shell .preview-controls #canvas-preset-top { color: var(--studio-ink); width: 208px; max-width: 56%; padding: 4px 6px; background: var(--studio-raised); border-color: var(--studio-border); }
-.studio-shell .preview-shortcut-menu summary { border-color: var(--studio-border); }
+.studio-shell .preview-shortcut-menu { border-color: var(--studio-border); }
 .studio-shell #snapshot-open { color: var(--studio-muted); background: var(--studio-raised); border-color: var(--studio-border); min-height: 25px; padding: 3px 7px; }
 .studio-shell #timecode-top, .studio-shell #zoom-value { color: var(--studio-mint); }
 .studio-shell #summary-top { color: var(--studio-muted); }

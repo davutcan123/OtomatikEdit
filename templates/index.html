@@ -351,7 +351,7 @@
                 <select id="canvas-preset-top" aria-label="Video ekran oranı ve çözünürlüğü" class="bg-slate-900 border border-blue-500/40 text-blue-200 rounded-lg px-3 py-2 text-[10px]">
                   <option value="1920x1080">YouTube Full HD · 1920×1080 · 16:9</option><option value="3840x2160">YouTube 4K · 3840×2160 · 16:9</option><option value="2560x1440">YouTube 2K · 2560×1440 · 16:9</option><option value="1280x720">HD · 1280×720 · 16:9</option><option value="1080x1920">Shorts / Reels / TikTok · 1080×1920 · 9:16</option><option value="1080x1080">Kare gönderi · 1080×1080 · 1:1</option><option value="1080x1350">Instagram portre · 1080×1350 · 4:5</option><option value="2560x1080">Sinematik · 2560×1080 · 21:9</option>
                 </select>
-                <details class="preview-shortcut-menu"><summary>Kısayollar ⌨</summary><div class="preview-shortcuts"><span><kbd>B</kbd> Kes</span><span><kbd>Space</kbd> Oynat</span><span><kbd>Delete</kbd> Sil</span><span><kbd>⌘/Ctrl Z</kbd> Geri al</span><span><kbd>⌘/Ctrl C · V</kbd> Kopyala / yapıştır</span><span><kbd>← / →</kbd> Kesite atla</span></div></details>
+                <button id="preview-shortcuts" type="button" class="preview-shortcut-menu" data-studio-command="palette" aria-haspopup="dialog" title="Komutları ve düzenlenebilir kısayolları aç">Kısayollar</button>
                 <div class="text-right whitespace-nowrap"><div id="timecode-top" class="font-mono text-xs">00:00.00 / 00:00.00</div><div id="summary-top" class="text-[10px] text-slate-500 mt-1">0 klip · 0 sn çıktı</div></div>
             </div>
           </div>
@@ -413,16 +413,6 @@
               <div id="manual-progress" class="hidden mt-2 max-w-md"><div class="h-2 bg-slate-800 rounded overflow-hidden"><div class="h-full bg-emerald-500" style="width:0"></div></div><p class="text-right text-[10px] text-slate-400 mt-1">0%</p></div>
             </div>
 
-            <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 min-w-[330px]">
-              <h3 class="text-xs font-bold mb-2">Kısayollar</h3>
-              <div class="flex flex-wrap gap-x-3 gap-y-2 text-[10px] text-slate-400">
-                <span><kbd class="bg-slate-800 text-white px-1.5 py-1 rounded">B</kbd> Kes</span>
-                <span><kbd class="bg-slate-800 text-white px-1.5 py-1 rounded">Space</kbd> Oynat</span>
-                <span><kbd class="bg-slate-800 text-white px-1.5 py-1 rounded">Delete</kbd> Sil</span>
-                <span><kbd class="bg-slate-800 text-white px-1.5 py-1 rounded">⌘/Ctrl Z</kbd> Geri al</span>
-                <span><kbd class="bg-slate-800 text-white px-1.5 py-1 rounded">← / →</kbd> 1 sn ilerle</span>
-              </div>
-            </div>
             <div class="text-right self-end whitespace-nowrap min-w-[160px]"><div id="timecode" class="font-mono text-xs">00:00.00 / 00:00.00</div><div id="summary" class="text-[11px] text-slate-500 mt-1">0 klip · 0 sn çıktı</div></div>
           </div>
         </div>
