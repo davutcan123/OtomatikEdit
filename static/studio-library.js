@@ -2,6 +2,14 @@
   const mediaRoot = '/static/studio/';
   const images = Object.fromEntries(['alpine','session','product'].map(scene => [scene,mediaRoot+'previews/'+scene+'.jpg']));
   const lookDefaults = {brightness:100,contrast:100,saturation:100,temperature:0,exposure:0,tint:0,fade:0,hue:0,lightness:0,curvePreset:'none',shadows:0,highlights:0,lut:'none'};
+  const savedLookDefaults = { ...lookDefaults, relight: 0 };
+  const maxSavedLooks = 64;
+  const limited = {
+    brightness:[0,200],contrast:[0,200],saturation:[0,200],temperature:[-100,100],exposure:[-100,100],tint:[-100,100],
+    fade:[0,100],hue:[-180,180],lightness:[-100,100],shadows:[-100,100],highlights:[-100,100],relight:[-100,100],
+  };
+  const named = { curvePreset:['none','soft','strong','lift'],lut:['none','cinematic','tealorange','mono','dream'] };
+  let personalLooks = [];
   const looks = [
     {id:'alpine-light', name:'Alp Işığı', group:'Doğal ışık', scene:'alpine', color:{brightness:106,contrast:109,saturation:112,shadows:12,highlights:-7}},
     {id:'cloud-veil', name:'Bulut Tülü', group:'Doğal ışık', scene:'alpine', color:{brightness:106,contrast:87,saturation:76,fade:17,lightness:12}},
@@ -54,11 +62,38 @@
       Promise.resolve().then(()=>save(canonical)).catch(()=>{});
     }
   }
+  function lookColor(values) {
+    const color = { ...savedLookDefaults };
+    for (const [key, [minimum, maximum]] of Object.entries(limited)) {
+      if (Number.isFinite(values?.[key])) color[key] = Math.min(maximum,Math.max(minimum,values[key]));
+    }
+    for (const [key, options] of Object.entries(named)) {
+      if (options.includes(values?.[key])) color[key] = values[key];
+    }
+    return color;
+  }
+  function syncLooks(data) {
+    const seen = new Set();
+    personalLooks = (Array.isArray(data) ? data : []).slice(0,maxSavedLooks).flatMap(item => {
+      if (!item || typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{1,72}$/.test(item.id) ||
+          seen.has(item.id) || looks.some(look=>look.id===item.id) || typeof item.name !== 'string' || !item.name.trim()) return [];
+      seen.add(item.id);
+      return [{ id:item.id,name:item.name.trim().slice(0,60),color:lookColor(item.color) }];
+    });
+    renderLooks();
+    renderFavorites();
+  }
   function connectPreferences() {
     const prefs = window.StudioPreferences;
     if (prefs) {
-      prefs.subscribe((key,value) => { if (key === preferenceKey) syncFavorites(value); });
-      Promise.resolve(prefs.ready).then(() => restoreFavorites(prefs.get(preferenceKey,[]),value=>prefs.set(preferenceKey,value))).catch(() => {});
+      prefs.subscribe((key,value) => {
+        if (key === preferenceKey) syncFavorites(value);
+        if (key === 'savedLooks') syncLooks(value);
+      });
+      Promise.resolve(prefs.ready).then(() => {
+        restoreFavorites(prefs.get(preferenceKey,[]),value=>prefs.set(preferenceKey,value));
+        syncLooks(prefs.get('savedLooks',[]));
+      }).catch(() => {});
       return;
     }
     try {
@@ -144,6 +179,21 @@
     el('studio-demo-card').classList.toggle('studio-demo-loaded',S.mediaAssets.some(item=>item.studioSource===demo.id));
     renderFavorites();
   }
+  function videoTarget() {
+    return S.selectedLayer || S.selectedText || S.selectedSticker ? null : selectedClip();
+  }
+  const clipTools = {
+    video:{ suppression:'suppressVideoEffectClick',imageTool:'effect',apply:key=>applyVideoEffect(key) },
+    filter:{ suppression:'suppressFilterClick',imageTool:'filter',apply:key=>applyClipFilter(key) },
+    animation:{ suppression:'suppressAnimationClick',imageTool:'animation',apply:key=>applyClipAnimation(key) },
+  };
+  function useCatalogTool(tool,key) {
+    if (S[tool.suppression]) return;
+    const image = S.selectedLayer?.type==='image' ? selectedImageLayer() : null;
+    if (image) applyImageTool(tool.imageTool,key,image.id);
+    else if (videoTarget()) tool.apply(key);
+    else log('manual-log','Önce zaman çizelgesinde bir video veya görsel klibi seçin.','info');
+  }
   function decorateLegacyCards() {
     const catalogs = [
       {section:'video', selector:'[data-video-effect]', attribute:'videoEffect', preview:'.video-effect-demo', scene:'session'},
@@ -163,18 +213,11 @@
         }
         wrapButton(button,catalog.section+':'+button.dataset[catalog.attribute],name);
         const key=button.dataset[catalog.attribute];
-        if (catalog.section==='video') button.onclick=()=>{
-          if(!S.suppressVideoEffectClick)selectedImageLayer()?applyImageTool('effect',key,selectedImageLayer().id):applyVideoEffect(key);
-        };
-        if (catalog.section==='filter') button.onclick=()=>{
-          if(!S.suppressFilterClick)selectedImageLayer()?applyImageTool('filter',key,selectedImageLayer().id):applyClipFilter(key);
-        };
-        if (catalog.section==='animation') button.onclick=()=>{
-          if(!S.suppressAnimationClick)selectedImageLayer()?applyImageTool('animation',key,selectedImageLayer().id):applyClipAnimation(key);
-        };
+        if (Object.hasOwn(clipTools,catalog.section)) button.onclick=()=>useCatalogTool(clipTools[catalog.section],key);
         if (catalog.section==='transition') button.onclick=()=>{
           if(S.suppressTransitionClick)return;
-          const selected=selectedClip();
+          const selected=videoTarget();
+          if(!selected)return log('manual-log','Geçiş eklemek için bitişik iki video klibinin kesimini seçin.','info');
           const after=nextClipOnTrack(S.selected);
           const boundary=after&&Math.abs(clipTimelineEnd(selected)-clipTimelineStart(after.item))<.03
             ? S.selected
@@ -205,7 +248,7 @@
   }
   function attachLook(button,look) {
     button.onclick = () => {
-      if (!button.dataset.suppressClick)applyLook(look,S.selectedLayer||S.selectedText||S.selectedSticker?null:selectedClip());
+      if (!button.dataset.suppressClick)applyLook(look,videoTarget());
     };
     button.onpointerdown = event => {
       if (event.button !== 0) return;
@@ -240,27 +283,119 @@
     };
   }
   function refreshLookSelection() {
-    const clip=S.selectedLayer||S.selectedText||S.selectedSticker?null:selectedClip();
+    const clip=videoTarget(), save=el('studio-look-save');
+    if(save)save.disabled=!clip;
+    const all=[...looks,...personalLooks];
     for(const button of el('studio-look-groups').querySelectorAll('[data-studio-look]')){
-      const look=looks.find(item=>item.id===button.dataset.studioLook);
-      const active=!!clip&&Object.entries({...lookDefaults,...look.color}).every(([key,value])=>clip[key]===value);
+      const look=all.find(item=>item.id===button.dataset.studioLook);
+      const active=!!clip&&!!look&&Object.entries({...lookDefaults,...look.color}).every(([key,value])=>clip[key]===value);
       button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
     }
   }
   function renderLooks() {
-    const root = el('studio-look-groups'), groups = new Map();
-    for (const look of looks) {
-      if (!groups.has(look.group)) groups.set(look.group,makeGroup(root,look.group));
-      const wrapper = element('div','studio-card-wrap'), button = element('button','studio-look-card');
-      const image = element('img','studio-look-preview');
-      image.src = images[look.scene];image.alt = '';image.draggable = false;
+    const root=el('studio-look-groups'),groups=new Map();
+    root.replaceChildren();
+    const combined=[...looks,...personalLooks.map(item=>({...item,group:'Görünümlerim',scene:'product',personal:true}))];
+    for(const look of combined){
+      if(!groups.has(look.group))groups.set(look.group,makeGroup(root,look.group));
+      const wrapper=element('div','studio-card-wrap'),button=element('button','studio-look-card');
+      const image=element('img','studio-look-preview');
+      image.src=images[look.scene];image.alt='';image.draggable=false;
       setVideoEffect(image,{...clipSettings(),...look.color});
-      button.append(image,element('strong','',look.name));button.dataset.studioLook = look.id;
+      button.append(image,element('strong','',look.name));button.dataset.studioLook=look.id;
       wrapper.append(button);groups.get(look.group).append(wrapper);
+      if(look.personal){
+        const edit=element('button','studio-look-edit','⋯');
+        edit.dataset.studioLookEdit=look.id;
+        edit.setAttribute('aria-label',look.name+' görünümünü düzenle');
+        edit.onclick=()=>openLookEditor(look);
+        wrapper.append(edit);
+      }
       addCardMetadata(wrapper,'look:'+look.id,look.name,look.group+' renk filtre görünüm');
       attachLook(button,look);
     }
+    refreshLookSelection();
   }
+
+  const lookEditor=document.createElement('dialog');
+  lookEditor.id='studio-look-editor';
+  lookEditor.setAttribute('aria-labelledby','studio-look-editor-title');
+  lookEditor.innerHTML=`
+    <form>
+      <h2 id="studio-look-editor-title"></h2>
+      <label>Görünüm adı<input required maxlength="60" type="text"></label>
+      <p role="status"></p>
+      <footer>
+        <button type="button" data-look-cancel>Vazgeç</button>
+        <button type="button" data-look-delete hidden>Sil</button>
+        <button type="submit">Kaydet</button>
+      </footer>
+    </form>`;
+  document.body.append(lookEditor);
+  const lookForm=lookEditor.querySelector('form'),lookName=lookEditor.querySelector('input');
+  const lookStatus=lookEditor.querySelector('[role=status]'),deleteLook=lookEditor.querySelector('[data-look-delete]');
+  let editLook=null,lookWritePending=false;
+  function lookMessage(message,type='info'){
+    el('studio-look-feedback').textContent=message;
+    log('manual-log',message,type);
+  }
+  function openLookEditor(look){
+    if(lookEditor.open)return;
+    const clip=look?null:videoTarget();
+    if(!look&&!clip)return lookMessage('Görünümü kaydetmek için önce bir video klibi seçin.');
+    if(!look&&personalLooks.length>=maxSavedLooks)return lookMessage('En fazla '+maxSavedLooks+' kişisel görünüm saklanabilir.','error');
+    editLook=look?{id:look.id,color:look.color}:{id:null,color:lookColor(clip)};
+    lookEditor.querySelector('h2').textContent=look?'Görünümü düzenle':'Görünümü kaydet';
+    lookName.value=look?.name||'';
+    lookStatus.textContent='';
+    deleteLook.hidden=!look;deleteLook.textContent='Sil';delete deleteLook.dataset.confirmed;
+    lookEditor.showModal();lookName.focus();lookName.select();
+  }
+  async function writeLooks(next,success){
+    if(lookWritePending)return false;
+    lookWritePending=true;
+    const controls=[...lookForm.querySelectorAll('button,input')];
+    controls.forEach(control=>control.disabled=true);
+    try{
+      await window.StudioPreferences.set('savedLooks',next);
+      lookEditor.close();
+      lookMessage(success);
+      return true;
+    }catch(error){
+      lookStatus.textContent=error.message||'Kişisel görünüm kaydedilemedi.';
+      return false;
+    }finally{
+      lookWritePending=false;
+      controls.forEach(control=>control.disabled=false);
+    }
+  }
+  lookForm.onsubmit=event=>{
+    event.preventDefault();
+    const name=lookName.value.trim();
+    if(!editLook||!name||/[\x00-\x1f\x7f]/.test(name))return;
+    if(personalLooks.some(item=>item.id!==editLook.id&&simplify(item.name)===simplify(name))){
+      lookStatus.textContent='Bu adla bir görünüm zaten var.';lookName.select();return;
+    }
+    const updated={...editLook,id:editLook.id||timelineFreshId('personal-'),name};
+    const next=editLook.id?personalLooks.map(item=>item.id===updated.id?updated:item):[...personalLooks,updated];
+    void writeLooks(next,editLook.id?'Görünüm adı güncellendi.':'Görünüm kaydedildi.');
+  };
+  deleteLook.onclick=async()=>{
+    if(!editLook?.id)return;
+    if(!deleteLook.dataset.confirmed){
+      deleteLook.dataset.confirmed='true';deleteLook.textContent='Silmeyi onayla';
+      lookStatus.textContent='Bu kişisel görünüm kitaplıktan silinecek.';
+      return;
+    }
+    const key='look:'+editLook.id,remaining=personalLooks.filter(item=>item.id!==editLook.id);
+    if(await writeLooks(remaining,'Görünüm silindi.')&&favorites.has(key)){
+      const next=window.StudioPreferences.get(preferenceKey,[]).filter(item=>item!==key);
+      try{await window.StudioPreferences.set(preferenceKey,next)}catch{lookMessage('Favori kaydı güncellenemedi.','error')}
+    }
+  };
+  lookEditor.querySelector('[data-look-cancel]').onclick=()=>lookEditor.close();
+  lookEditor.addEventListener('cancel',event=>{if(lookWritePending)event.preventDefault()});
+  el('studio-look-save').onclick=()=>openLookEditor();
 
   function stopSound() {
     if (previewAudio) {

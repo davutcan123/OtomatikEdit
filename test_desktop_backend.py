@@ -61,6 +61,24 @@ class DesktopBackendTests(unittest.TestCase):
                 "favorites": ["text:classic"], "shortcuts": {"save": "Mod+Shift+KeyS"},
             })
 
+    def test_studio_saved_looks_validate_colors_limit_and_support_partial_legacy_values(self):
+        headers = {"X-Desktop-Token": "test-desktop-token"}
+        route = "/api/desktop/studio-preferences/savedLooks"
+        valid = {"id": "personal-test", "name": "Stüdyo rengi", "color": {"saturation": 0, "brightness": 121.5, "lut": "mono"}}
+        with TestClient(self.backend.app) as client:
+            self.assertEqual(client.put(route, json=[valid], headers=headers).status_code, 200)
+            for color in ({"brightness": 201}, {"temperature": True},
+                          {"curvePreset": "unknown"}, {"filterExpression": "invalid"}):
+                with self.subTest(color=color):
+                    rejected = client.put(route, json=[{**valid, "color": color}], headers=headers)
+                    self.assertEqual(rejected.status_code, 400)
+            over_limit = [{**valid, "id": f"look-{index}"} for index in range(65)]
+            self.assertEqual(client.put(route, json=over_limit, headers=headers).status_code, 400)
+            self.assertEqual(client.put(route, json=[valid, valid], headers=headers).status_code, 400)
+            stored = client.get("/api/desktop/studio-preferences", headers=headers).json()
+            self.assertEqual(stored["savedLooks"], [valid])
+            self.assertEqual(client.put(route, json=[], headers=headers).status_code, 200)
+
     def test_frozen_backend_rejects_source_update_before_reading_body(self):
         with TestClient(self.backend.app) as client:
             response = client.post("/api/apply-update", content=b"not JSON", headers={"X-Desktop-Token": "test-desktop-token"})

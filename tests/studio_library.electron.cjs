@@ -1,7 +1,7 @@
 'use strict';
 
 // Exercise the bundled media, renderer and FFmpeg with an isolated backend and real Electron inputs.
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -54,6 +54,16 @@ async function startBackend() {
     if(backend.exitCode!==null)throw new Error('Backend stopped before startup');
     return (await fetch(origin+'/api/health',{headers}).catch(()=>null))?.ok;
   },'studio backend');
+}
+async function stopBackend() {
+  if(!backend||backend.exitCode!==null||!backend.pid)return;
+  const stopped=new Promise(resolve=>backend.once('exit',resolve));
+  backend.kill();
+  await Promise.race([stopped,new Promise(resolve=>setTimeout(resolve,2000))]);
+  if(backend.exitCode===null){
+    backend.kill('SIGKILL');
+    await stopped;
+  }
 }
 async function point(selector) {
   await evaluate(`void document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'nearest',inline:'nearest'})`);
@@ -140,6 +150,102 @@ async function checkPlayerAndLooks() {
   return {before,after,initialZoom:sample.zoom};
 }
 
+async function checkPersonalLooks() {
+  await search('');
+  await evaluate(`remember();Object.assign(S.clips[0],{brightness:117,saturation:0,temperature:24,relight:6});drawClips()`);
+  const snapshotDepth=await evaluate('S.history.length');
+  await click('#studio-look-save');
+  await evaluate(`document.querySelector('#studio-look-editor input').value='Özel Film';
+    document.querySelector('#studio-look-editor form').requestSubmit()`);
+  await waitFor(()=>evaluate("!el('studio-look-editor').open&&StudioPreferences.get('savedLooks',[]).length===1"),'saved personal look');
+  const item=await evaluate("StudioPreferences.get('savedLooks')[0]");
+  assert.equal(item.name,'Özel Film');assert.equal(item.color.brightness,117);
+  assert.equal(item.color.saturation,0);assert.equal(item.color.relight,6);
+  assert.equal(await evaluate('S.history.length'),snapshotDepth,'Saving a preset leaves edit history alone');
+  const preview=await evaluate(`document.querySelector('[data-studio-look="${item.id}"] img').style.filter`);
+  assert.match(preview,/saturate\(0\)/);
+  await search('ozel film');
+  assert.equal(await evaluate('document.querySelectorAll("#studio-look-groups [data-studio-item]:not([hidden])").length'),1);
+  await click(`[data-studio-favorite="look:${item.id}"]`);
+  await click(`[data-studio-look-edit="${item.id}"]`);
+  await evaluate(`document.querySelector('#studio-look-editor input').value='Kişisel Mono';
+    document.querySelector('#studio-look-editor form').requestSubmit()`);
+  await waitFor(()=>evaluate("!el('studio-look-editor').open&&StudioPreferences.get('savedLooks')[0].name==='Kişisel Mono'"),'renamed personal look');
+  await search('kisisel mono');
+  await evaluate(`Object.assign(S.clips[0],{brightness:100,saturation:100,temperature:0,relight:0});drawClips()`);
+  await click(`[data-studio-look="${item.id}"]`);
+  assert.equal(await evaluate('S.clips[0].temperature'),24);
+  assert.equal(await evaluate('S.clips[0].saturation'),0);
+  assert.ok(await renderColorSample('personal-monochrome')<3,'Personal look is applied in the rendered file');
+  await evaluate('undoEdit()');
+  assert.equal(await evaluate('S.clips[0].saturation'),100);
+  assert.equal(await evaluate('S.clips[0].temperature'),0);
+  await evaluate('redoEdit()');
+  assert.equal(await evaluate('S.clips[0].saturation'),0);
+  return item.id;
+}
+
+async function checkCatalogSelection() {
+  const target={type:'audio',id:await evaluate('S.audioLayers[0].id')};
+  await evaluate(`S.selected=S.preview=0;S.selectedLayer=${JSON.stringify(target)};drawClips()`);
+  const original=await evaluate('({clip:JSON.stringify(S.clips[0]),history:S.history.length})');
+  for(const [section,selector] of [
+    ['video','[data-video-effect=cyberpunk]'],['filter','[data-filter=golden]'],
+    ['animation','[data-animation=fadein]'],['transition','[data-transition=fade]']
+  ]){
+    await click(`[data-asset-tab="${section}"]`);
+    await click(selector);
+    assert.deepEqual(await evaluate('({clip:JSON.stringify(S.clips[0]),history:S.history.length})'),original);
+    assert.match(await evaluate('el("manual-log-summary").textContent'),/seçin/);
+  }
+  await click('[data-asset-tab="filter"]');
+  assert.equal(await evaluate('el("studio-look-save").disabled'),true);
+  await search('altin');
+  const from=await point('[data-filter=golden]'),to=await point('#video-track-1 .clip');
+  send('mouseDown',from);send('mouseMove',{x:from.x+14,y:from.y+10});await frames();
+  send('mouseMove',to);await frames();send('mouseUp',to);await frames();
+  assert.equal(await evaluate('S.clips[0].filter'),'golden','An explicit drop on a video still applies the filter');
+  await evaluate('undoEdit()');
+}
+
+async function checkLookAfterBackendReopen(id){
+  const storedOrigin=origin;
+  await evaluate('persistProjectRecovery()');
+  await stopBackend();
+  await startBackend();
+  assert.notEqual(origin,storedOrigin,'Preference recovery uses another loopback port');
+  await win.loadURL(origin);
+  await evaluate('Promise.all([projectWorkspaceInitialization,StudioPreferences.ready])');
+  await click('[data-asset-tab="filter"]');
+  await search('kisisel mono');
+  assert.equal(await evaluate(`document.querySelector('[data-studio-look="${id}"] strong').textContent`),'Kişisel Mono');
+  assert.equal(await evaluate(`document.querySelector('[data-studio-favorite="look:${id}"]').getAttribute('aria-pressed')`),'true');
+  await click(`[data-studio-look-edit="${id}"]`);
+  await click('[data-look-delete]');
+  assert.equal(await evaluate('el("studio-look-editor").open'),true);
+  await click('[data-look-delete]');
+  await waitFor(()=>evaluate("!el('studio-look-editor').open&&StudioPreferences.get('savedLooks',[]).length===0"),'deleted personal look');
+  await waitFor(()=>evaluate(`!StudioPreferences.get('favorites',[]).includes('look:${id}')`),'removed deleted favorite');
+  await waitFor(async()=>{
+    const stored=await (await fetch(origin+'/api/desktop/studio-preferences',{headers})).json();
+    return !stored.savedLooks.length&&!stored.favorites.includes('look:'+id);
+  },'committed preset and favorite deletion');
+  await search('');
+  assert.equal(await evaluate('document.querySelectorAll("[data-studio-look]").length'),10);
+  const legacy={id:'legacy-look',name:'Eski renk',color:{temperature:30}};
+  const seeded=await fetch(origin+'/api/desktop/studio-preferences/savedLooks',{
+    headers:{...headers,'Content-Type':'application/json'},method:'PUT',body:JSON.stringify([legacy]),
+  });
+  assert.equal(seeded.status,200);
+  await win.loadURL(origin);
+  await evaluate('Promise.all([projectWorkspaceInitialization,StudioPreferences.ready])');
+  await click('[data-asset-tab="filter"]');await search('eski renk');
+  await evaluate('S.selected=S.preview=0;S.selectedLayer=S.selectedText=S.selectedSticker=null;drawClips()');
+  await click('[data-studio-look="legacy-look"]');
+  assert.deepEqual(await evaluate('({brightness:S.clips[0].brightness,saturation:S.clips[0].saturation,temperature:S.clips[0].temperature})'),
+    {brightness:100,saturation:100,temperature:30});
+}
+
 async function checkAudioAndRecovery() {
   await click('[data-asset-tab="sounds"]');
   assert.equal(await evaluate('el("studio-sound-cards").querySelectorAll(".studio-sound-card").length'),9);
@@ -171,6 +277,7 @@ async function checkAudioAndRecovery() {
   await evaluate('undoEdit()');
   assert.equal(await evaluate('S.audioLayers.length'),3);
   await search('');await screenshot('sound-library-1440x900');
+  await checkCatalogSelection();
   await evaluate(`window.oldSoundFixture=S.audioElements.A1;window.oldTimelineFixture=S.activeTimelineId;createTimeline();
     addProjectAssetAt(S.mediaAssets.find(asset=>asset.studioSource==='coast'),0,{extendAudio:true})`);
   assert.deepEqual(await evaluate(`({
@@ -258,21 +365,22 @@ async function checkDelayedExampleLane() {
 }
 
 app.whenReady().then(async()=>{
+  let recovery = null;
+  ipcMain.handle('desktop:save-recovery',(_event,value)=>{recovery=value});
+  ipcMain.handle('desktop:load-recovery',()=>recovery);
+  ipcMain.handle('desktop:storage-info',()=>({path:path.join(artifacts,'data')}));
+  ipcMain.handle('desktop:update-state',()=>({mode:'disabled',status:'idle'}));
   await startBackend();
-  const preload=path.join(artifacts,'preload.cjs');
-  fs.writeFileSync(preload,`require('electron').contextBridge.exposeInMainWorld('desktopApp',{
-    isDesktop:true,loadRecovery:async()=>null,saveRecovery:async()=>{},
-    onBeforeClose(){},onCloseCancelled(){},getStorageInfo:async()=>({path:'fixture'}),
-    onUpdateState(){},onPrepareUpdate(){},onUpdateCancelled(){},getUpdateState:async()=>({mode:'disabled',status:'idle'})
-  });`);
   win = new BrowserWindow({show:false,width:1440,height:900,useContentSize:true,
-    webPreferences:{contextIsolation:true,sandbox:true,preload,backgroundThrottling:false,partition:'studio-library-'+token}});
-  win.webContents.session.webRequest.onBeforeSendHeaders({urls:[origin+'/*']},(details,callback)=>{
-    callback({requestHeaders:{...details.requestHeaders,...headers}});
+    webPreferences:{preload:path.join(root,'desktop','preload.cjs'),contextIsolation:true,sandbox:true,backgroundThrottling:false,partition:'studio-library-'+token}});
+  win.webContents.session.webRequest.onBeforeSendHeaders((details,callback)=>{
+    const requestHeaders=new URL(details.url).origin===origin?{...details.requestHeaders,...headers}:details.requestHeaders;
+    callback({requestHeaders});
   });
   await win.loadURL(origin);await evaluate('projectWorkspaceInitialization');win.showInactive();
-  const looks=await checkPlayerAndLooks(), audio=await checkAudioAndRecovery();
+  const looks=await checkPlayerAndLooks(), personal=await checkPersonalLooks(), audio=await checkAudioAndRecovery();
   const favorites=await checkMediaFavoritePersistence();
+  await checkLookAfterBackendReopen(personal);
   await checkDelayedExampleLane();
   console.log(JSON.stringify({ok:true,looks,audio,favorites,delayedExampleLanePreserved:true,artifacts}));
 }).catch(error=>{
@@ -282,10 +390,6 @@ app.whenReady().then(async()=>{
   process.exitCode=1;
 }).finally(async()=>{
   win?.destroy();
-  if(backend&&backend.exitCode===null&&backend.pid){
-    const stopped=new Promise(resolve=>backend.once('exit',resolve));backend.kill();
-    await Promise.race([stopped,new Promise(resolve=>setTimeout(resolve,2000))]);
-    if(backend.exitCode===null)backend.kill('SIGKILL');
-  }
+  await stopBackend();
   app.exit(process.exitCode||0);
 });
