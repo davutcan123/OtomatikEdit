@@ -23,7 +23,7 @@ Ayrıntılı kurulum, yedekleme ve derleme adımlarına masaüstü kılavuzundan
 2. Görünümleri, efektleri, geçişleri ve animasyonları varlık tarayıcısında arayın. **Ses** bölümündeki müzikleri ve ses efektlerini dinleyip oynatma noktasına ekleyin. Yıldız, desteklenen varlıkları favorilere ekler.
 3. **Şablon** bölümünden kaynaklarınızla veya verilen örnekle düzenlenebilir bir zaman çizelgesi oluşturun. **Yazı tipi** bölümünden seçili metin ya da altyazının yazı tipini değiştirin.
 4. **Altyazı** bölümünde UTF-8 SRT içe aktarın, transkriptte arayın ve satıra tıklayarak o zamana gidin. Metni veya süreyi düzenleyip **Değişiklikleri uygula** seçin. SRT dışa aktarırken **Tam video ile senkron** geçişleri ve seçili kare hızını kullanır. **Zaman çizelgesindeki gibi** özgün zamanları yazar.
-5. Üstteki **Ara** veya **Ctrl/Cmd+K** komutları açar. **M** işaretçi ekler, **I** ve **O** çıktı aralığını belirler. **Dışa aktar** penceresinden tüm video veya **İşaretli aralık** seçilebilir. **Son çıktılar** tamamlanan dosyaları yeniden kaydetmeyi sağlar.
+5. Üstteki **Ara** veya **Ctrl/Cmd+K** komutları açar. **M** işaretçi ekler, **I** ve **O** çıktı aralığını belirler. **Dışa aktar** penceresinden tüm video veya **İşaretli aralık** seçilebilir. İlerleme alanındaki **Durdur** devam eden dışa aktarmayı keser. Başka bir zaman çizelgesine geçtiyseniz üstteki **Çıktılar** düğmesinden ilgili işi durdurabilirsiniz. **Son çıktılar** tamamlanan dosyaları yeniden kaydetmeyi sağlar.
 6. Sessizlik ya da seçilen kelimeleri çıkarmak için **Otomatik kırpıcı** bölümünde videoyu analiz edin. Sonuçta kaynak, korunan ve çıkarılan süreleri inceleyin. **Zaman çizelgesine aktar**, düzenlemeye devam etmek için kesimleri Kurgu’ya taşır.
 
 ## Özellikler
