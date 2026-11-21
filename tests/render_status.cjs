@@ -26,7 +26,7 @@ function fixture({failure=null,percent=38,saved=false,stop,cancelled=false}={}) 
     return nodes.get(id);
   };
   const context = vm.createContext({
-    el, stop, generation:1, timelineId:'T1', projectName:'Project A',
+    el, stop, generation:1, timelineId:'T1', projectName:'Project A', analysisRevision:1, sourceName:'Alp vadisi.mp4',
     document:{createElement:makeNode},persistProjectRecovery:async()=>{},
     fetch:async()=>failure==='start'?{ok:false,json:async()=>({detail:'Disk dolu'})}:{ok:true,json:async()=>({job_id:'render'})},
     events:async(id,handle)=>{
@@ -38,7 +38,10 @@ function fixture({failure=null,percent=38,saved=false,stop,cancelled=false}={}) 
   });
   vm.runInContext(manager+transport+`
     outputJobs=createEditorOutputJobs({
-      el,document,currentScope:kind=>({kind,generation,timelineId,projectName,timelineName:'Timeline A'}),
+      el,document,currentScope:kind=>({kind,generation,projectName,
+        timelineId:kind==='auto'?null:timelineId,timelineName:kind==='auto'?'':'Timeline A',
+        analysisRevision:kind==='auto'?analysisRevision:null,sourceName:kind==='auto'?sourceName:''
+      }),
       canStart:()=>true,save:saveCompletedOutput,stop,desktop:true
     });
   `,context);
@@ -99,6 +102,31 @@ test('redraw cannot start a duplicate job and late completions stay in recent ou
   assert.equal(context.outputJobs.recent()[0].timelineName,'Timeline A');
 });
 
+
+test('auto exports keep their analysis revision and source name across redraw and recovery',()=>{
+  const {context,el}=fixture();
+  const manager=context.outputJobs;
+  const start=()=>manager.begin('auto','mp4','Hazırlanıyor');
+  const a=start();
+  context.analysisRevision++;
+  manager.draw('auto');
+  assert.equal(manager.visible(a),false,'Even a new analysis of the same source has its own revision');
+  assert.equal(start(),null,'Only one automatic render may run at a time');
+  manager.update(a,75,'Eski analiz işleniyor');
+  assert.equal(el('auto-progress').classList.contains('hidden'),true);
+  assert.equal(el('auto-stop').hidden,true);
+  assert.match(el('active-output-list').children[0].children[1].textContent,/Alp vadisi\.mp4 · Eski analiz işleniyor/);
+  context.sourceName='Yeni klip.mp4';
+  manager.complete(a,'/download/old-auto/mp4','Çıktı hazır');
+  manager.finish(a);
+  assert.equal(el('auto-download').href,undefined);
+  assert.equal(el('auto-render').disabled,false);
+  assert.match(el('recent-output-list').children[0].children[1].textContent,/Alp vadisi\.mp4/);
+  assert.equal(manager.recent()[0].sourceName,'Alp vadisi.mp4');
+  manager.restoreRecent(JSON.parse(JSON.stringify(manager.recent())));
+  assert.match(el('recent-output-list').children[0].children[1].textContent,/Alp vadisi\.mp4/);
+  assert.equal(start().sourceName,'Yeni klip.mp4');
+});
 
 test('a stop clicked before launch acknowledgement is sent with the originating job capability', async ()=>{
   const calls=[];

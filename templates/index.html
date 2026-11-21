@@ -783,7 +783,7 @@
     const RECOVERY_KEY='otamatik-edit:recovery:v2';
     const desktopBridge=window.desktopApp?.isDesktop?window.desktopApp:null;
     let recoveryWrite=Promise.resolve(),projectWorkspaceReady=false,desktopClosing=false,desktopCloseAttempt=null;
-    let workspaceGeneration=0,projectNavigation=0,projectListRequest=0,timelineGeneration=0;
+    let workspaceGeneration=0,projectNavigation=0,projectListRequest=0,timelineGeneration=0,autoAnalysisRevision=0;
     let savedProjectState=null,projectSave=null,loadingProjectId=null,activeSubtitleJob=null,recoveryRevision=0;
     const pendingProjectDeletes=new Set();
     let nativeOutputSaving=false;
@@ -791,10 +791,11 @@
       el,document,desktop:!!desktopBridge,save:output=>saveCompletedOutput(output),stop:stopOutputRender,
       currentScope:kind=>({
         kind,generation:workspaceGeneration,timelineId:kind==='auto'?null:S.activeTimelineId,
+        analysisRevision:kind==='auto'?autoAnalysisRevision:null,sourceName:kind==='auto'?S.autoSourceName:'',
         projectName:el('project-name').value.trim()||'Adsız proje',
         timelineName:kind==='auto'?'':S.timelines.find(timeline=>timeline.id===S.activeTimelineId)?.name||''
       }),
-      canStart:kind=>kind==='auto'?!!S.autoData?.valid_segments.length&&!S.autoAnalyzing:outDuration()>0
+      canStart:kind=>kind==='auto'?!!S.autoData?.valid_segments.length&&!S.autoAnalyzing&&!S.autoPendingSelection:outDuration()>0
     });
     el('recent-outputs-open').onclick=()=>el('recent-outputs-dialog').showModal();
     let desktopUpdateFrozen=false,desktopUpdateAttempt=null,desktopPointerActive=false;
@@ -1386,6 +1387,10 @@
       const logId=output.kind==='auto'?'auto-log':'manual-log';
       const inWorkspace=()=>outputJobs.visible(output)&&el(output.kind==='auto'?'auto':'manual').classList.contains('active');
       if(automatic&&(!inWorkspace()||desktopClosing||desktopUpdateFrozen||document.querySelector('dialog[open]')))return;
+      const report=(message,level='info')=>{
+        if(inWorkspace()||(!automatic&&output.kind!=='auto'))log(logId,message,level);
+        else if(!automatic)el('active-output-announcement').textContent=[output.sourceName,message].filter(Boolean).join(' · ');
+      };
       if(!desktopBridge){
         const download=document.createElement('a');download.href=output.url;download.download='';download.click();return;
       }
@@ -1393,11 +1398,11 @@
       nativeOutputSaving=true;
       try{
         const result=await desktopBridge.saveOutput(output.url);
-        if(result.saved){if(!automatic)outputJobs.markSaved(output);if(!automatic||inWorkspace())log(logId,'Dosya kaydedildi: '+result.path,'info')}
-        if(result.canceled&&(!automatic||inWorkspace()))log(logId,'Kaydetme konumunu Son çıktılar bölümünden yeniden seçebilirsiniz.','info');
+        if(result.saved){if(!automatic)outputJobs.markSaved(output);report('Dosya kaydedildi: '+result.path)}
+        if(result.canceled)report('Kaydetme konumunu Son çıktılar bölümünden yeniden seçebilirsiniz.');
         return result;
       }catch(error){
-        if(!automatic||inWorkspace())log(logId,'Dosya hazır ancak kayıt tamamlanamadı: '+error.message,'error');
+        report('Dosya hazır ancak kayıt tamamlanamadı: '+error.message,'error');
         return {saved:false};
       }finally{nativeOutputSaving=false}
     }
@@ -2877,10 +2882,13 @@
       return Object.keys(settings).some(key=>settings[key]!==autoCutterDefaults[key])?{settings}:null;
     }
     function updateAutoResultActions(){
-      el('auto-actions').classList.toggle('hidden',!S.autoData||S.autoAnalyzing);
-      el('to-manual').disabled=!S.autoData?.valid_segments.length;outputJobs.draw('auto');
+      const awaitingAnalysis=S.autoAnalyzing||S.autoPendingSelection;
+      el('auto-actions').classList.toggle('hidden',!S.autoData||awaitingAnalysis);
+      el('to-manual').disabled=awaitingAnalysis||!S.autoData?.valid_segments.length;
+      outputJobs.draw('auto');
     }
     function restoreAutoCutterState(raw){
+      autoAnalysisRevision++;
       S.autoFile=null;S.autoPendingSelection=false;S.autoAnalyzing=false;S.autoId=null;S.autoData=null;S.autoSourceName='';
       el('auto-file').value='';el('auto-clear-selection').classList.add('hidden');el('auto-clear-selection').disabled=false;
       el('analyze').disabled=true;el('analyze').textContent='Videoyu Yükle ve Analiz Et';el('upload-progress').classList.add('hidden');
@@ -2901,8 +2909,9 @@
     }
     function setAutoFile(file){
       if(S.autoAnalyzing)return log('auto-log','Dosyayı değiştirmeden önce devam eden analizin bitmesini bekleyin.','info');
-      S.autoFile=file;S.autoPendingSelection=true;el('analyze').disabled=false;el('auto-clear-selection').classList.remove('hidden');
+      autoAnalysisRevision++;S.autoFile=file;S.autoPendingSelection=true;el('analyze').disabled=false;el('auto-clear-selection').classList.remove('hidden');
       el('auto-file-name').textContent=file.name+' · '+(file.size/1048576).toFixed(1)+' MB';log('auto-log',file.name+' seçildi.','info');
+      updateAutoResultActions();
     }
     el('auto-clear-selection').onclick=clearAutoFileSelection;
     el('auto-file').onchange=e=>{if(e.target.files[0])setAutoFile(e.target.files[0])};
@@ -2913,7 +2922,7 @@
       if(!S.autoFile)return log('auto-log','Önce bir video seçin.','error');
       const generation=workspaceGeneration,isCurrent=()=>generation===workspaceGeneration;
       const file=S.autoFile,settings=autoCutterSettings(),button=el('analyze'),progress=el('upload-progress');
-      S.autoAnalyzing=true;button.disabled=true;el('auto-clear-selection').disabled=true;button.textContent='Analiz ediliyor…';updateAutoResultActions();
+      autoAnalysisRevision++;S.autoAnalyzing=true;button.disabled=true;el('auto-clear-selection').disabled=true;button.textContent='Analiz ediliyor…';updateAutoResultActions();
       try{
         status('Video yükleniyor…');progress.classList.remove('hidden');
         const uploaded=await upload(file,percent=>{
@@ -2943,7 +2952,7 @@
     function autoResult(raw,fileId=S.autoId,name=S.autoSourceName||S.autoFile?.name||'Video'){
       const data=normalizeAutoCutterData(raw);
       if(!data||typeof fileId!=='string'||!fileId)return false;
-      S.autoData=data;S.autoId=fileId;S.autoSourceName=name;S.autoPendingSelection=false;
+      autoAnalysisRevision++;S.autoData=data;S.autoId=fileId;S.autoSourceName=name;S.autoPendingSelection=false;
       const autoVideo=el('auto-video'),original='/video/'+encodeURIComponent(fileId);
       el('auto-clear-selection').classList.add('hidden');autoVideo.src=window.StudioMediaPreview?.source(autoVideo,original,'auto')??original;el('auto-placeholder').classList.add('hidden');
       el('auto-file-name').textContent=name+(data.valid_segments.length?' · Analiz hazır':' · Korunacak klip bulunamadı');
@@ -2975,7 +2984,7 @@
       if(exclusion)video.currentTime=exclusion.end;
     };
     function sendAutoCutsToTimeline(){
-      if(!S.autoData?.valid_segments.length||S.autoAnalyzing)return;
+      if(!S.autoData?.valid_segments.length||S.autoAnalyzing||S.autoPendingSelection)return;
       const destination=timelineAcceptsInitialVideo()?null:createTimeline();
       let asset=assetForFile(S.autoId);
       if(!asset){

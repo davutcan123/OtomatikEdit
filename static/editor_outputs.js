@@ -8,7 +8,9 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, sto
   const recentLimit = 20;
   let recent = [];
 
-  const scopeKey = ({kind, generation, timelineId}) => JSON.stringify([kind, generation, timelineId]);
+  const scopeKey = ({kind, generation, timelineId, analysisRevision}) =>
+    JSON.stringify([kind, generation, kind === 'auto' ? analysisRevision : timelineId]);
+  const outputContext = output => [output.projectName, output.timelineName, output.sourceName];
   const available = kind => !active.has(kind) && canStart(kind);
   const visible = job => scopeKey(job) === scopeKey(currentScope(job.kind));
   const validOutputUrl = url => typeof url === 'string' && /^\/download\/[a-zA-Z0-9-]{1,80}\/(?:png|mp4|mov|mkv|webm|gif|mp3)$/.test(url);
@@ -45,7 +47,7 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, sto
   function paintActiveRow(job) {
     const entry = activeRows.get(job);
     if (!entry) return;
-    const detail = [job.projectName, job.timelineName, displayMessage(job)].filter(Boolean).join(' · ');
+    const detail = [...outputContext(job), displayMessage(job)].filter(Boolean).join(' · ');
     if (entry.detail.textContent !== detail) entry.detail.textContent = detail;
     paintStopButton(entry.button, job);
   }
@@ -169,7 +171,7 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, sto
       paintActiveRow(job);
     } else {
       if (phase === 'cancelled') el('active-output-announcement').textContent =
-        [message, job.projectName, job.timelineName].filter(Boolean).join(' · ');
+        [message, ...outputContext(job)].filter(Boolean).join(' · ');
       drawActive();
     }
   }
@@ -181,7 +183,7 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, sto
     for (const output of recent) {
       const row = document.createElement('li'), label = document.createElement('div'), detail = document.createElement('small'), link = document.createElement('a');
       label.textContent = channels[output.kind].label+' · '+output.format.toUpperCase();
-      detail.textContent = [output.projectName, output.timelineName, new Date(output.completedAt).toLocaleString('tr-TR')].filter(Boolean).join(' · ');
+      detail.textContent = [...outputContext(output), new Date(output.completedAt).toLocaleString('tr-TR')].filter(Boolean).join(' · ');
       link.className = 'project-action';
       link.download = '';
       setLink(link, output, desktop ? 'Kaydet' : 'İndir');
@@ -192,15 +194,16 @@ function createEditorOutputJobs({el, document, currentScope, canStart, save, sto
 
   function restoreRecent(items) {
     recent = Array.isArray(items) ? items.filter(item => item && Object.hasOwn(channels, item.kind) && validOutputUrl(item.url)
-      && typeof item.format === 'string' && typeof item.projectName === 'string' && Number.isFinite(item.completedAt)).slice(0,recentLimit) : [];
+      && typeof item.format === 'string' && typeof item.projectName === 'string' && Number.isFinite(item.completedAt))
+      .slice(0, recentLimit).map(item => ({...item, sourceName: typeof item.sourceName === 'string' ? item.sourceName : ''})) : [];
     drawRecent();
   }
 
   function complete(job, url, message) {
     if (!validOutputUrl(url)) throw new Error('Sunucu geçerli bir çıktı bağlantısı döndürmedi.');
     job.url = url;
-    const {kind, format, projectName, timelineName} = job;
-    recent = [{kind, format, projectName, timelineName, url, completedAt: Date.now()}, ...recent.filter(item => item.url !== url)].slice(0, recentLimit);
+    const {kind, format, projectName, timelineName, sourceName} = job;
+    recent = [{kind, format, projectName, timelineName, sourceName, url, completedAt: Date.now()}, ...recent.filter(item => item.url !== url)].slice(0, recentLimit);
     drawRecent();
     update(job, 100, message, 'complete');
   }

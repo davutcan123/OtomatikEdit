@@ -337,6 +337,78 @@ async function checkOutputIsolation() {
   assert.ok(await evaluate('el("manual-progress-top").classList.contains("hidden")'), 'completed references recover without an active status');
 }
 
+async function checkAutoSourceOutputIsolation() {
+  await evaluate(`restoreProject({name:'Aynı proje',id:'same-project',timelines:[{id:'TL1',name:'Ana',state:emptyTimelineState()}]});switchTab('auto')`);
+  const nextStream = async (prefix,action) => {
+    const previous = new Set(streams.keys());
+    await action();
+    return waitFor(() => [...streams.keys()].find(id => id.startsWith(prefix) && !previous.has(id)), prefix+' stream');
+  };
+  const selectSource = name => evaluate(`(() => {
+    const files=new DataTransfer();
+    files.items.add(new File(['fixture'],${json(name)},{type:'video/mp4'}));
+    const input=el('auto-file');input.files=files.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  const analysis = () => nextStream('auto-',()=>click('#analyze'));
+  const renderAuto = () => nextStream('render-',()=>click('#auto-render'));
+  async function completeAnalysis(id,start,end) {
+    streams.get(id).end('data: '+json({type:'result',data:{duration:12,valid_segments:[{start,end}]}})+'\n\n');
+    streams.delete(id);
+    await waitFor(() => evaluate(`!S.autoAnalyzing && S.autoData?.valid_segments[0]?.start===${start}`),'automatic analysis result');
+  }
+  const oldSource='Alp vadisi.mp4', newSource='Kıyı yürüyüşü.mp4';
+  await selectSource(oldSource);
+  await completeAnalysis(await analysis(),0,3);
+  const originalId=await evaluate('S.autoId');
+  const firstRender=await renderAuto();
+  const nextAnalysis=await analysis();
+  streams.get(firstRender).write('data: '+json({type:'progress',percent:70,message:'Eski otomatik çıktı'})+'\n\n');
+  await completeAnalysis(nextAnalysis,1,4.4);
+  assert.equal(await evaluate('S.autoId'),originalId,'Fixture re-analyzes the same underlying source ID');
+  assert.ok(await evaluate('el("auto-render").disabled && el("auto-progress").classList.contains("hidden") && !el("auto-download").hasAttribute("href")'));
+  await evaluate('el("auto-render").onclick()');
+  assert.deepEqual([...streams.keys()].filter(id=>id.startsWith('render-')),[firstRender]);
+  await click('#recent-outputs-open');
+  assert.match(await evaluate('el("active-output-list").textContent'),/Alp vadisi\.mp4 · Eski otomatik çıktı/);
+  await evaluate("el('recent-outputs-dialog').close()");
+  const saveCount = await evaluate('fixtureSaveRequests.length');
+  const before = await evaluate('({status:el("status").textContent,log:el("auto-log-summary").textContent})');
+  const firstPath='/download/first-auto-revision/mp4';
+  deliverOutput(firstRender,firstPath);
+  await waitFor(() => evaluate('!el("auto-render").disabled && !desktopOperations.size'),'first stale render completes');
+  assert.equal(await evaluate('fixtureSaveRequests.length'),saveCount,'A stale analysis cannot trigger the native save bridge');
+  assert.ok(await evaluate('el("auto-progress").classList.contains("hidden") && !el("auto-download").hasAttribute("href")'));
+  assert.deepEqual(await evaluate('({status:el("status").textContent,log:el("auto-log-summary").textContent})'),before);
+  await click('#recent-outputs-open');
+  assert.match(await evaluate(`document.querySelector('#recent-output-list [href="${firstPath}"]').parentElement.textContent`),/Alp vadisi\.mp4/);
+  await click('#recent-output-list [href="'+firstPath+'"]');
+  await waitFor(() => evaluate(`fixtureSaveRequests.length===${saveCount+1}`),'explicit save from output history');
+  assert.equal(await evaluate('fixtureSaveRequests.at(-1)'),firstPath);
+  assert.equal(await evaluate('el("auto-log-summary").textContent'),before.log);
+  await evaluate("el('recent-outputs-dialog').close()");
+
+  const secondRender=await renderAuto();
+  await selectSource(newSource);
+  assert.ok(await evaluate('el("auto-actions").classList.contains("hidden") && el("to-manual").disabled && el("auto-render").disabled'));
+  deliverOutput(secondRender,'/download/second-auto-revision/mp4');
+  await waitFor(() => evaluate('outputJobs.recent()[0].url==="/download/second-auto-revision/mp4" && !desktopOperations.size'),'pending-source render completion');
+  assert.equal(await evaluate('fixtureSaveRequests.length'),saveCount+1);
+  assert.equal(await evaluate('outputJobs.recent()[0].sourceName'),oldSource);
+  await completeAnalysis(await analysis(),5,8);
+  assert.notEqual(await evaluate('S.autoId'),originalId);
+  const current=await renderAuto();
+  const currentPath='/download/current-auto-revision/mp4';
+  deliverOutput(current,currentPath);
+  await waitFor(() => evaluate(`fixtureSaveRequests.length===${saveCount+2} && !desktopOperations.size`),'current automatic render prompts to save');
+  assert.equal(await evaluate('fixtureSaveRequests.at(-1)'),currentPath);
+  assert.equal(await evaluate('outputJobs.recent()[0].sourceName'),newSource);
+  assert.equal(await evaluate('el("auto-download").getAttribute("href")'),currentPath);
+  await win.loadURL(win.webContents.getURL());
+  await evaluate('projectWorkspaceInitialization');
+  assert.equal(await evaluate('outputJobs.recent()[0].sourceName'),newSource);
+  assert.equal(await evaluate('outputJobs.recent().find(output=>output.url==="/download/first-auto-revision/mp4").sourceName'),oldSource);
+}
+
 function deliverOutput(jobId, url) {
   const stream=streams.get(jobId);
   assert.ok(stream);
@@ -368,7 +440,7 @@ function serve() {
       if (!fs.existsSync(filename)) return res.writeHead(204).end();
       res.writeHead(200, { 'Content-Type': route.endsWith('.css') ? 'text/css' : 'text/javascript' });
       res.end(fs.readFileSync(filename));
-    } else if (route === '/video/source.mp4' || route === '/video/delayed.mp4') {
+    } else if (['/video/source.mp4','/video/delayed.mp4','/video/auto-coast.mp4'].includes(route)) {
       const sendVideo = () => {
         const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
         const start = range ? +range[1] : 0, end = range?.[2] ? Math.min(+range[2], video.length - 1) : video.length - 1;
@@ -402,7 +474,8 @@ function serve() {
       const chunks=[];
       for await (const chunk of req) chunks.push(chunk);
       const body=Buffer.concat(chunks).toString();
-      if(body.includes('source-delayed.mp4'))reply({ file_id:'delayed.mp4',media_kind:'video',duration:0 });
+      if(body.includes('Kıyı yürüyüşü.mp4'))reply({ file_id:'auto-coast.mp4' });
+      else if(body.includes('source-delayed.mp4'))reply({ file_id:'delayed.mp4',media_kind:'video',duration:0 });
       else if(body.includes('source-regular.mp4'))reply({ file_id:'source.mp4',media_kind:'video',duration:12 });
       else reply({ file_id:'source.mp4' });
     } else if (route === '/start-analysis' || route === '/start-subtitles') {
@@ -438,7 +511,8 @@ app.whenReady().then(async () => {
   await checkAsyncResults();
   await checkMediaPlacement();
   await checkOutputIsolation();
-  console.log('Verified project races, unsaved edits, clip collision and lane locks, chroma pixels, delayed or invalid analysis, non-destructive video placement, and scoped output recovery.');
+  await checkAutoSourceOutputIsolation();
+  console.log('Verified project races, unsaved edits, clip collision and lane locks, chroma pixels, delayed or invalid analysis, non-destructive video placement, and scoped project, timeline and automatic-analysis outputs.');
 }).catch(async error => {
   console.error(error);
   if(win)console.error(await evaluate(`({name:el('project-name').value, id:S.projectId, status:el('project-save-state').textContent,
