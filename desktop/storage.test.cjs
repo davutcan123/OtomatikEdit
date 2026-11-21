@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { outputFile, requireOutput, copyOutput, referencedMedia, prepareLibrary } = require('./storage.cjs');
+const { outputFile, requireOutput, copyOutput, subtitleExport, writeSubtitleOutput, referencedMedia, prepareLibrary } = require('./storage.cjs');
 const job = 'cd05af0b-7972-421e-a379-739a24ab04f2';
 test('native save accepts only exact generated output routes', () => {
   assert.equal(outputFile(`/download/${job}/png`, '/data').extension, 'png');
@@ -49,4 +49,20 @@ test('saved output replaces only the chosen destination and leaves source intact
 });
 test('legacy media discovery rejects traversal and preserves Turkish filenames', () => {
   assert.deepEqual([...referencedMedia(['/video/foto%20%C3%A7.png', '../private', 'a\\b', '..'])], ['foto ç.png']);
+});
+
+test('UTF-8 subtitles are written atomically to the selected file', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(),'editor-srt-test-'));
+  try {
+    const contents = "\uFEFF1\r\n00:00:00,125 --> 00:00:01,875\r\nİstanbul'da güzel gün.\r\nÇığ düşmedi.\r\n";
+    const {filename,content}=subtitleExport('../İstanbul?.srt',contents);
+    assert.equal(filename.endsWith('.srt'),true);
+    assert.doesNotMatch(filename,/[/\\?]/);
+    const output=path.join(root,'seçim.srt');
+    await fs.writeFile(output,'eski');
+    await writeSubtitleOutput(output,content);
+    assert.deepEqual(await fs.readFile(output),Buffer.from(contents,'utf8'));
+    assert.deepEqual(await fs.readdir(root),['seçim.srt']);
+    for(const bad of [null,'<html>',contents+'\0',contents+'x'.repeat(1024*1024)])assert.throws(()=>subtitleExport('altyazı.srt',bad));
+  } finally { await fs.rm(root,{recursive:true,force:true}); }
 });

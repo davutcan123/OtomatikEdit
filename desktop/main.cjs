@@ -8,7 +8,7 @@ const os = require('node:os');
 const net = require('node:net');
 const crypto = require('node:crypto');
 const { isLocalURL, validateRecovery } = require('./security.cjs');
-const { outputFile, requireOutput, copyOutput, prepareLibrary } = require('./storage.cjs');
+const { outputFile, requireOutput, copyOutput, subtitleExport, writeSubtitleOutput, prepareLibrary } = require('./storage.cjs');
 const { UpdateController } = require('./updater.cjs');
 const { UpdateHandoff } = require('./update-handoff.cjs');
 const { LogWindow } = require('./log-window.cjs');
@@ -102,16 +102,20 @@ ipcMain.handle('desktop:open-projects-folder', async event => {
   const error = await shell.openPath(dataDir);
   if (error) throw new Error(error);
 });
-ipcMain.handle('desktop:save-output', (event, relativeURL) => {
-  requireTrusted(event);
-  const output = outputFile(relativeURL, dataDir);
-  if (allowClose || exiting || updateHandoff?.committed) throw new Error('Uygulama kapanıyor; çıktı proje klasöründe korunuyor.');
-  // A render may finish while the close flow awaits health/recovery. A new
-  // native save cancels that older close attempt before showing its dialog.
+function queueNativeSave(work) {
+  if (allowClose || exiting || updateHandoff?.committed) throw new Error('Uygulama kapanıyor; kayıt penceresi açılamadı.');
+  // A new native save cancels an older close attempt before showing its dialog.
   cancelPendingClose();
   updateHandoff?.interrupt();
   activeNativeSaves++;
-  const save = nativeSaveQueue.catch(() => {}).then(async () => {
+  const save = nativeSaveQueue.catch(() => {}).then(work);
+  nativeSaveQueue = save;
+  return save.finally(() => { activeNativeSaves--; });
+}
+ipcMain.handle('desktop:save-output', (event, relativeURL) => {
+  requireTrusted(event);
+  const output = outputFile(relativeURL, dataDir);
+  return queueNativeSave(async () => {
     await requireOutput(output.source, dataDir);
     const picture = output.extension === 'png';
     const options = {
@@ -127,8 +131,23 @@ ipcMain.handle('desktop:save-output', (event, relativeURL) => {
     lastSaveDirectory = path.dirname(choice.filePath);
     return { canceled: false, saved: true, path: choice.filePath };
   });
-  nativeSaveQueue = save;
-  return save.finally(() => { activeNativeSaves--; });
+});
+ipcMain.handle('desktop:save-subtitles', (event, proposedName, contents) => {
+  requireTrusted(event);
+  const {filename,content}=subtitleExport(proposedName, contents);
+  return queueNativeSave(async () => {
+    const options = {
+      title: 'SRT altyazısını kaydet',
+      defaultPath: path.join(lastSaveDirectory || app.getPath('downloads'), filename),
+      filters: [{ name: 'SubRip altyazı', extensions: ['srt'] }],
+      properties: ['createDirectory', 'showOverwriteConfirmation'],
+    };
+    const choice = smoke ? { canceled:false, filePath:path.join(dataDir, 'saved-subtitles-'+crypto.randomUUID()+'.srt') } : await dialog.showSaveDialog(mainWindow, options);
+    if (choice.canceled || !choice.filePath) return { canceled: true, saved: false };
+    await writeSubtitleOutput(choice.filePath, content);
+    lastSaveDirectory = path.dirname(choice.filePath);
+    return { canceled: false, saved: true, path: choice.filePath };
+  });
 });
 ipcMain.on('desktop:ready-to-close', async (event, attempt, error) => {
   if (!trusted(event) || !closePending || attempt !== closeAttempt || closePreparing === attempt) return;

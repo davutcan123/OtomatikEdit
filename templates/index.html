@@ -77,6 +77,7 @@
   <link rel="stylesheet" href="/static/video_tracks.css">
   <link rel="stylesheet" href="/static/timeline_tools.css">
   <link rel="stylesheet" href="/static/studio-workspace.css">
+  <link rel="stylesheet" href="/static/studio/captions.css">
   <link rel="stylesheet" href="/static/studio/library.css">
   <link rel="stylesheet" href="/studio/font-faces.css">
   <link rel="stylesheet" href="/static/studio_commands.css">
@@ -180,7 +181,38 @@
             <section id="studio-sounds" class="hidden"><h3>Ses kütüphanesi</h3><div id="studio-sound-cards" class="studio-card-grid"></div></section>
             <section id="studio-fonts" class="hidden" aria-label="Yazı tipleri"></section>
             <section id="studio-templates" class="hidden" aria-label="Şablonlar"></section>
-            <section id="studio-captions" class="hidden" aria-label="Altyazı"></section>
+            <section id="studio-captions" class="hidden" aria-label="Altyazı ve transkript">
+              <div class="studio-caption-heading"><h3>Altyazı ve transkript</h3><span id="studio-caption-count"></span></div>
+              <div class="studio-caption-actions">
+                <button id="studio-caption-import" type="button" class="project-action">SRT içe aktar</button>
+                <button id="studio-caption-export" type="button" class="project-action">SRT dışa aktar</button>
+                <button id="studio-caption-auto" type="button" class="project-action">Otomatik altyazı</button>
+              </div>
+              <input id="studio-caption-file" type="file" accept=".srt,application/x-subrip" hidden>
+              <div class="studio-caption-import-options">
+                <label>İçe aktarma konumu<select id="studio-caption-position"><option value="zero">Başlangıçtan</option><option value="playhead">Oynatma noktasından</option></select></label>
+                <label>Mevcut altyazılar<select id="studio-caption-mode"><option value="append">Koru ve ekle</option><option value="replace">Değiştir</option></select></label>
+              </div>
+              <p id="studio-caption-status" role="status" aria-live="polite"></p>
+              <input id="studio-caption-search" type="search" placeholder="Transkriptte ara" aria-label="Transkriptte ara">
+              <p id="studio-caption-empty">Bu zaman çizelgesinde altyazı yok.</p>
+              <ul id="studio-caption-cue-list" aria-label="Altyazı satırları"></ul>
+              <div id="studio-caption-editor" hidden>
+                <h4>Seçili altyazı</h4>
+                <label>Metin<textarea id="studio-caption-text" rows="2"></textarea></label>
+                <span id="studio-caption-text-count"></span>
+                <div class="studio-caption-times">
+                  <label>Başlangıç (sn)<input id="studio-caption-start" type="number" min="0" step=".001"></label>
+                  <label>Bitiş (sn)<input id="studio-caption-end" type="number" min="0" step=".001"></label>
+                </div>
+                <button id="studio-caption-apply-edit" type="button" class="project-action">Değişiklikleri uygula</button>
+                <div class="studio-caption-appearance">
+                  <label>Stil<select id="studio-caption-style"></select></label>
+                  <label>Yazı tipi<select id="studio-caption-font"></select></label>
+                </div>
+                <button id="studio-caption-apply-all" type="button" class="project-action">Stili tüm altyazılara uygula</button>
+              </div>
+            </section>
           <div id="text-editor" class="hidden">
           <div class="flex items-center justify-between mb-3">
             <div><h3 class="font-bold">Metin stilleri</h3><p class="text-[10px] text-slate-500">Bir stile tıklayın veya timeline'daki METİN kanalına sürükleyin.</p></div>
@@ -481,7 +513,7 @@
                 <p id="subtitle-status" class="inspector-note">Müzik ve sessizlikler atlanır; yalnızca konuşmalar cümle cümle ALTYAZI kanalına eklenir.</p>
                 <div id="subtitle-editor" class="hidden border border-cyan-500/30 bg-slate-950/70 rounded-xl p-3 space-y-3">
                   <div class="flex items-center justify-between gap-3"><b class="text-[11px] text-cyan-200">Seçili altyazı</b><button id="subtitle-delete" type="button" class="bg-rose-700 hover:bg-rose-600 rounded-lg px-3 py-2 text-[10px] font-bold">Altyazıyı sil</button></div>
-                  <label class="text-[10px] text-slate-400">Metin<input id="subtitle-content" maxlength="200" class="block w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></label>
+                  <label class="text-[10px] text-slate-400">Metin<textarea id="subtitle-content" rows="2" class="block w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></textarea></label>
                   <div class="studio-font-field">
                     <label>Yazı tipi<select id="subtitle-selected-font-family"><option value="default">Varsayılan</option></select></label>
                     <label>Kalınlık<select id="subtitle-selected-font-weight"><option value="400">Normal</option><option value="700">Kalın</option></select></label>
@@ -587,7 +619,7 @@
               <div id="text-fields" class="hidden">
                 <div class="flex items-center justify-between gap-3 mb-2"><h3 class="text-xs font-bold">Seçili metnin özellikleri</h3><button id="text-delete" class="text-[10px] bg-rose-600 px-3 py-1.5 rounded font-bold">Metni Sil</button></div>
                 <div class="grid grid-cols-[2fr_auto_auto_1fr] gap-2 items-end">
-                  <label class="text-[9px] text-slate-400">Yazı<input id="text-content" type="text" maxlength="200" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></label>
+                  <label class="text-[9px] text-slate-400">Yazı<textarea id="text-content" rows="2" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded p-2 text-xs"></textarea></label>
                   <label class="text-[9px] text-slate-400">Renk<input id="text-color" type="color" value="#ffffff" class="block mt-1 w-12 h-8 bg-slate-900 border border-slate-700 rounded p-1"></label>
                   <label class="text-[9px] text-slate-400">Çerçeve<input id="text-outline" type="color" value="#000000" class="block mt-1 w-12 h-8 bg-slate-900 border border-slate-700 rounded p-1"></label>
                   <label class="text-[9px] text-slate-400">Boyut <span id="text-size-value">72</span><input id="text-size" type="range" min="24" max="180" value="72" class="block mt-2 w-full accent-pink-500"></label>
@@ -727,6 +759,13 @@
     <label class="block text-xs text-slate-400 mt-4">Görüntü kalitesi<select id="snapshot-quality" class="block w-full mt-2 bg-slate-900 border border-slate-700 rounded-lg p-3"><option value="1280">HD · 1280 px</option><option value="1920" selected>Full HD · 1920 px</option><option value="2560">2K · 2560 px</option><option value="3840">4K · 3840 px</option></select></label>
     <p id="snapshot-size" class="text-[10px] text-slate-400 mt-2"></p><p class="text-[10px] text-slate-500 mt-2">Ekran oranı korunur. Görünen metin, görsel, sticker ve efektler PNG fotoğrafa eklenir.</p>
     <div class="flex justify-end gap-3 mt-5"><button id="snapshot-cancel" type="button" class="bg-slate-800 rounded-lg px-4 py-2 text-xs font-bold">Vazgeç</button><button id="snapshot-save" type="button" class="bg-blue-600 rounded-lg px-4 py-2 text-xs font-bold">Fotoğrafı hazırla</button></div>
+  </dialog>
+  <dialog id="studio-caption-replace" class="panel rounded-2xl" aria-labelledby="studio-caption-replace-title">
+    <form method="dialog">
+      <h2 id="studio-caption-replace-title">Altyazıları değiştir</h2>
+      <p id="studio-caption-replace-message"></p>
+      <div><button type="submit" value="cancel" class="project-action" autofocus>Vazgeç</button><button type="submit" value="replace" class="project-action primary">Değiştir</button></div>
+    </form>
   </dialog>
   <dialog id="recent-outputs-dialog" class="panel rounded-2xl p-5 text-slate-100" aria-labelledby="recent-outputs-title">
     <div class="flex justify-between items-center gap-4">
@@ -1161,7 +1200,7 @@
       ['sticker','text','subtitle','image','video','audio'].forEach(type=>{const label=el(type+'-label'),track=type==='video'?el('track'):el(type+'-track');label?.classList.toggle('track-locked',isTrackLocked(type));track?.classList.toggle('track-locked',isTrackLocked(type));if(type!=='audio'){const hidden=!S.trackState[type].visible;label?.classList.toggle('track-hidden',hidden);track?.classList.toggle('track-hidden',hidden)}});applyTrackPlaybackState();
     }
     function toggleTrackAction(type,action){
-      const state=S.trackState[type];if(!state)return;remember();if(action==='lock')state.locked=!state.locked;else if(action==='visible')state.visible=!state.visible;else if(action==='mute')state.muted=!state.muted;drawTrackControls();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();log('manual-log',(type==='video'?'Video':type==='audio'?'Ses':type==='image'?'Görsel':type==='sticker'?'Sticker':type==='subtitle'?'Altyazı':'Metin')+' kanalı '+(action==='lock'?(state.locked?'kilitlendi.':'açıldı.') :action==='visible'?(state.visible?'gösteriliyor.':'gizlendi.'):(state.muted?'sessize alındı.':'sesi açıldı.')),'info')
+      const state=S.trackState[type];if(!state)return;remember();if(action==='lock')state.locked=!state.locked;else if(action==='visible')state.visible=!state.visible;else if(action==='mute')state.muted=!state.muted;drawTrackControls();window.StudioCaptions?.refresh();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();log('manual-log',(type==='video'?'Video':type==='audio'?'Ses':type==='image'?'Görsel':type==='sticker'?'Sticker':type==='subtitle'?'Altyazı':'Metin')+' kanalı '+(action==='lock'?(state.locked?'kilitlendi.':'açıldı.') :action==='visible'?(state.visible?'gösteriliyor.':'gizlendi.'):(state.muted?'sessize alındı.':'sesi açıldı.')),'info')
     }
     document.querySelectorAll('[data-track-action]').forEach(button=>button.onclick=e=>{e.stopPropagation();toggleTrackAction(button.dataset.track,button.dataset.trackAction)});
 
@@ -2283,7 +2322,7 @@
     }
     function updateSelectedText(){
       const item=selectedText(),type=item?.kind==='subtitle'?'subtitle':'text';if(!item||isTrackLocked(type))return;const total=outDuration(),start=+el('text-start').value,end=+el('text-end').value;
-      item.text=el('text-content').value.slice(0,200)||'METİN';item.color=el('text-color').value;item.outlineColor=el('text-outline').value;item.size=+el('text-size').value;item.x=+el('text-x').value;item.y=+el('text-y').value;item.backgroundOpacity=+el('text-bg-opacity').value;
+      const textValue=el('text-content').value;if([...textValue].length>200)return log('manual-log','Metin en fazla 200 karakter olabilir.','error');item.text=textValue||'METİN';item.color=el('text-color').value;item.outlineColor=el('text-outline').value;item.size=+el('text-size').value;item.x=+el('text-x').value;item.y=+el('text-y').value;item.backgroundOpacity=+el('text-bg-opacity').value;
       if(Number.isFinite(start)&&Number.isFinite(end)&&start>=0&&end>start&&end<=total+.01){item.start=start;item.end=Math.min(end,total)}
       el('text-size-value').textContent=Math.round(item.size);drawTexts();drawTextOverlay();
     }
@@ -2326,11 +2365,11 @@
     // AUTOMATIC SUBTITLES
     const subtitleKey=clip=>[clip.fileId||S.manualId,(+clip.start).toFixed(3),(+clip.end).toFixed(3),clipTimelineStart(clip).toFixed(3)].join(':');
     function drawSubtitleEditor(){
-      const item=selectedText(),editor=el('subtitle-editor'),isSubtitle=item?.kind==='subtitle';window.StudioFonts?.refreshSelection();editor.classList.toggle('hidden',!isSubtitle);if(!isSubtitle)return;
+      const item=selectedText(),editor=el('subtitle-editor'),isSubtitle=item?.kind==='subtitle';window.StudioFonts?.refreshSelection();window.StudioCaptions?.refresh();editor.classList.toggle('hidden',!isSubtitle);if(!isSubtitle)return;
       el('subtitle-content').value=item.text;el('subtitle-selected-style').value=item.styleName||'classic';el('subtitle-color').value=item.color||'#FFFFFF';el('subtitle-size').value=item.size||72;el('subtitle-size-value').textContent=Math.round(item.size||72);
     }
     function updateSelectedSubtitle(){
-      const item=selectedText();if(item?.kind!=='subtitle'||isTrackLocked('subtitle'))return;item.text=el('subtitle-content').value.slice(0,200)||'ALTYAZI';item.color=el('subtitle-color').value;item.size=+el('subtitle-size').value;el('subtitle-size-value').textContent=Math.round(item.size);drawTexts();drawTextOverlay();showTextProperties();
+      const item=selectedText();if(item?.kind!=='subtitle'||isTrackLocked('subtitle'))return;const textValue=el('subtitle-content').value;if([...textValue].length>200)return log('manual-log','Altyazı en fazla 200 karakter olabilir.','error');item.text=textValue||'ALTYAZI';item.color=el('subtitle-color').value;item.size=+el('subtitle-size').value;el('subtitle-size-value').textContent=Math.round(item.size);drawTexts();drawTextOverlay();showTextProperties();
     }
     function applySelectedSubtitleStyle(){
       const item=selectedText(),styleName=el('subtitle-selected-style').value,style=TEXT_STYLES[styleName];if(item?.kind!=='subtitle'||!style||isTrackLocked('subtitle'))return;remember();const keep={id:item.id,text:item.text,start:item.start,end:item.end,x:item.x,y:item.y,rotation:item.rotation,kind:item.kind,sourceKey:item.sourceKey,targetLanguage:item.targetLanguage,transformKeyframes:item.transformKeyframes||[]};Object.assign(item,style,keep,{styleName});drawClips();showTextProperties();
@@ -2751,5 +2790,7 @@
   <script src="/static/studio/templates.js"></script>
   <script src="/static/studio-transport.js"></script>
   <script src="/static/studio-library.js"></script>
+  <script src="/static/studio/srt.js"></script>
+  <script src="/static/studio/captions.js"></script>
 </body>
 </html>

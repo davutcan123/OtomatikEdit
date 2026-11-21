@@ -1001,7 +1001,11 @@ def normalize_text_items(items, total_duration: float) -> list[dict]:
     for item in items:
         if not isinstance(item, dict):
             raise HTTPException(400, "Geçersiz metin katmanı")
-        text = str(item.get("text", "")).strip()[:200]
+        subtitle = item.get("kind") == "subtitle"
+        text = str(item.get("text", "")).strip()
+        if subtitle and len(text) > 200:
+            raise HTTPException(400, "Altyazı metni en fazla 200 karakter olabilir")
+        text = text[:200]
         if not text:
             continue
         try:
@@ -1020,8 +1024,14 @@ def normalize_text_items(items, total_duration: float) -> list[dict]:
             raise HTTPException(400, "Geçersiz metin ayarı")
         if total_duration <= 0:
             continue
-        start = max(0.0, min(start, max(0.0, total_duration - 0.05)))
-        end = max(start + 0.05, min(end, total_duration))
+        if subtitle:
+            start = max(0.0, min(start, total_duration))
+            end = min(end, total_duration)
+            if end <= start:
+                continue
+        else:
+            start = max(0.0, min(start, max(0.0, total_duration - 0.05)))
+            end = max(start + 0.05, min(end, total_duration))
         raw_transform_keyframes = item.get("transformKeyframes", [])
         if isinstance(raw_transform_keyframes, list):
             raw_transform_keyframes = [
@@ -3148,7 +3158,7 @@ async def index(request: Request):
         # External code is restricted to these bundled entry points, not every
         # same-origin upload or future route. Inline scripts remain hash-only.
         bundled_scripts = [str(request.base_url).rstrip("/") + "/static/" + name
-                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js", "studio_commands.js", "studio/templates.js", "studio-transport.js", "studio-library.js", "studio_preview.js")]
+                           for name in ("editor_outputs.js", "video_tracks.js", "timeline_tools.js", "studio_preferences.js", "studio/fonts.js", "studio_commands.js", "studio/templates.js", "studio-transport.js", "studio-library.js", "studio_preview.js", "studio/srt.js", "studio/captions.js")]
         script_sources = " ".join([*hashes, *bundled_scripts])
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "

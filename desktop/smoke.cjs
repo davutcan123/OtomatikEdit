@@ -81,6 +81,11 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   const nativeSaveResult = await mainWindow.webContents.executeJavaScript(`window.desktopApp.saveOutput(${JSON.stringify(result.download_url)})`);
   assert.equal(nativeSaveResult.saved, true);
   assert.equal((await fs.stat(nativeSaveResult.path)).size, (await fs.stat(renderPath)).size);
+  const srtText = '\uFEFF1\r\n00:00:00,125 --> 00:00:01,625\r\nİstanbul’da güzel gün.\r\nÇığ düşmedi.\r\n';
+  const nativeSubtitles = await mainWindow.webContents.executeJavaScript(`desktopApp.saveSubtitles('İstanbul - altyazı.srt',${JSON.stringify(srtText)})`);
+  assert.equal(nativeSubtitles.saved, true);
+  assert.deepEqual(await fs.readFile(nativeSubtitles.path), Buffer.from(srtText, 'utf8'));
+
   await mainWindow.webContents.executeJavaScript(`saveCompletedOutput(${JSON.stringify(result.download_url)},'manual-download','manual-log')`);
   assert.equal(await mainWindow.webContents.executeJavaScript('document.getElementById("manual-download-top").classList.contains("hidden")'), true);
   // The actual packaged log HTML/preload must open independently, without
@@ -291,5 +296,5 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   mainWindow.webContents.send('desktop:update-state', updaterState);
   assert.equal((await request('/api/apply-update', { method: 'POST' })).status, 409);
   assert.deepEqual(errors, []);
-  return { ok: true, packaged: app.isPackaged, health, ui, storage, played, recoveredVideo, layouts, split, transitionRecovery: transitionAfter, imageRecovery: imageAfter, imageRenderPath, multitrackProof, snapshot: captures[0], savedProject: saved.id, screenshot, terminal: { isolated: terminalProof.editor === 'undefined' && terminalProof.node === 'undefined', screenshot: terminalScreenshot }, renderPath, nativeSaved, nativeSaveResult, updaterState, updatePopup, updateScreenshot, frozenUpdate, updateCancelled, errors };
+  return { ok: true, packaged: app.isPackaged, health, ui, storage, played, recoveredVideo, layouts, split, transitionRecovery: transitionAfter, imageRecovery: imageAfter, imageRenderPath, multitrackProof, snapshot: captures[0], savedProject: saved.id, screenshot, terminal: { isolated: terminalProof.editor === 'undefined' && terminalProof.node === 'undefined', screenshot: terminalScreenshot }, renderPath, nativeSaved, nativeSaveResult, nativeSubtitles, updaterState, updatePopup, updateScreenshot, frozenUpdate, updateCancelled, errors };
 };

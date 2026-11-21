@@ -16,7 +16,7 @@ function section(start, end) {
 // startup, real dialogs, project paths, timers, or backend subprocesses.
 const handlers = [
   section('function desktopWorkActive()', 'async function saveRecovery('),
-  section("ipcMain.handle('desktop:save-output'", 'async function freePort('),
+  section('function queueNativeSave(', 'async function freePort('),
   section('async function requestClose(event)', 'async function importLegacy('),
 ].join('\n');
 
@@ -30,7 +30,7 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function harness() {
   const ipc = new Map(), timers = [], notifications = [], messageBoxes = [];
   const health = deferred(), saveDialog = deferred();
-  let closes = 0, prevented = 0, copies = 0;
+  let closes = 0, prevented = 0, copies = 0, subtitleWrites = 0;
   const event = {};
   const context = {
     closePending: false, closeAttempt: 0, closePreparing: 0, closeInterruptRender: false,
@@ -46,6 +46,7 @@ function harness() {
     outputFile: () => ({ source: '/test-library/outputs/render.mp4', extension: 'mp4' }),
     requireOutput: async () => {},
     copyOutput: async () => { copies++; },
+    subtitleExport: (filename,content) => ({filename,content}), writeSubtitleOutput: async () => { subtitleWrites++; },
     backendRequest: route => route === '/api/health' ? health.promise : Promise.resolve({ close_ready: true }),
     dialog: {
       showSaveDialog: () => saveDialog.promise,
@@ -66,9 +67,10 @@ function harness() {
   vm.runInContext(handlers, context, { filename: 'main-close-handlers.cjs' });
   return {
     context, health, saveDialog, timers, notifications, messageBoxes,
-    get closes() { return closes; }, get prevented() { return prevented; }, get copies() { return copies; },
+    get closes() { return closes; }, get prevented() { return prevented; }, get copies() { return copies; }, get subtitleWrites() { return subtitleWrites; },
     requestClose: () => context.requestClose({ preventDefault() { prevented++; } }),
     save: () => ipc.get('desktop:save-output')(event, '/download/generated/mp4'),
+    saveSubtitle: () => ipc.get('desktop:save-subtitles')(event, 'altyazı.srt', 'fixture'),
     ready: (attempt, error) => ipc.get('desktop:ready-to-close')(event, attempt, error),
   };
 }
@@ -235,4 +237,14 @@ test('close is cancelled when the backend becomes busy after the renderer snapsh
   assert.equal(h.context.closePending, false);
   assert.match(requested.at(-1), /cancel-close\?attempt=1/);
   assert.deepEqual(h.notifications.at(-1), ['desktop:close-cancelled', 1]);
+});
+
+test('canceling the native SRT dialog leaves the filesystem and native queue unchanged', async () => {
+  const h = harness();
+  const saving = h.saveSubtitle();
+  assert.equal(h.context.activeNativeSaves, 1);
+  h.saveDialog.resolve({ canceled:true });
+  assert.equal((await saving).canceled, true);
+  assert.equal(h.subtitleWrites, 0);
+  assert.equal(h.context.activeNativeSaves, 0);
 });

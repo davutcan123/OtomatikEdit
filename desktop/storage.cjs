@@ -16,16 +16,32 @@ async function requireOutput(source, dataDir) {
   const parent = await fsp.realpath(path.join(dataDir, 'outputs'));
   if (!info.isFile() || path.dirname(await fsp.realpath(source)) !== parent) throw new Error('Çıktı dosyası bulunamadı.');
 }
-async function copyOutput(source, destination) {
-  if (path.resolve(source) === path.resolve(destination)) return;
-  const temp = path.join(path.dirname(destination), `.${path.basename(destination)}-${crypto.randomUUID()}.tmp`);
+async function writeOutputAtomically(destination, write) {
+  const temp = path.join(path.dirname(destination), `.output-${crypto.randomUUID()}.tmp`);
   try {
-    await fsp.copyFile(source, temp, fs.constants.COPYFILE_EXCL);
+    await write(temp);
     const handle = await fsp.open(temp, 'r+');
     try { await handle.sync(); } finally { await handle.close(); }
     // The native save dialog has already confirmed replacing this exact file.
     await fsp.rename(temp, destination);
   } finally { await fsp.unlink(temp).catch(() => {}); }
+}
+async function copyOutput(source, destination) {
+  if (path.resolve(source) === path.resolve(destination)) return;
+  await writeOutputAtomically(destination, temp => fsp.copyFile(source, temp, fs.constants.COPYFILE_EXCL));
+}
+function subtitleExport(name, content) {
+  if (typeof name !== 'string' || typeof content !== 'string'
+      || Buffer.byteLength(content, 'utf8') > 1024 * 1024 || content.includes('\0')
+      || !/^\s*1\r?\n\d{2,}:[0-5]\d:[0-5]\d,\d{3} -->/.test(content)) {
+    throw new Error('Geçersiz SRT altyazı çıktısı.');
+  }
+  const safe = name.replace(/\.srt$/i, '').replace(/[<>:"/\\|?*\p{C}]/gu, ' ').trim().slice(0, 110).replace(/[. ]+$/, '');
+  const stem = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(safe) ? safe.replace(/\./g, '-') + '-altyazi' : safe;
+  return { filename: (stem || 'altyazı') + '.srt', content };
+}
+async function writeSubtitleOutput(destination, content) {
+  await writeOutputAtomically(destination, temp => fsp.writeFile(temp, content, { encoding:'utf8', flag:'wx', mode:0o600 }));
 }
 async function copyNew(source, destination) {
   if (fs.existsSync(destination)) return false;
@@ -69,4 +85,4 @@ async function prepareLibrary(dataDir, previousDir) {
   }
   await fsp.writeFile(marker, JSON.stringify({ from: previousDir, date: new Date().toISOString() }), { flag: 'wx' });
 }
-module.exports = { outputFile, requireOutput, copyOutput, referencedMedia, prepareLibrary };
+module.exports = { outputFile, requireOutput, copyOutput, subtitleExport, writeSubtitleOutput, referencedMedia, prepareLibrary };

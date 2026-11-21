@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
   getStorageInfo: () => ipcRenderer.invoke('desktop:storage-info'),
   openProjectsFolder: () => ipcRenderer.invoke('desktop:open-projects-folder'),
   saveOutput: relativeURL => ipcRenderer.invoke('desktop:save-output', relativeURL),
+  saveSubtitles: (name, content) => ipcRenderer.invoke('desktop:save-subtitles', name, content),
   onBeforeClose: callback => {
     const listener = (_event, attempt, interruptRender) => callback(attempt, interruptRender);
     ipcRenderer.on('desktop:before-close', listener);
