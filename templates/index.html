@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Otamatik Edit</title>
   <style>
+    #recent-outputs-dialog{width:min(520px,calc(100vw - 32px))}
+    #recent-output-list{max-height:60vh;overflow:auto}
+    #recent-output-list li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:10px 0;border-bottom:1px solid #334155}
+    #recent-output-list li small{grid-row:2;min-width:0;overflow-wrap:anywhere;color:#94a3b8}
+    #recent-output-list li a{grid-column:2;grid-row:1/span 2;align-self:center}
+
     body{background:#080d17}.panel{background:#111827;border:1px solid #273349}
     .tab.active{background:#2563eb;color:white}.workspace{display:none}.workspace.active{display:grid}
     .terminal{font-family:ui-monospace,monospace;background:#070b12;color:#cbd5e1}
@@ -120,6 +126,7 @@
         <select id="project-list" class="project-name-input" aria-label="Kayıtlı projeler"><option value="">Kayıtlı proje seçin</option></select>
         <button id="project-load" type="button" class="project-action">Projeyi aç</button>
         <button id="project-delete" type="button" class="project-action" title="Seçili kayıtlı projeyi çöp kutusuna taşı">Projeyi sil</button>
+        <button id="recent-outputs-open" type="button" class="project-action" aria-haspopup="dialog">Son çıktılar</button>
         <button id="project-folder" type="button" class="project-action hidden">📁 Proje klasörü</button>
       </div>
       <span id="project-save-state" class="project-save-state">Otomatik kurtarma açık</span>
@@ -645,6 +652,14 @@
     <p id="snapshot-size" class="text-[10px] text-slate-400 mt-2"></p><p class="text-[10px] text-slate-500 mt-2">Ekran oranı korunur. Görünen metin, görsel, sticker ve efektler PNG fotoğrafa eklenir.</p>
     <div class="flex justify-end gap-3 mt-5"><button id="snapshot-cancel" type="button" class="bg-slate-800 rounded-lg px-4 py-2 text-xs font-bold">Vazgeç</button><button id="snapshot-save" type="button" class="bg-blue-600 rounded-lg px-4 py-2 text-xs font-bold">Fotoğrafı hazırla</button></div>
   </dialog>
+  <dialog id="recent-outputs-dialog" class="panel rounded-2xl p-5 text-slate-100" aria-labelledby="recent-outputs-title">
+    <div class="flex justify-between items-center gap-4">
+      <h2 id="recent-outputs-title" class="font-bold">Son çıktılar</h2>
+      <form method="dialog"><button class="project-action">Kapat</button></form>
+    </div>
+    <p id="recent-output-empty" class="text-xs text-slate-400 mt-4">Henüz tamamlanmış bir çıktı yok.</p>
+    <ul id="recent-output-list" class="mt-3"></ul>
+  </dialog>
   <dialog id="project-leave-dialog" class="panel rounded-2xl p-5 text-slate-100" aria-labelledby="project-leave-title">
     <form method="dialog">
       <h2 id="project-leave-title" class="font-bold">Proje değişiklikleri</h2>
@@ -677,6 +692,7 @@
     </div>
   </div>
 
+  <script src="/static/editor_outputs.js"></script>
   <script>
     const el=id=>document.getElementById(id);
     const TIMELINE_GUTTER=132;
@@ -688,6 +704,17 @@
     let workspaceGeneration=0,projectNavigation=0,projectListRequest=0,timelineGeneration=0;
     let savedProjectState=null,projectSave=null,loadingProjectId=null,activeSubtitleJob=null,recoveryRevision=0;
     const pendingProjectDeletes=new Set();
+    let nativeOutputSaving=false;
+    const outputJobs=createEditorOutputJobs({
+      el,document,desktop:!!desktopBridge,save:output=>saveCompletedOutput(output),
+      currentScope:kind=>({
+        kind,generation:workspaceGeneration,timelineId:kind==='auto'?null:S.activeTimelineId,
+        projectName:el('project-name').value.trim()||'Adsız proje',
+        timelineName:kind==='auto'?'':S.timelines.find(timeline=>timeline.id===S.activeTimelineId)?.name||''
+      }),
+      canStart:kind=>kind==='auto'?!!S.autoData?.valid_segments.length&&!S.autoAnalyzing:outDuration()>0
+    });
+    el('recent-outputs-open').onclick=()=>el('recent-outputs-dialog').showModal();
     let desktopUpdateFrozen=false,desktopUpdateAttempt=null,desktopPointerActive=false;
     const desktopOperations=new Map(),desktopInertState=new Map();
     function beginDesktopOperation(label){
@@ -746,7 +773,7 @@
     async function persistProjectRecovery(){
       if(!projectWorkspaceReady)return;
       const generation=workspaceGeneration,payload=projectPayload();
-      const snapshot=JSON.stringify({...payload,unsavedChanges:projectEditState(payload)!==savedProjectState});
+      const snapshot=JSON.stringify({...payload,unsavedChanges:projectEditState(payload)!==savedProjectState,recentOutputs:outputJobs.recent()});
       let browserError=null;
       try{localStorage.setItem(RECOVERY_KEY,snapshot)}catch(error){browserError=error}
       if(desktopBridge){
@@ -1253,19 +1280,46 @@
       const f=new FormData();f.append('file_id',fileId);f.append('fmt',format);f.append('fps',options.fps||30);f.append('quality',options.quality||'standard');f.append('hardware',options.hardware||'auto');f.append('segments',JSON.stringify(clips));f.append('texts',JSON.stringify(texts));f.append('stickers',JSON.stringify(stickers));f.append('transitions',JSON.stringify(transitions));f.append('images',JSON.stringify(images));f.append('audio_layers',JSON.stringify(audioLayers));f.append('timeline_composite',options.timelineComposite?'true':'false');f.append('video_visible',options.videoVisible===false?'false':'true');f.append('mute_video_audio',options.muteVideoAudio?'true':'false');if(resolution){f.append('width',resolution.width);f.append('height',resolution.height)}
       return f;
     }
-    async function saveCompletedOutput(url,downloadId,logId){
-      const links=[el(downloadId),...(downloadId==='manual-download'?[el('manual-download-top')]:[])];
-      links.forEach(link=>{link.href=url;link.classList.remove('hidden');if(desktopBridge){link.textContent='Kaydetme konumu seç';link.onclick=event=>{event.preventDefault();saveCompletedOutput(url,downloadId,logId)}}});
-      if(desktopBridge){try{const result=await desktopBridge.saveOutput(url);if(result.saved){links.forEach(link=>link.classList.add('hidden'));log(logId,'Dosya kaydedildi: '+result.path,'info')}else if(result.canceled)log(logId,'Kayıt iptal edildi. Kaydetme konumu seç düğmesiyle tekrar kaydedebilirsiniz.','info');return result}catch(error){log(logId,'Dosya hazır ancak kayıt tamamlanamadı: '+error.message,'error');return{saved:false}}}
-      links[0].click();return{saved:false,downloadStarted:true};
+    async function saveCompletedOutput(output,{automatic=false}={}){
+      const logId=output.kind==='auto'?'auto-log':'manual-log';
+      const inWorkspace=()=>outputJobs.visible(output)&&el(output.kind==='auto'?'auto':'manual').classList.contains('active');
+      if(automatic&&(!inWorkspace()||desktopClosing||desktopUpdateFrozen||document.querySelector('dialog[open]')||!el('export-modal').classList.contains('hidden')))return;
+      if(!desktopBridge){
+        const download=document.createElement('a');download.href=output.url;download.download='';download.click();return;
+      }
+      if(nativeOutputSaving)return;
+      nativeOutputSaving=true;
+      try{
+        const result=await desktopBridge.saveOutput(output.url);
+        if(result.saved){if(!automatic)outputJobs.markSaved(output);if(!automatic||inWorkspace())log(logId,'Dosya kaydedildi: '+result.path,'info')}
+        if(result.canceled&&(!automatic||inWorkspace()))log(logId,'Kaydetme konumunu Son çıktılar bölümünden yeniden seçebilirsiniz.','info');
+        return result;
+      }catch(error){
+        if(!automatic||inWorkspace())log(logId,'Dosya hazır ancak kayıt tamamlanamadı: '+error.message,'error');
+        return {saved:false};
+      }finally{nativeOutputSaving=false}
     }
-    function updateRenderProgress(id,percent,message,state='running'){const p=el(id),value=Math.max(0,Math.min(100,Number(percent)||0));p.classList.remove('hidden');p.dataset.state=state;p.setAttribute('aria-valuenow',String(value));p.setAttribute('aria-valuetext',message+' · '+Math.round(value)+'%');p.querySelector('.h-full').style.width=value+'%';p.querySelector('p').textContent=Math.round(value)+'%';const label=p.querySelector('.render-progress-label');if(label){label.textContent=message;label.title=message}}
-    async function render(fileId,clips,format,progressId,downloadId,logId,resolution=null,texts=[],transitions=[],images=[],audioLayers=[],stickers=[],options={}){
-      updateRenderProgress(progressId,0,'Render hazırlanıyor');el(downloadId).classList.add('hidden');if(downloadId==='manual-download')el('manual-download-top').classList.add('hidden');
-      try{const f=buildRenderForm({fileId,clips,format,resolution,texts,transitions,images,audioLayers,stickers,options});
-        const r=await fetch('/start-render',{method:'POST',body:f});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||'Render başlatılamadı');
-        const j=await r.json(),result=await events(j.job_id,d=>{if(d.type==='log')log(logId,d.message);if(d.type==='progress')updateRenderProgress(progressId,d.percent,d.message||'Video işleniyor')});updateRenderProgress(progressId,100,'Çıktı hazır','complete');log(logId,'Çıktı hazır.','info');const saved=await saveCompletedOutput(result.download_url,downloadId,logId);if(saved?.saved)updateRenderProgress(progressId,100,'Dosya kaydedildi','complete');
-      }catch(error){updateRenderProgress(progressId,el(progressId).getAttribute('aria-valuenow'),'Render tamamlanamadı · Terminali açın','error');throw error}
+    async function render(job,endpoint,buildForm){
+      const snapshot=job.kind==='snapshot',logId=job.kind==='auto'?'auto-log':'manual-log';
+      const errorMessage=snapshot?'Fotoğraf alınamadı':'Render tamamlanamadı · Terminali açın';
+      try{
+        const response=await fetch(endpoint,{method:'POST',body:buildForm()});
+        if(!response.ok)throw new Error((await response.json().catch(()=>({}))).detail||(snapshot?'Fotoğraf hazırlanamadı':'Render başlatılamadı'));
+        const {job_id}=await response.json();
+        const result=await events(job_id,event=>{
+          if(event.type==='log'&&outputJobs.visible(job))log(logId,event.message);
+          if(event.type==='progress')outputJobs.update(job,event.percent,snapshot?'Fotoğraf hazırlanıyor…':event.message||'Video işleniyor');
+        });
+        outputJobs.complete(job,result.download_url,snapshot?'Fotoğraf hazır':'Çıktı hazır');
+        try{await persistProjectRecovery()}catch(error){
+          if(outputJobs.visible(job))log(logId,'Son çıktılar kurtarma kaydına yazılamadı.','error');
+        }
+        const saved=await saveCompletedOutput(job,{automatic:true});
+        if(saved?.saved)outputJobs.markSaved(job);
+      }catch(error){
+        outputJobs.update(job,job.percent,errorMessage,'error');
+        if(outputJobs.visible(job))log(logId,error.message,'error');
+      }finally{outputJobs.finish(job)}
     }
 
     // MANUAL EDITOR
@@ -1503,7 +1557,7 @@
         b.querySelectorAll('.zoom-keyframe-marker').forEach(marker=>{marker.onpointerdown=event=>{event.preventDefault();event.stopPropagation()};marker.onclick=event=>{event.preventDefault();event.stopPropagation();S.selectedVideoClipIds=[c.clipId];S.selected=S.preview=i;S.activeVideoTrack=c.videoTrack||1;S.selectedZoomKeyframe=marker.dataset.zoomKeyframeId;seekOutputTime(clipTimelineStart(c)+(+marker.dataset.zoomKeyframeTime||0));drawClips()}});appendTrimHandles(b,'video',i);b.onclick=event=>{if(S.suppressClick){S.suppressClick=false;return}const at=timelineTimeAtClientX(event.clientX);select(i,false);pausePreview();seekOutputTime(Math.max(clipTimelineStart(c),Math.min(clipTimelineEnd(c)-.001,at)))};b.onpointerdown=e=>beginClipDrag(e,i,b);b.oncontextmenu=e=>openContextMenu(e,{type:'video',index:i});if(isVideoTrackLocked(c))b.classList.add('track-locked');
         el('video-track-'+c.videoTrack).appendChild(b);addThumbnail(b,c,S.sourceToken)});
       const valid=S.selected>=0&&S.selected<S.clips.length,has=S.clips.length>0;
-      el('split').disabled=el('remove').disabled=!has||isTrackLocked('video');el('reset').disabled=!has||timelineResetLocked();el('left').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],-1)||isTrackLocked('video');el('right').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],1)||isTrackLocked('video');el('undo').disabled=!S.history.length;el('manual-render').disabled=!total;el('manual-render-top').disabled=!total;
+      el('split').disabled=el('remove').disabled=!has||isTrackLocked('video');el('reset').disabled=!has||timelineResetLocked();el('left').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],-1)||isTrackLocked('video');el('right').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],1)||isTrackLocked('video');el('undo').disabled=!S.history.length;outputJobs.draw();
       el('clip-start').disabled=el('clip-end').disabled=el('trim').disabled=!valid||isTrackLocked('video');
       el('clip-start').value=valid?S.clips[S.selected].start.toFixed(2):'';el('clip-end').value=valid?S.clips[S.selected].end.toFixed(2):'';
       const summaryText=S.clips.length+' klip · '+total.toFixed(2)+' sn çıktı';el('summary').textContent=summaryText;el('summary-top').textContent=summaryText;drawClipInspector();drawImageInspector();drawTexts();drawPlayhead();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();drawAnimations();drawVideoEffects();drawFilters();window.multiTrackPreview?.paint();applyVideoEffectPreview();drawTrackControls();syncProjectAudio(true);if(typeof drawRippleButton==='function')drawRippleButton();if(typeof paintTimelineVideoSelection==='function')paintTimelineVideoSelection();scheduleAutosave();
@@ -2159,13 +2213,29 @@
     function exportableClips(){ensureClipTimelinePositions();return [...S.clips].sort((a,b)=>clipTimelineStart(a)-clipTimelineStart(b)).map(clip=>({...clip,videoTrack:clip.videoTrack||1,trackVisible:videoTrackState(clip.videoTrack).visible,trackMuted:videoTrackState(clip.videoTrack).muted,backgroundMode:clip.backgroundMode==='brush'&&!clip.brushApplied?'none':clip.backgroundMode,brushStrokes:clip.brushApplied?clip.brushStrokes:[],mask:clip.maskImageId||clip.maskImageFileId?'none':clip.mask}))}
     function exportableImageLayers(){return S.imageLayers.map(item=>{hydrateImageLayer(item);return {...item,backgroundMode:item.backgroundMode==='brush'&&!item.brushApplied?'none':item.backgroundMode,brushStrokes:item.brushApplied?item.brushStrokes:[]}})}
     function manualExportData(format='mp4'){return{fileId:S.manualId||'',clips:exportableClips(),format,resolution:{...S.canvas},texts:S.texts.filter(item=>item.kind==='subtitle'?S.trackState.subtitle.visible:S.trackState.text.visible),stickers:S.trackState.sticker.visible?S.stickers:[],images:S.trackState.image.visible?[...exportableImageLayers(),...buildMaskImageLayers()]:buildMaskImageLayers(),audioLayers:S.trackState.audio.muted?[]:S.audioLayers,transitions:exportableTransitions(),options:{videoVisible:true,muteVideoAudio:false,timelineComposite:!!(window.multiTrackPreview?.enabled()||S.videoTracks?.length>1),fps:+el('export-fps').value,quality:el('export-quality').value,hardware:el('export-hardware').value}}}
-    async function startManualRender(){const b=el('export-render-start'),top=el('manual-render-top'),format=el('export-format').value;b.disabled=top.disabled=true;setExportModal(false);status('Render yapılıyor…');try{const data=manualExportData(format);await render(data.fileId,data.clips,data.format,'manual-progress-top','manual-download','manual-log',data.resolution,data.texts,data.transitions,data.images,data.audioLayers,data.stickers,data.options);status('Çıktı hazır')}catch(x){log('manual-log',x.message,'error');status('Render hatası')}finally{b.disabled=false;top.disabled=!outDuration()}}
+    async function startManualRender(){
+      const format=el('export-format').value,job=outputJobs.begin('manual',format,'Render hazırlanıyor');
+      if(!job)return;
+      setExportModal(false);
+      await render(job,'/start-render',()=>buildRenderForm(manualExportData(format)));
+    }
     function snapshotDimensions(longestEdge,canvas=S.canvas){const edge=Math.max(128,Math.min(3840,+longestEdge||1920)),ratio=canvas.width/canvas.height;return ratio>=1?{width:Math.round(edge),height:Math.max(2,Math.round(edge/ratio/2)*2)}:{width:Math.max(2,Math.round(edge*ratio/2)*2),height:Math.round(edge)}}
     function updateSnapshotSize(){const size=snapshotDimensions(el('snapshot-quality').value);el('snapshot-size').textContent=size.width+' × '+size.height+' · PNG'}
-    function openSnapshotModal(){if(!outDuration())return log('manual-log','Önce timeline’a bir öğe ekleyin.','info');S.snapshotTime=currentOutputTime();pausePreview();el('snapshot-time').textContent='Seçili kare: '+ft(S.snapshotTime);updateSnapshotSize();el('snapshot-modal').showModal();el('snapshot-quality').focus()}
-    async function startSnapshot(){const button=el('snapshot-open'),save=el('snapshot-save');button.disabled=save.disabled=true;el('snapshot-modal').close();el('snapshot-status').textContent='Fotoğraf hazırlanıyor…';try{const data=manualExportData(),original={...data.resolution};data.resolution=snapshotDimensions(el('snapshot-quality').value);data.options.quality='high';const form=buildRenderForm(data);form.append('timeline_time',S.snapshotTime);form.append('canvas_width',original.width);form.append('canvas_height',original.height);const response=await fetch('/start-snapshot',{method:'POST',body:form});if(!response.ok)throw new Error((await response.json().catch(()=>({}))).detail||'Fotoğraf hazırlanamadı');const job=await response.json(),result=await events(job.job_id,event=>{if(event.type==='progress')el('snapshot-status').textContent='Fotoğraf hazırlanıyor… '+event.percent+'%';if(event.type==='log')log('manual-log',event.message)});el('snapshot-status').textContent='Fotoğraf hazır';await saveCompletedOutput(result.download_url,'snapshot-download','manual-log')}catch(error){el('snapshot-status').textContent='Fotoğraf alınamadı';log('manual-log',error.message,'error')}finally{button.disabled=save.disabled=false}}
+    function openSnapshotModal(){if(!outDuration())return log('manual-log','Önce timeline’a bir öğe ekleyin.','info');if(!outputJobs.available('snapshot'))return;S.snapshotTime=currentOutputTime();pausePreview();el('snapshot-time').textContent='Seçili kare: '+ft(S.snapshotTime);updateSnapshotSize();el('snapshot-modal').showModal();el('snapshot-quality').focus()}
+    async function startSnapshot(){
+      const job=outputJobs.begin('snapshot','png','Fotoğraf hazırlanıyor…');
+      if(!job)return;
+      el('snapshot-modal').close();
+      await render(job,'/start-snapshot',()=>{
+        const data=manualExportData(),original={...data.resolution};
+        data.resolution=snapshotDimensions(el('snapshot-quality').value);data.options.quality='high';
+        const form=buildRenderForm(data);
+        form.append('timeline_time',S.snapshotTime);form.append('canvas_width',original.width);form.append('canvas_height',original.height);
+        return form;
+      });
+    }
     el('snapshot-open').onclick=openSnapshotModal;el('snapshot-quality').onchange=updateSnapshotSize;el('snapshot-save').onclick=startSnapshot;el('snapshot-cancel').onclick=()=>el('snapshot-modal').close();
-    el('manual-render-top').onclick=()=>setExportModal(true);el('manual-render').onclick=()=>setExportModal(true);el('export-render-start').onclick=startManualRender;el('export-close').onclick=el('export-cancel').onclick=()=>setExportModal(false);el('export-modal').onclick=event=>{if(event.target===el('export-modal'))setExportModal(false)};el('export-format').onchange=()=>{const format=el('export-format').value;el('export-fps').disabled=format==='mp3';el('export-hint').textContent=format==='mp3'?'Yalnızca ses hazırlanacak; video görüntüsü çıktıya eklenmeyecek.':format==='gif'?'Sessiz GIF animasyonu hazırlanacak.':format==='mp4'?'Windows uyumlu H.264/AAC MP4 hazırlanacak.':'Bu biçim bazı Windows oynatıcılarda açılmayabilir; en geniş uyumluluk için MP4 seçin.'};
+    el('manual-render-top').onclick=el('manual-render').onclick=()=>{if(outputJobs.available('manual'))setExportModal(true)};el('export-render-start').onclick=startManualRender;el('export-close').onclick=el('export-cancel').onclick=()=>setExportModal(false);el('export-modal').onclick=event=>{if(event.target===el('export-modal'))setExportModal(false)};el('export-format').onchange=()=>{const format=el('export-format').value;el('export-fps').disabled=format==='mp3';el('export-hint').textContent=format==='mp3'?'Yalnızca ses hazırlanacak; video görüntüsü çıktıya eklenmeyecek.':format==='gif'?'Sessiz GIF animasyonu hazırlanacak.':format==='mp4'?'Windows uyumlu H.264/AAC MP4 hazırlanacak.':'Bu biçim bazı Windows oynatıcılarda açılmayabilir; en geniş uyumluluk için MP4 seçin.'};
 
     // AUTOMATIC CUTTER
     const autoCutterDefaults={threshold:'-30',duration:'.5',keywords:'',format:'mp4',jump:true};
@@ -2193,14 +2263,14 @@
     }
     function updateAutoResultActions(){
       el('auto-actions').classList.toggle('hidden',!S.autoData||S.autoAnalyzing);
-      el('to-manual').disabled=el('auto-render').disabled=!S.autoData?.valid_segments.length;
+      el('to-manual').disabled=!S.autoData?.valid_segments.length;outputJobs.draw('auto');
     }
     function restoreAutoCutterState(raw){
       S.autoFile=null;S.autoPendingSelection=false;S.autoAnalyzing=false;S.autoId=null;S.autoData=null;S.autoSourceName='';
       el('auto-file').value='';el('auto-clear-selection').classList.add('hidden');el('auto-clear-selection').disabled=false;
       el('analyze').disabled=true;el('analyze').textContent='Videoyu Yükle ve Analiz Et';el('upload-progress').classList.add('hidden');
       el('auto-video').pause();el('auto-video').removeAttribute('src');el('auto-video').load();
-      el('auto-placeholder').classList.remove('hidden');el('auto-file-name').textContent='Dosya seçilmedi';el('auto-download').classList.add('hidden');el('auto-progress').classList.add('hidden');drawAuto(null);
+      el('auto-placeholder').classList.remove('hidden');el('auto-file-name').textContent='Dosya seçilmedi';drawAuto(null);
       const settings={...autoCutterDefaults,...raw?.settings};
       for(const key of ['threshold','duration','keywords'])el(key).value=typeof settings[key]==='string'?settings[key]:autoCutterDefaults[key];
       el('auto-format').value=['mp4','mkv','webm','mov'].includes(settings.format)?settings.format:autoCutterDefaults.format;
@@ -2298,11 +2368,9 @@
     }
     el('to-manual').onclick=sendAutoCutsToTimeline;
     el('auto-render').onclick=async()=>{
-      if(!S.autoData?.valid_segments.length||S.autoAnalyzing)return;
-      const generation=workspaceGeneration,button=el('auto-render');button.disabled=true;
-      try{await render(S.autoId,S.autoData.valid_segments,el('auto-format').value,'auto-progress','auto-download','auto-log')}
-      catch(error){if(generation===workspaceGeneration)log('auto-log',error.message,'error')}
-      finally{if(generation===workspaceGeneration)updateAutoResultActions()}
+      const format=el('auto-format').value,job=outputJobs.begin('auto',format,'Render hazırlanıyor');
+      if(!job)return;
+      await render(job,'/start-render',()=>buildRenderForm({fileId:S.autoId,clips:S.autoData.valid_segments,format}));
     };
     async function initializeProjectWorkspace(){
       await refreshProjectList();
@@ -2311,7 +2379,7 @@
       try{recoverySources.push(localStorage.getItem(RECOVERY_KEY))}catch{}
       try{
         for(const snapshot of recoverySources){
-          try{const recovered=JSON.parse(snapshot||'null');if(recovered?.timelines?.length){restoreProject({...recovered,unsavedChanges:recovered.unsavedChanges??true});el('project-save-state').textContent='✓ Otomatik kurtarma yüklendi';return}}catch{}
+          try{const recovered=JSON.parse(snapshot||'null');if(recovered?.timelines?.length){outputJobs.restoreRecent(recovered.recentOutputs);restoreProject({...recovered,unsavedChanges:recovered.unsavedChanges??true});el('project-save-state').textContent='✓ Otomatik kurtarma yüklendi';return}}catch{}
         }
         S.timelines=[{id:'TL1',name:'Timeline 1 · Ana video',state:emptyTimelineState()}];S.activeTimelineId='TL1';S.nextTimelineId=2;updateCanvas();applyTimelineState(S.timelines[0].state);drawTimelineTabs();savedProjectState=projectEditState(projectPayload());el('project-save-state').textContent='Otomatik kurtarma açık';
       }finally{projectWorkspaceReady=true}

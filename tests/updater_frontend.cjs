@@ -37,7 +37,7 @@ function harness() {
   const context = vm.createContext({
     desktopBridge: bridge, desktopOperations: new Map(), desktopInertState: new Map(), desktopUpdateFrozen: false, desktopUpdateAttempt: null, desktopClosing: false, desktopPointerActive: false,
     S: {}, recoveryWrite: Promise.resolve(), projectWorkspaceInitialization: Promise.resolve(), persistProjectRecovery: async () => calls.push('saved'), scheduleAutosave: () => calls.push('autosave'),
-    el: node, clearTimeout, stopProjectAudio() {}, drawAuto() {}, log() {},
+    outputJobs: { draw() {} }, el: node, clearTimeout, stopProjectAudio() {}, drawAuto() {}, log() {},
     document: { body: { children: [node('workbench'), node('desktop-update-dialog')] }, activeElement: { blur() {} }, querySelector: () => null, querySelectorAll: () => [media] },
     window: { addEventListener(type, callback) { (listeners[type] ||= []).push(callback); } },
   });

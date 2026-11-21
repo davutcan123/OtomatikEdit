@@ -275,14 +275,86 @@ async function checkMediaPlacement() {
   await verifyTransfer({locked:false,populated:false});
 }
 
+async function checkOutputIsolation() {
+  await win.loadURL('http://127.0.0.1:' + server.address().port + '/?desktop=1');
+  await evaluate('projectWorkspaceInitialization');
+  await seedTimeline();
+  await evaluate('el("project-name").value="Source project"');
+  await click('#manual-render-top');await click('#export-render-start');
+  await waitFor(() => streams.has('render-1'), 'first render stream');
+  await evaluate('drawClips();startManualRender()');
+  assert.equal(await evaluate('el("manual-render-top").disabled'), true);
+  await click('#snapshot-open');await click('#snapshot-save');
+  await waitFor(() => streams.has('snapshot-1'), 'snapshot stream');
+  assert.match(await evaluate('desktopUpdateBusyReason()'), /Render|Ekran görüntüsü/);
+
+  await evaluate('switchTimeline("TL2")');
+  assert.equal(await evaluate('el("snapshot-status").textContent'), '', 'snapshot progress stays on the originating timeline');
+  assert.ok(await evaluate('el("manual-progress-top").classList.contains("hidden")'));
+  streams.get('render-1').write('data: '+json({type:'progress',percent:61,message:'Old render'})+'\n\n');
+  streams.get('snapshot-1').write('data: '+json({type:'progress',percent:44})+'\n\n');
+  await evaluate(`restoreProject({name:'New project',id:'new',timelines:[{id:'TL1',name:'New timeline',state:emptyTimelineState()}]});
+    status('New project ready');log('manual-log','New project log');
+    autoResult({duration:12,valid_segments:[{start:0,end:3}]},'source.mp4','New analysis');
+    switchTab('auto')`);
+  await click('#auto-render');await waitFor(() => streams.has('render-2'), 'automatic cutter export stream');
+  await evaluate(`restoreProject({name:'Another project',id:'another',timelines:[{id:'TL1',name:'Another timeline',state:emptyTimelineState()}]});
+    status('Another project ready');log('manual-log','Another project log');switchTab('manual')`);
+  const paths = ['/download/previous-render/mp4','/download/previous-frame/png','/download/previous-auto/mp4'];
+  deliverOutput('render-1',paths[0]);deliverOutput('snapshot-1',paths[1]);deliverOutput('render-2',paths[2]);
+  await waitFor(() => evaluate('outputJobs.recent().length===3&&!desktopOperations.size'), 'old outputs retained and jobs finished');
+  assert.deepEqual(await evaluate('window.fixtureSaveRequests'), [], 'stale completions never start a native save dialog');
+  assert.equal(await evaluate('el("status").textContent'),'Another project ready');
+  assert.equal(await evaluate('el("manual-log-summary").textContent'),'Another project log');
+  assert.ok(await evaluate('el("manual-progress-top").classList.contains("hidden") && el("auto-progress").classList.contains("hidden")'));
+  assert.equal(await evaluate('el("snapshot-status").textContent'),'');
+  assert.equal(await evaluate('document.querySelectorAll("#manual-download-top[href], #snapshot-download[href], #auto-download[href]").length'),0);
+  const recent=await evaluate('outputJobs.recent().map(({projectName,timelineName,url})=>[projectName,timelineName,url]).sort((a,b)=>a[2].localeCompare(b[2]))');
+  assert.deepEqual(recent,[['New project','',paths[2]],['Source project','Main',paths[1]],['Source project','Main',paths[0]]]);
+  await click('#recent-outputs-open');
+  await click('#recent-output-list [href="'+paths[0]+'"]');
+  await waitFor(() => evaluate('window.fixtureSaveRequests.length===1'), 'explicit save via recent output');
+  assert.deepEqual(await evaluate('window.fixtureSaveRequests'),[paths[0]]);
+  await evaluate("el('recent-outputs-dialog').close()");
+  await seedTimeline();
+  await click('#manual-render-top');await click('#export-render-start');
+  await waitFor(() => streams.has('render-3'), 'next independent manual export');
+  deliverOutput('render-3','/download/current-render/mp4');
+  await waitFor(() => evaluate('window.fixtureSaveRequests.length===2&&!desktopOperations.size'), 'current-workspace native save');
+  assert.equal(await evaluate('el("manual-progress-top").dataset.state'),'complete');
+  assert.deepEqual(await evaluate('window.fixtureSaveRequests'),[paths[0],'/download/current-render/mp4']);
+  await win.loadURL(win.webContents.getURL());
+  await evaluate('projectWorkspaceInitialization');
+  assert.equal(await evaluate('outputJobs.recent().length'),4);
+  assert.ok(await evaluate('el("manual-progress-top").classList.contains("hidden")'), 'completed references recover without an active status');
+}
+
+function deliverOutput(jobId, url) {
+  const stream=streams.get(jobId);
+  assert.ok(stream);
+  stream.end('data: '+json({type:'result',download_url:url})+'\n\n');
+  streams.delete(jobId);
+}
+
 function serve() {
-  const counts = { subtitle: 0, auto: 0 };
+  const counts = { subtitle: 0, auto: 0, render: 0, snapshot: 0 };
   let delayedOpen = true, metadataReleased = false;
   return http.createServer(async (req, res) => {
-    const route = new URL(req.url, 'http://fixture').pathname;
+    const url = new URL(req.url, 'http://fixture'), route = url.pathname;
     const reply = (value, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' });res.end(json(value)); };
     if (route === '/') {
-      res.writeHead(200, { 'Content-Type': 'text/html' });res.end(fs.readFileSync(path.join(root, 'templates/index.html')));
+      let html=fs.readFileSync(path.join(root,'templates/index.html'),'utf8');
+      if(url.searchParams.has('desktop'))html=html.replace('<head>',`<head><script>
+        window.fixtureSaveRequests=[];
+        window.desktopApp={isDesktop:true,loadRecovery:async()=>localStorage.getItem('desktopFixtureRecovery'),
+          saveRecovery:async value=>localStorage.setItem('desktopFixtureRecovery',value),
+          saveOutput:async value=>{window.fixtureSaveRequests.push(value);return {saved:false,canceled:true}},
+          onBeforeClose(){},onCloseCancelled(){},getStorageInfo:async()=>({path:'fixture'}),
+          onUpdateState(){},onPrepareUpdate(){},onUpdateCancelled(){},
+          getUpdateState:async()=>({mode:'disabled',status:'idle'})
+        };
+      </script>`);
+      res.writeHead(200, { 'Content-Type': 'text/html' });res.end(html);
     } else if (route.startsWith('/static/')) {
       const filename = path.join(root, 'static', path.basename(route));
       if (!fs.existsSync(filename)) return res.writeHead(204).end();
@@ -329,6 +401,10 @@ function serve() {
       for await (const chunk of req) { void chunk; }
       const type = route === '/start-analysis' ? 'auto' : 'subtitle';
       reply({ job_id: type + '-' + ++counts[type] });
+    } else if (route === '/start-render' || route === '/start-snapshot') {
+      for await (const chunk of req) { void chunk; }
+      const type = route === '/start-render' ? 'render' : 'snapshot';
+      reply({ job_id: type + '-' + ++counts[type] });
     } else if (route.startsWith('/stream-events/')) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
       res.write(': fixture stream open\n\n');
@@ -353,7 +429,8 @@ app.whenReady().then(async () => {
   await checkTimingLocksAndPixels();
   await checkAsyncResults();
   await checkMediaPlacement();
-  console.log('Verified project races, unsaved edits, clip collision and lane locks, chroma pixels, delayed or invalid analysis, and non-destructive video placement.');
+  await checkOutputIsolation();
+  console.log('Verified project races, unsaved edits, clip collision and lane locks, chroma pixels, delayed or invalid analysis, non-destructive video placement, and scoped output recovery.');
 }).catch(async error => {
   console.error(error);
   if(win)console.error(await evaluate(`({name:el('project-name').value, id:S.projectId, status:el('project-save-state').textContent,

@@ -30,7 +30,7 @@ function workspace({ desktop = null, browserSnapshot = null, browserError = null
       setItem: (_, value) => { if (browserError) throw browserError; browserSnapshot = value; },
     },
     el: id => { if (!nodes.has(id)) nodes.set(id, { classList: { contains: () => true } }); return nodes.get(id); },
-    log() {}, refreshProjectList: async () => {}, scheduleAutosave() {},
+    outputJobs: { recent: () => [], restoreRecent() {} }, log() {}, refreshProjectList: async () => {}, scheduleAutosave() {},
     emptyTimelineState: () => ({}), updateCanvas() {}, applyTimelineState() {}, drawTimelineTabs() {},
   });
   vm.runInContext('function projectPayload(){return snapshot} function restoreProject(value){restored=value}', context);

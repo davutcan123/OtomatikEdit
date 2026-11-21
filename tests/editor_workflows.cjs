@@ -113,17 +113,23 @@ test('keyboard splitting does not intercept text edits, and timeline pointer rel
   assert.equal(splits, 1);
 });
 
-test('render completion asks native save once and cancellation leaves an explicit retry', async () => {
-  const nodes = new Map(), calls = [];
-  const c = vm.createContext({ desktopBridge: { saveOutput: async url => { calls.push(url); return { canceled: true, saved: false }; } }, log() {},
-    el: id => { if (!nodes.has(id)) nodes.set(id, { classList: { add() {}, remove() {} }, click() { throw new Error('Unexpected automatic browser fallback'); } }); return nodes.get(id); },
+test('completion asks for a native save only in the originating workspace', async () => {
+  const calls = [];
+  let visible = false;
+  const c = vm.createContext({
+    nativeOutputSaving: false, desktopClosing: false, desktopUpdateFrozen: false,
+    outputJobs: { visible: () => visible }, document: { querySelector: () => null },
+    desktopBridge: { saveOutput: async url => { calls.push(url); return { canceled: true, saved: false }; } }, log() {},
+    el: () => ({ classList: { contains: () => true } }),
   });
   vm.runInContext(between('    async function saveCompletedOutput', '    async function render('), c);
-  await c.saveCompletedOutput('/download/result.mp4', 'manual-download', 'manual-log');
-  assert.equal(calls.length, 1);
-  assert.equal(nodes.get('manual-download-top').textContent, 'Kaydetme konumu seç');
-  nodes.get('manual-download-top').onclick({ preventDefault() {} });
-  await new Promise(resolve => setImmediate(resolve));
+  const output = { kind: 'manual', url: '/download/result/mp4' };
+  await c.saveCompletedOutput(output, { automatic: true });
+  assert.deepEqual(calls, []);
+  await c.saveCompletedOutput(output);
+  assert.deepEqual(calls, ['/download/result/mp4']);
+  visible = true;
+  await c.saveCompletedOutput(output, { automatic: true });
   assert.equal(calls.length, 2);
 });
 
