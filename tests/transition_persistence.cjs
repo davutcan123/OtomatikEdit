@@ -48,7 +48,7 @@ function fixture() {
     line('const imageLayerSettings='), line('const hydrateImageLayer='), line('const copyLayers='), line('const copyTrackState='),
     between('    const clipOutputDuration=', '    const ft='),
     script.includes('    function newClipId') ? between('    function newClipId', '    const clipInputId=') : line('function clampClipTransitions'),
-    (script.includes('const EDIT_HISTORY_LIMIT=') ? between('    const EDIT_HISTORY_LIMIT=', '    const selectedClip=') : line('function remember(){')), line('const selectedClip='), line('function updateClipSetting('),
+    (script.includes('const EDIT_HISTORY_LIMIT=') ? between('    const EDIT_HISTORY_LIMIT=', '    const selectedClip=') : line('function remember(){')), line('const selectedClip='), between('    function updateClipSetting(', '    const inspectorRanges='),
     between('    function drawTransitions(){', '    function beginTransitionDrag'),
     between('    function splitVideoTarget', '    function splitSelected'), line('function removeClip(){'), between('    function move(n){', "    el('left').onclick"),
     between('    function timelineBoundaries', '    function fitClipPosition'), line('function fitClipPosition('),

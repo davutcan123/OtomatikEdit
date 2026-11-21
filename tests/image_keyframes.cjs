@@ -10,7 +10,7 @@ const between = (first, next) => script.slice(script.indexOf(first), script.inde
 const plain = value => JSON.parse(JSON.stringify(value));
 function fixture() {
   const nodes = new Map();let saves = 0;
-  const c = vm.createContext({ S: { nextZoomKeyframeId: 1, imageLayers: [], selectedLayer: null, selectedImageKeyframe: null },
+  const c = vm.createContext({ S: { nextZoomKeyframeId: 1, imageLayers: [], selectedLayer: null, selectedImageKeyframe: null, history: [] },
     currentOutputTime: () => 3, isTrackLocked: () => false, remember() {}, drawClips() {}, drawMediaOverlay() {}, drawImageInspector() {}, drawTimelineMediaLayers() {},
     scheduleAutosave: () => saves++, seekOutputTime: value => { c.seeked = value; }, pausePreview(){},mv: { pause() {} }, log() {},
     layerSelected: (type, id) => c.S.selectedLayer?.type === type && c.S.selectedLayer.id === id,
@@ -19,7 +19,7 @@ function fixture() {
   });
   vm.runInContext([between('    const ZOOM_EASINGS=', '    const clipSettings='),
     line('const imageLayerSettings='), line('const hydrateImageLayer='), line('const selectedImageLayer='), line('const copyLayers='),
-    between('    function normalizedImageKeyframes', '    function imageToolLabels'), line('function applyImageTool('), line('function mixedImageStyle('), line('function paintImagePreview('), line('function bindImageUndoInput('),
+    between('    function normalizedImageKeyframes', '    function imageToolLabels'), line('function applyImageTool('), line('function mixedImageStyle('), line('function paintImagePreview('), between('    const inspectorGestures=', '    const selectedClip='),
   ].join('\n'), c);
   const a = { id: 'A', name: 'First', start: 1, end: 6, x: 50, y: 50, scale: 40, transformKeyframes: [
     { id: 'IZ1', time: 0, scale: 100, x: 35, y: 40, opacity: 100, easing: 'linear' },
@@ -88,13 +88,23 @@ test('preview intensity leaves CSS colors intact and identity effects really are
   assert.equal(c.mixedImageStyle('brightness(1.2)', 0), '');
 });
 
-test('each image control gesture has an undo snapshot even while the input stays focused', () => {
-  const { c } = fixture(), input = {};let snapshots = 0;c.remember = () => snapshots++;
-  c.S.selectedImageKeyframe = 'IZ2';c.bindImageUndoInput(input, true);
-  input.onpointerdown();input.onpointerdown();input.onkeydown({ key: 'ArrowRight', repeat: false });
-  assert.equal(snapshots, 3);
-  input.onkeydown({ key: 'ArrowRight', repeat: true });input.onkeydown({ key: 'Tab', repeat: false });
-  c.isTrackLocked = () => true;input.onpointerdown();assert.equal(snapshots, 3);
+test('only actual image frame edits start a checkpoint, with one per continuous gesture', () => {
+  const { c } = fixture(), events = new Map();
+  const input = { type: 'range', addEventListener: (event, listener) => events.set(event, listener) };
+  c.remember = () => c.S.history.push({});
+  c.S.selectedImageKeyframe = 'IZ2';
+  assert.equal(c.updateSelectedImageKeyframe('scale', 200, input), false);
+  assert.equal(c.S.history.length, 0);
+  c.updateSelectedImageKeyframe('scale', 230, input);
+  c.updateSelectedImageKeyframe('scale', 240, input);
+  assert.equal(c.S.history.length, 1);
+  events.get('pointerup')();
+  c.updateSelectedImageKeyframe('scale', 250, input);
+  events.get('keyup')();
+  assert.equal(c.S.history.length, 2);
+  c.isTrackLocked = () => true;
+  c.updateSelectedImageKeyframe('scale', 270, input);
+  assert.equal(c.S.history.length, 2);
 });
 
 test('mirroring the image does not reverse animation slide direction or rotation', () => {

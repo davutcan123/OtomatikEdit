@@ -1567,6 +1567,7 @@
       clampClipTransitions();
       return {
         timelineId:S.activeTimelineId,studioTimeline:S.studioTimeline,timelineRipple:S.timelineRipple===true,
+        canvas:S.canvas?{...S.canvas}:null,
         selectedVideoClipIds:[...(S.selectedVideoClipIds||[])],videoTracks:ensureVideoTracks().map(track=>({...track})),
         activeVideoTrack:S.activeVideoTrack,clips:copy(S.clips),selected:S.selected,
         selectedZoomKeyframe:S.selectedZoomKeyframe,texts:copyTexts(S.texts),selectedText:S.selectedText,
@@ -1591,6 +1592,27 @@
       paintHistoryControls();
     }
     function remember(){recordHistory(historyPoint())}
+    const inspectorGestures=new WeakMap();
+    function rememberInspectorEdit(control,item,part=null){
+      if(!control){remember();return}
+      if(!inspectorGestures.has(control)){
+        const end=()=>inspectorGestures.set(control,null);
+        inspectorGestures.set(control,null);
+        control.addEventListener('blur',end);
+        if(control.type==='range'){
+          control.addEventListener('pointerdown',end);
+          control.addEventListener('pointerup',end);
+          control.addEventListener('pointercancel',end);
+          control.addEventListener('keyup',end);
+        }else{
+          control.addEventListener('change',end);
+        }
+      }
+      const gesture=inspectorGestures.get(control);
+      if(gesture?.item===item&&gesture.part===part&&gesture.point===S.history.at(-1))return;
+      remember();
+      inspectorGestures.set(control,{item,part,point:S.history.at(-1)});
+    }
     const selectedClip=()=>S.clips[S.selected]?hydrateClip(S.clips[S.selected]):null;
     function switchClipInspectorTab(name){document.querySelectorAll('.clip-inspector-tab').forEach(button=>button.classList.toggle('active',button.dataset.clipTab===name));document.querySelectorAll('.clip-inspector-panel').forEach(panel=>panel.classList.toggle('active',panel.dataset.clipPanel===name))}
     document.querySelectorAll('.clip-inspector-tab').forEach(button=>button.onclick=()=>switchClipInspectorTab(button.dataset.clipTab));
@@ -1650,10 +1672,20 @@
       if(frame){frame.time=relative;frame.scale=target;frame.x=focusX;frame.y=focusY;frame.opacity=alpha;frame.easing=motion}else{frame={id:'Z'+S.nextZoomKeyframeId++,time:relative,scale:target,x:focusX,y:focusY,opacity:alpha,easing:motion};clip.zoomKeyframes.push(frame)}
       clip.zoomKeyframes=normalizedZoomKeyframes(clip);S.selectedZoomKeyframe=frame.id;drawClips();seekOutputTime(output);log('manual-log',ft(output)+' noktasına '+Math.round(target)+'% zoom · '+ZOOM_EASINGS[motion]+' keyframe’i eklendi.','info');
     }
-    function updateSelectedZoomKeyframe(field,value,redraw=false){
-      const clip=selectedClip(),frame=clip?.zoomKeyframes.find(item=>item.id===S.selectedZoomKeyframe);if(!clip||!frame||isTrackLocked('video'))return false;
-      frame[field]=field==='easing'?normalizeZoomEasing(value):field==='scale'?Math.max(25,Math.min(300,+value||100)):Math.max(0,Math.min(100,+value||0));
-      clip.zoomKeyframes=normalizedZoomKeyframes(clip);applyVideoEffectPreview();drawZoomKeyframeInspector(false);if(redraw){drawClips();drawZoomKeyframeInspector(true)}return true;
+    function updateSelectedZoomKeyframe(values,redraw=false,control=null){
+      const clip=selectedClip(),frame=clip?.zoomKeyframes.find(item=>item.id===S.selectedZoomKeyframe);
+      if(!frame||isVideoTrackLocked(clip))return false;
+      const next={};
+      for(const [field,value] of Object.entries(values)){
+        next[field]=field==='easing'?normalizeZoomEasing(value):field==='scale'?Math.max(25,Math.min(300,+value||100)):Math.max(0,Math.min(100,+value||0));
+      }
+      if(!Object.keys(next).some(field=>next[field]!==frame[field]))return false;
+      rememberInspectorEdit(control,clip,frame.id);
+      Object.assign(frame,next);
+      clip.zoomKeyframes=normalizedZoomKeyframes(clip);
+      applyVideoEffectPreview();drawZoomKeyframeInspector(false);
+      if(redraw)drawClips();
+      scheduleAutosave();return true;
     }
     function setZoomFocusPicking(active){if(active&&!selectedClip())return log('manual-log','Önce timeline’dan bir video klibi seçin.','error');if(active&&isTrackLocked('video'))return;S.zoomFocusPicking=!!active;const picker=el('zoom-focus-picker'),button=el('zoom-keyframe-pick-focus');picker.classList.toggle('hidden',!S.zoomFocusPicking);button.classList.toggle('active',S.zoomFocusPicking);button.textContent=S.zoomFocusPicking?'⌖ Videoda hedefe tıklayın':'⌖ Videodan odak seç';if(S.zoomFocusPicking){S.brushPainting=false;pausePreview();drawBrushCanvas()}drawZoomKeyframeInspector(false)}
     function deleteSelectedZoomKeyframe(){const clip=selectedClip();if(!clip||!S.selectedZoomKeyframe||isVideoTrackLocked(clip))return;remember();clip.zoomKeyframes=clip.zoomKeyframes.filter(frame=>frame.id!==S.selectedZoomKeyframe);S.selectedZoomKeyframe=null;setZoomFocusPicking(false);drawClips();log('manual-log','Seçili zoom keyframe’i silindi.','info')}
@@ -1677,28 +1709,86 @@
     function selectImageKeyframe(imageId,frameId){const item=S.imageLayers.find(value=>value.id===imageId),frame=item&&normalizedImageKeyframes(item).find(value=>value.id===frameId);if(!frame)return;S.selectedLayer={type:'image',id:imageId};S.selectedText=S.selectedSticker=null;S.selectedImageKeyframe=frameId;pausePreview();seekOutputTime(Math.min(item.end-.001,item.start+frame.time));drawClips()}
     function imageKeyframeLimits(item,field){return field==='time'?[item.start,item.end]:field==='scale'?[25,300]:[0,100]}
     function addImageKeyframe(){const item=selectedImageLayer();if(!item||isTrackLocked('image'))return;const time=Math.max(0,Math.min(item.end-item.start,currentOutputTime()-item.start));remember();item.transformKeyframes=normalizedImageKeyframes(item);let frame=item.transformKeyframes.find(value=>Math.abs(value.time-time)<.01);if(!frame){frame={id:'IZ'+S.nextZoomKeyframeId++,time};item.transformKeyframes.push(frame)}for(const key of ['scale','x','y','opacity'])frame[key]=+el('image-kf-'+key).value;frame.easing=normalizeZoomEasing(el('image-kf-easing').value);S.selectedImageKeyframe=frame.id;item.transformKeyframes=normalizedImageKeyframes(item);drawClips();scheduleAutosave()}
-    function updateSelectedImageKeyframe(field,value){const item=selectedImageLayer(),frame=item?.transformKeyframes?.find(entry=>entry.id===S.selectedImageKeyframe);if(!frame||isTrackLocked('image'))return false;if(field==='easing')frame.easing=normalizeZoomEasing(value);else{const [min,max]=imageKeyframeLimits(item,field),number=Number(value);if(!Number.isFinite(number))return false;frame[field]=Math.max(min,Math.min(max,number))-(field==='time'?item.start:0)}item.transformKeyframes=normalizedImageKeyframes(item);if(field==='time')seekOutputTime(Math.min(item.end-.001,item.start+frame.time));drawMediaOverlay();drawImageInspector();drawTimelineMediaLayers();scheduleAutosave();return true}
+    function updateSelectedImageKeyframe(field,value,control=null){
+      const item=selectedImageLayer(),frame=item?.transformKeyframes?.find(entry=>entry.id===S.selectedImageKeyframe);
+      if(!frame||isTrackLocked('image'))return false;
+      let next=normalizeZoomEasing(value);
+      if(field!=='easing'){
+        const [min,max]=imageKeyframeLimits(item,field),number=Number(value);
+        if(value===''||!Number.isFinite(number))return false;
+        next=Math.max(min,Math.min(max,number))-(field==='time'?item.start:0);
+      }
+      if(frame[field]===next)return false;
+      rememberInspectorEdit(control,item,frame.id);
+      frame[field]=next;item.transformKeyframes=normalizedImageKeyframes(item);
+      if(field==='time')seekOutputTime(Math.min(item.end-.001,item.start+frame.time));
+      drawMediaOverlay();drawImageInspector();drawTimelineMediaLayers();scheduleAutosave();return true;
+    }
     function deleteSelectedImageKeyframe(){const item=selectedImageLayer();if(!item||!S.selectedImageKeyframe||isTrackLocked('image'))return;remember();item.transformKeyframes=item.transformKeyframes.filter(frame=>frame.id!==S.selectedImageKeyframe);S.selectedImageKeyframe=null;drawClips()}
     function rebaseImageKeyframes(item,original,edge){
       if(!original.transformKeyframes?.length)return;const boundary=edge==='left'?item.start:item.end,state=imageTransformAtTime(original,boundary),shift=item.start-original.start,duration=item.end-item.start;
       item.transformKeyframes=normalizedImageKeyframes(original).filter(frame=>edge==='left'?frame.time>shift+.00001:frame.time<duration-.00001).map(frame=>({...frame,time:frame.time-shift}));
       item.transformKeyframes.push({id:'IZ'+S.nextZoomKeyframeId++,time:edge==='left'?0:duration,...state});item.transformKeyframes=normalizedImageKeyframes(item);S.selectedImageKeyframe=null
     }
-    function updateImageSetting(key,value){const item=selectedImageLayer();if(!item||isTrackLocked('image'))return;const limits=key==='scale'?[5,160]:key==='rotation'?[-360,360]:key==='animationDuration'?[.05,10]:[0,100],number=Number(value);if(!Number.isFinite(number))return;item[key]=Math.max(limits[0],Math.min(limits[1],number));drawMediaOverlay();drawImageInspector();scheduleAutosave()}
+    function updateImageSetting(key,value,control){
+      const item=selectedImageLayer();if(!item||isTrackLocked('image'))return;
+      const limits=key==='scale'?[5,160]:key==='rotation'?[-360,360]:key==='animationDuration'?[.05,10]:[0,100];
+      const number=Number(value);if(!Number.isFinite(number))return;
+      const next=Math.max(limits[0],Math.min(limits[1],number));
+      if(item[key]===next)return;
+      rememberInspectorEdit(control,item);
+      item[key]=next;drawMediaOverlay();drawImageInspector();scheduleAutosave();
+    }
     function imageToolLabels(item){return [['animation',CLIP_ANIMATIONS[item.animation]],['effect',VIDEO_EFFECTS[item.effect]?.name],['filter',CLIP_FILTERS[item.filter]?.name]].filter(([key])=>item[key]&&item[key]!=='none')}
     function drawImageKeyframeEditor(item){const frames=normalizedImageKeyframes(item),selected=frames.find(frame=>frame.id===S.selectedImageKeyframe);if(!selected)S.selectedImageKeyframe=null;const live=selected||imageTransformAtTime(item);for(const key of ['scale','x','y','opacity']){el('image-kf-'+key).value=Number(live[key].toFixed(2));el('image-kf-'+key+'-value').textContent=Math.round(live[key])+'%'}el('image-kf-time').value=(item.start+(selected?.time??Math.max(0,Math.min(item.end-item.start,currentOutputTime()-item.start)))).toFixed(3);el('image-kf-time').disabled=!selected;el('image-kf-easing').value=normalizeZoomEasing(selected?.easing||live.easing);el('image-kf-delete').disabled=!selected;el('image-kf-clear').disabled=!frames.length;el('image-kf-status').textContent=selected?'Seçili keyframe: ekrandaki taşıma ve ölçek tutamacı bu noktayı değiştirir.':'Yeni nokta için oynatma kafasını taşıyın ve Keyframe ekle’ye basın.';const list=el('image-kf-list');list.innerHTML='';frames.forEach(frame=>{const button=document.createElement('button');button.type='button';button.className='zoom-keyframe-chip '+(selected?.id===frame.id?'active':'');button.textContent='◆ '+ft(item.start+frame.time)+' · '+Math.round(frame.scale)+'% · α'+Math.round(frame.opacity)+'%';button.onclick=()=>selectImageKeyframe(item.id,frame.id);list.appendChild(button)})}
     function drawImageInspector(){const item=selectedImageLayer(),panel=el('image-inspector'),visible=!!item;panel.classList.toggle('hidden',!visible);if(!visible){S.selectedImageKeyframe=null;return}el('manual-core').classList.add('has-clip');el('image-inspector-title').textContent=item.name+' · '+ft(item.start)+' → '+ft(item.end);for(const key of ['scale','x','y','opacity','rotation']){el('image-'+key).value=Number((+item[key]).toFixed(2));el('image-'+key+'-value').textContent=Math.round(item[key])+(key==='rotation'?'°':'%')}el('image-animation-duration').value=item.animationDuration;el('image-effect-intensity').value=item.effectIntensity;el('image-filter-intensity').value=item.filterIntensity;const badges=el('image-tool-badges');badges.innerHTML='';imageToolLabels(item).forEach(([key,label])=>{const button=document.createElement('button');button.type='button';button.textContent=label+' ×';button.title='Görselden kaldır';button.dataset.imageTool=key;button.onclick=()=>applyImageTool(key,'none',item.id);badges.appendChild(button)});if(!badges.children.length)badges.textContent='Henüz animasyon, efekt veya filtre yok.';drawImageKeyframeEditor(item);el('image-background-mode').value=item.backgroundMode;el('image-key-color').value=item.keyColor;el('image-key-similarity').value=item.keySimilarity;el('image-key-blend').value=item.keyBlend;el('image-brush-mode').value=item.brushMode;el('image-brush-size').value=item.brushSize;el('image-key-similarity-value').textContent=Math.round(item.keySimilarity)+'%';el('image-key-blend-value').textContent=Math.round(item.keyBlend)+'%';el('image-brush-size-value').textContent=Math.round(item.brushSize)+'%';el('image-brush-controls').classList.toggle('hidden',item.backgroundMode!=='brush');el('image-brush-apply').textContent=item.brushApplied?'✓ Arka plan silindi':'Arka planı kaldır';el('image-brush-apply').classList.toggle('bg-emerald-800',!!item.brushApplied);panel.querySelectorAll('input,select,button:not(#image-inspector-toggle)').forEach(node=>{node.disabled=isTrackLocked('image')||node.id==='image-kf-delete'&&!S.selectedImageKeyframe||node.id==='image-kf-time'&&!S.selectedImageKeyframe||node.id==='image-kf-clear'&&!item.transformKeyframes.length});drawBrushCanvas()}
     function initImageEditor(){
       const controls=(prefix,keyframes)=>['scale','x','y','opacity',...(keyframes?[]:['rotation'])].map(key=>{const label={scale:keyframes?'Keyframe ölçeği':'Temel boyut',x:'Yatay konum',y:'Dikey konum',opacity:'Saydamlık',rotation:'Döndür'}[key],min=key==='scale'?(keyframes?25:5):key==='rotation'?-360:0,max=key==='scale'?(keyframes?300:160):key==='rotation'?360:100;return '<label class="image-setting-label">'+label+' <span id="'+prefix+key+'-value"></span><input id="'+prefix+key+'" type="range" min="'+min+'" max="'+max+'" step="0.1"></label>'}).join('');
       el('image-transform-controls').innerHTML=controls('image-',false);el('image-keyframe-controls').innerHTML=controls('image-kf-',true)+'<label class="image-setting-label">Timeline saniyesi<input id="image-kf-time" type="number" min="0" step="0.01"></label><label class="image-setting-label">Hareket<select id="image-kf-easing">'+Object.entries(ZOOM_EASINGS).map(([key,label])=>'<option value="'+key+'">'+label+'</option>').join('')+'</select></label>';
-      for(const key of ['scale','x','y','opacity','rotation']){const node=el('image-'+key);bindImageUndoInput(node);node.oninput=()=>updateImageSetting(key,node.value)}
-      for(const key of ['scale','x','y','opacity','time','easing']){const node=el('image-kf-'+key);bindImageUndoInput(node,true);node.oninput=()=>{if(S.selectedImageKeyframe)updateSelectedImageKeyframe(key,node.value);else if(el('image-kf-'+key+'-value'))el('image-kf-'+key+'-value').textContent=Math.round(+node.value)+'%'}}
-      el('image-kf-add').onclick=addImageKeyframe;el('image-kf-delete').onclick=deleteSelectedImageKeyframe;el('image-kf-clear').onclick=()=>{const item=selectedImageLayer();if(!item||isTrackLocked('image'))return;remember();item.transformKeyframes=[];S.selectedImageKeyframe=null;drawClips()};bindImageUndoInput(el('image-animation-duration'));el('image-animation-duration').oninput=e=>updateImageSetting('animationDuration',e.target.value);for(const [id,key] of [['image-effect-intensity','effectIntensity'],['image-filter-intensity','filterIntensity']]){bindImageUndoInput(el(id));el(id).oninput=()=>updateImageSetting(key,el(id).value)}S.panelOpen.imageInspector=storedPanelState('imageInspector',true);setCollapsiblePanel('imageInspector',S.panelOpen.imageInspector,false);el('image-inspector-toggle').onclick=()=>setCollapsiblePanel('imageInspector',!S.panelOpen.imageInspector)
+      for(const key of ['scale','x','y','opacity','rotation']){const node=el('image-'+key);node.oninput=()=>updateImageSetting(key,node.value,node)}
+      for(const key of ['scale','x','y','opacity','time','easing']){const node=el('image-kf-'+key);const eventType=key==='time'||key==='easing'?'change':'input';node.addEventListener(eventType,()=>{if(S.selectedImageKeyframe)updateSelectedImageKeyframe(key,node.value,eventType==='input'?node:null);else if(el('image-kf-'+key+'-value'))el('image-kf-'+key+'-value').textContent=Math.round(+node.value)+'%'})}
+      el('image-kf-add').onclick=addImageKeyframe;el('image-kf-delete').onclick=deleteSelectedImageKeyframe;el('image-kf-clear').onclick=()=>{const item=selectedImageLayer();if(!item||isTrackLocked('image'))return;remember();item.transformKeyframes=[];S.selectedImageKeyframe=null;drawClips()};el('image-animation-duration').oninput=e=>updateImageSetting('animationDuration',e.target.value,e.target);for(const [id,key] of [['image-effect-intensity','effectIntensity'],['image-filter-intensity','filterIntensity']]){el(id).oninput=e=>updateImageSetting(key,e.target.value,e.target)}S.panelOpen.imageInspector=storedPanelState('imageInspector',true);setCollapsiblePanel('imageInspector',S.panelOpen.imageInspector,false);el('image-inspector-toggle').onclick=()=>setCollapsiblePanel('imageInspector',!S.panelOpen.imageInspector)
     }
     initImageEditor();
-    function bindImageUndoInput(node,requiresFrame=false){const snapshot=()=>{if(!isTrackLocked('image')&&(!requiresFrame||S.selectedImageKeyframe))remember()};node.onfocus=null;node.onpointerdown=snapshot;node.onkeydown=event=>{if(!event.repeat&&!['Tab','Escape','Shift','Control','Meta','Alt','Enter'].includes(event.key))snapshot()}}
-    function updateImageBackgroundSetting(key,value){const item=selectedImageLayer();if(!item||isTrackLocked('image'))return;if(['keySimilarity','keyBlend','brushSize'].includes(key))value=+value;item[key]=value;if(key==='backgroundMode'&&value!=='brush')S.brushPainting=false;if(key==='backgroundMode'||key==='brushMode')item.brushApplied=false;if(key==='keyColor'||key==='keySimilarity'||key==='keyBlend')S.imageChromaCache.clear();if(key==='backgroundMode'||key==='brushMode')invalidateBrush(item);else{drawMediaOverlay();drawBrushCanvas()}drawImageInspector();scheduleAutosave()}
-    function updateClipSetting(key,value,redraw=false){const clip=selectedClip();if(!clip||isTrackLocked('video'))return;const numeric=['speed','volume','scale','opacity','x','y','rotation','animationDuration','brightness','contrast','saturation','temperature','keySimilarity','keyBlend','brushSize','sharpen','denoise','motionBlur','relight','audioFadeIn','audioFadeOut','audioBalance','exposure','tint','fade','hue','lightness','shadows','highlights','maskScale','maskX','maskY','maskFeather'],oldDuration=clipOutputDuration(clip);if(numeric.includes(key))value=+value;if(key==='speed'){value=Math.max(.25,Math.min(4,value));if(value===clip.speed||!canResizeVideoClip(clip,{...clip,speed:value})){drawClipInspector();return}remember();}if(key==='volume')value=Math.max(0,Math.min(2,value/100));if(key==='audioFadeIn'||key==='audioFadeOut')value=Math.max(0,Math.min(clipOutputDuration(clip)/2,value));clip[key]=value;if(key==='speed'){const ratio=clipOutputDuration(clip)/Math.max(.001,oldDuration);clip.zoomKeyframes=clip.zoomKeyframes.map(frame=>({...frame,time:frame.time*ratio}))}if(key==='backgroundMode'&&value!=='brush')S.brushPainting=false;if(key==='brushMode'||key==='backgroundMode'){clip.brushApplied=false;invalidateBrush(clip)}resetLiveTransition();applyVideoEffectPreview();drawClipInspector();window.StudioLibrary?.refreshLookSelection();if(redraw||key==='speed')drawClips();scheduleAutosave()}
+    function updateImageBackgroundSetting(key,value,control){
+      const item=selectedImageLayer();if(!item||isTrackLocked('image'))return;
+      if(['keySimilarity','keyBlend','brushSize'].includes(key))value=+value;
+      if(item[key]===value)return;
+      rememberInspectorEdit(control,item);
+      item[key]=value;
+      if(key==='backgroundMode'&&value!=='brush')S.brushPainting=false;
+      if(key==='backgroundMode'||key==='brushMode')item.brushApplied=false;
+      if(key==='keyColor'||key==='keySimilarity'||key==='keyBlend')S.imageChromaCache.clear();
+      if(key==='backgroundMode'||key==='brushMode')invalidateBrush(item);
+      else{drawMediaOverlay();drawBrushCanvas()}
+      drawImageInspector();scheduleAutosave();
+    }
+    function updateClipSetting(key,value,redraw=false,control=null){
+      const clip=selectedClip();if(!clip||isVideoTrackLocked(clip))return false;
+      const numeric=['speed','volume','scale','opacity','x','y','rotation','animationDuration','brightness','contrast','saturation','temperature','keySimilarity','keyBlend','brushSize','sharpen','denoise','motionBlur','relight','audioFadeIn','audioFadeOut','audioBalance','exposure','tint','fade','hue','lightness','shadows','highlights','maskScale','maskX','maskY','maskFeather'];
+      const oldDuration=clipOutputDuration(clip);
+      if(numeric.includes(key)){
+        value=Number(value);if(!Number.isFinite(value))return false;
+      }
+      if(key==='speed')value=Math.max(.25,Math.min(4,value));
+      if(key==='volume')value=Math.max(0,Math.min(2,value/100));
+      if(key==='audioFadeIn'||key==='audioFadeOut')value=Math.max(0,Math.min(oldDuration/2,value));
+      if(value===clip[key]||(key==='speed'&&!canResizeVideoClip(clip,{...clip,speed:value}))){
+        if(key==='speed')drawClipInspector();
+        return false;
+      }
+      rememberInspectorEdit(control,clip);
+      clip[key]=value;
+      if(key==='speed'){
+        const ratio=clipOutputDuration(clip)/Math.max(.001,oldDuration);
+        clip.zoomKeyframes=clip.zoomKeyframes.map(frame=>({...frame,time:frame.time*ratio}));
+      }
+      if(key==='backgroundMode'&&value!=='brush')S.brushPainting=false;
+      if(key==='brushMode'||key==='backgroundMode'){clip.brushApplied=false;invalidateBrush(clip)}
+      resetLiveTransition();applyVideoEffectPreview();drawClipInspector();window.StudioLibrary?.refreshLookSelection();
+      if(redraw||key==='speed')drawClips();
+      scheduleAutosave();return true;
+    }
     const inspectorRanges={scale:'scale',opacity:'opacity',x:'x',y:'y','key-similarity':'keySimilarity','key-blend':'keyBlend','brush-size':'brushSize',sharpen:'sharpen',denoise:'denoise','motion-blur':'motionBlur',relight:'relight',volume:'volume','audio-fade-in':'audioFadeIn','audio-fade-out':'audioFadeOut','audio-balance':'audioBalance',speed:'speed','animation-duration':'animationDuration',brightness:'brightness',contrast:'contrast',temperature:'temperature',exposure:'exposure',tint:'tint',fade:'fade',hue:'hue',saturation:'saturation',lightness:'lightness',shadows:'shadows',highlights:'highlights','mask-scale':'maskScale','mask-x':'maskX','mask-y':'maskY','mask-feather':'maskFeather'};
     Object.entries(inspectorRanges).forEach(([id,key])=>{
       const input=el('clip-'+id);
@@ -1707,42 +1797,40 @@
         input.onchange=()=>updateClipSetting(key,input.value,true);
         return;
       }
-      input.onpointerdown=()=>{if(!isTrackLocked('video'))remember()};
-      input.oninput=()=>updateClipSetting(key,input.value,false);
+      input.oninput=()=>updateClipSetting(key,input.value,false,input);
       input.onchange=()=>{if(['audioFadeIn','audioFadeOut'].includes(key))drawClips()};
     });
     const inspectorSelects={fit:'fit',rotation:'rotation','background-mode':'backgroundMode','key-color':'keyColor','brush-mode':'brushMode','blend-mode':'blendMode',stabilization:'stabilization','voice-changer':'voiceChanger','channel-mode':'channelMode',lut:'lut','curve-preset':'curvePreset',mask:'mask'};
-    Object.entries(inspectorSelects).forEach(([id,key])=>{const input=el('clip-'+id);input.onfocus=()=>remember();input.onchange=()=>updateClipSetting(key,input.value,true)});
+    Object.entries(inspectorSelects).forEach(([id,key])=>{const input=el('clip-'+id);input.onchange=()=>updateClipSetting(key,input.value,true)});
     const inspectorChecks={'flip-x':'flipX','flip-y':'flipY',deflicker:'deflicker','optical-flow':'opticalFlow','auto-reframe':'autoReframe',muted:'muted','normalize-audio':'normalizeAudio','enhance-voice':'enhanceVoice','noise-reduction':'noiseReduction',reverse:'reverse'};
-    Object.entries(inspectorChecks).forEach(([id,key])=>{el('clip-'+id).onchange=e=>{remember();updateClipSetting(key,e.target.checked,true);if(['normalizeAudio','enhanceVoice','noiseReduction'].includes(key))log('manual-log',(key==='normalizeAudio'?'Ses normalleştirme':key==='enhanceVoice'?'Ses geliştirme':'Gürültü azaltma')+(e.target.checked?' açıldı; canlı önizleme ve çıktıya uygulanacak.':' kapatıldı.'),'info')}});
-    [['zoom-keyframe-scale','scale'],['zoom-keyframe-opacity','opacity'],['zoom-keyframe-x','x'],['zoom-keyframe-y','y']].forEach(([id,field])=>{const input=el(id),valueNode=el(id+'-value');input.onpointerdown=()=>{if(S.selectedZoomKeyframe)remember()};input.oninput=event=>{valueNode.textContent=Math.round(+event.target.value)+'%';updateSelectedZoomKeyframe(field,event.target.value,false)};input.onchange=event=>updateSelectedZoomKeyframe(field,event.target.value,true)});
-    el('zoom-keyframe-easing').onfocus=()=>{if(S.selectedZoomKeyframe)remember()};
-    el('zoom-keyframe-easing').onchange=event=>{if(updateSelectedZoomKeyframe('easing',event.target.value,true))log('manual-log','Zoom hareketi: '+ZOOM_EASINGS[normalizeZoomEasing(event.target.value)]+'.','info')};
+    Object.entries(inspectorChecks).forEach(([id,key])=>{el('clip-'+id).onchange=e=>{if(updateClipSetting(key,e.target.checked,true)&&['normalizeAudio','enhanceVoice','noiseReduction'].includes(key))log('manual-log',(key==='normalizeAudio'?'Ses normalleştirme':key==='enhanceVoice'?'Ses geliştirme':'Gürültü azaltma')+(e.target.checked?' açıldı; canlı önizleme ve çıktıya uygulanacak.':' kapatıldı.'),'info')}});
+    [['zoom-keyframe-scale','scale'],['zoom-keyframe-opacity','opacity'],['zoom-keyframe-x','x'],['zoom-keyframe-y','y']].forEach(([id,field])=>{const input=el(id),valueNode=el(id+'-value');input.oninput=()=>{valueNode.textContent=Math.round(+input.value)+'%';updateSelectedZoomKeyframe({[field]:input.value},false,input)};input.onchange=()=>{if(S.selectedZoomKeyframe)drawClips()}});
+    el('zoom-keyframe-easing').onchange=event=>{if(updateSelectedZoomKeyframe({easing:event.target.value},true))log('manual-log','Zoom hareketi: '+ZOOM_EASINGS[normalizeZoomEasing(event.target.value)]+'.','info')};
     el('zoom-keyframe-add').onclick=()=>addZoomKeyframe(el('zoom-keyframe-scale').value);
     el('zoom-keyframe-in').onclick=()=>{const clip=selectedClip();if(clip)addZoomKeyframe(zoomScaleAtOutputTime(clip,currentOutputTime())+25)};
     el('zoom-keyframe-out').onclick=()=>{const clip=selectedClip();if(clip)addZoomKeyframe(clip.scale)};
     el('zoom-keyframe-pick-focus').onclick=()=>setZoomFocusPicking(!S.zoomFocusPicking);
-    el('zoom-focus-picker').onclick=event=>{if(isTrackLocked('video'))return setZoomFocusPicking(false);const rect=el('preview-stage').getBoundingClientRect(),x=Math.max(0,Math.min(100,(event.clientX-rect.left)/Math.max(1,rect.width)*100)),y=Math.max(0,Math.min(100,(event.clientY-rect.top)/Math.max(1,rect.height)*100));el('zoom-keyframe-x').value=Math.round(x);el('zoom-keyframe-y').value=Math.round(y);el('zoom-keyframe-x-value').textContent=Math.round(x)+'%';el('zoom-keyframe-y-value').textContent=Math.round(y)+'%';if(S.selectedZoomKeyframe){remember();updateSelectedZoomKeyframe('x',x,false);updateSelectedZoomKeyframe('y',y,true)}else addZoomKeyframe(el('zoom-keyframe-scale').value,x,y);setZoomFocusPicking(false)};
+    el('zoom-focus-picker').onclick=event=>{if(isTrackLocked('video'))return setZoomFocusPicking(false);const rect=el('preview-stage').getBoundingClientRect(),x=Math.max(0,Math.min(100,(event.clientX-rect.left)/Math.max(1,rect.width)*100)),y=Math.max(0,Math.min(100,(event.clientY-rect.top)/Math.max(1,rect.height)*100));el('zoom-keyframe-x').value=Math.round(x);el('zoom-keyframe-y').value=Math.round(y);el('zoom-keyframe-x-value').textContent=Math.round(x)+'%';el('zoom-keyframe-y-value').textContent=Math.round(y)+'%';if(S.selectedZoomKeyframe)updateSelectedZoomKeyframe({x,y},true);else addZoomKeyframe(el('zoom-keyframe-scale').value,x,y);setZoomFocusPicking(false)};
     el('zoom-keyframe-delete').onclick=deleteSelectedZoomKeyframe;
     el('zoom-keyframes-clear').onclick=()=>{const clip=selectedClip();if(!clip?.zoomKeyframes.length||isVideoTrackLocked(clip))return;remember();clip.zoomKeyframes=[];S.selectedZoomKeyframe=null;setZoomFocusPicking(false);drawClips();log('manual-log','Klibin tüm zoom keyframeleri temizlendi.','info')};
-    el('clip-brush-enabled').onchange=event=>{const clip=selectedClip();if(!clip)return;remember();clip.backgroundMode=event.target.checked?'brush':'none';clip.brushApplied=false;S.brushPainting=false;invalidateBrush(clip);drawClips();log('manual-log',event.target.checked?'Fırçalı arka plan maskesi açıldı. Video ekranında fırçayı başlatın.':'Fırçalı arka plan maskesi kapatıldı.','info')};
+    el('clip-brush-enabled').onchange=event=>{const clip=selectedClip();if(!clip||isVideoTrackLocked(clip))return;remember();clip.backgroundMode=event.target.checked?'brush':'none';clip.brushApplied=false;S.brushPainting=false;invalidateBrush(clip);drawClips();log('manual-log',event.target.checked?'Fırçalı arka plan maskesi açıldı. Video ekranında fırçayı başlatın.':'Fırçalı arka plan maskesi kapatıldı.','info')};
     el('brush-stage-toggle').onclick=()=>{const target=activeBrushTarget();if(brushTargetLocked(target))return;S.brushPainting=!S.brushPainting;drawBrushCanvas();if(S.brushPainting)pausePreview()};
     el('brush-stage-paint').onclick=()=>setBrushTool('paint');el('brush-stage-erase').onclick=()=>setBrushTool('erase');el('image-brush-paint').onclick=()=>setBrushTool('paint');el('image-brush-erase').onclick=()=>setBrushTool('erase');
-    el('clip-brush-undo').onclick=()=>{const clip=selectedClip();if(!clip?.brushStrokes.length)return;remember();clip.brushStrokes.pop();clip.brushApplied=false;invalidateBrush(clip);drawClipInspector()};
-    el('clip-brush-clear').onclick=()=>{const clip=selectedClip();if(!clip?.brushStrokes.length)return;remember();clip.brushStrokes=[];clip.brushApplied=false;invalidateBrush(clip);drawClipInspector()};
-    el('clip-brush-apply').onclick=()=>{const clip=selectedClip();if(!clip?.brushStrokes.length)return log('manual-log','Önce video ekranında kaldırılacak veya kalacak alanı boyayın.','error');remember();clip.brushApplied=true;S.brushPainting=false;invalidateBrush(clip);drawClipInspector();log('manual-log','Fırça maskesi uygulandı; arka plan önizlemede ve çıktıda kaldırılacak.','info')};
-    el('image-background-mode').onfocus=()=>remember();el('image-background-mode').onchange=event=>{updateImageBackgroundSetting('backgroundMode',event.target.value);log('manual-log',event.target.value==='none'?'Görsel arka plan kaldırma kapatıldı.':event.target.value==='chroma'?'Görsel için chroma anahtarı açıldı.':'Görsel üzerinde fırçalı arka plan kaldırma açıldı.','info')};
-    el('image-key-color').onfocus=()=>remember();el('image-key-color').oninput=event=>updateImageBackgroundSetting('keyColor',event.target.value);
-    [['image-key-similarity','keySimilarity'],['image-key-blend','keyBlend'],['image-brush-size','brushSize']].forEach(([id,key])=>{const input=el(id);input.onpointerdown=()=>remember();input.oninput=()=>updateImageBackgroundSetting(key,input.value)});
-    el('image-brush-mode').onfocus=()=>remember();el('image-brush-mode').onchange=event=>updateImageBackgroundSetting('brushMode',event.target.value);
+    el('clip-brush-undo').onclick=()=>{const clip=selectedClip();if(!clip||isVideoTrackLocked(clip))return;if(!clip.brushStrokes.length)return;remember();clip.brushStrokes.pop();clip.brushApplied=false;invalidateBrush(clip);drawClipInspector()};
+    el('clip-brush-clear').onclick=()=>{const clip=selectedClip();if(!clip||isVideoTrackLocked(clip))return;if(!clip.brushStrokes.length)return;remember();clip.brushStrokes=[];clip.brushApplied=false;invalidateBrush(clip);drawClipInspector()};
+    el('clip-brush-apply').onclick=()=>{const clip=selectedClip();if(!clip||isVideoTrackLocked(clip))return;if(!clip.brushStrokes.length)return log('manual-log','Önce video ekranında kaldırılacak veya kalacak alanı boyayın.','error');remember();clip.brushApplied=true;S.brushPainting=false;invalidateBrush(clip);drawClipInspector();log('manual-log','Fırça maskesi uygulandı; arka plan önizlemede ve çıktıda kaldırılacak.','info')};
+    el('image-background-mode').onchange=event=>{updateImageBackgroundSetting('backgroundMode',event.target.value);log('manual-log',event.target.value==='none'?'Görsel arka plan kaldırma kapatıldı.':event.target.value==='chroma'?'Görsel için chroma anahtarı açıldı.':'Görsel üzerinde fırçalı arka plan kaldırma açıldı.','info')};
+    el('image-key-color').oninput=event=>updateImageBackgroundSetting('keyColor',event.target.value,event.target);
+    [['image-key-similarity','keySimilarity'],['image-key-blend','keyBlend'],['image-brush-size','brushSize']].forEach(([id,key])=>{const input=el(id);input.oninput=()=>updateImageBackgroundSetting(key,input.value,input)});
+    el('image-brush-mode').onchange=event=>updateImageBackgroundSetting('brushMode',event.target.value);
     el('image-brush-undo').onclick=()=>{const item=selectedImageLayer();if(isTrackLocked('image'))return;if(!item?.brushStrokes.length)return;remember();item.brushStrokes.pop();item.brushApplied=false;invalidateBrush(item);drawImageInspector();scheduleAutosave()};
     el('image-brush-clear').onclick=()=>{const item=selectedImageLayer();if(isTrackLocked('image'))return;if(!item?.brushStrokes.length)return;remember();item.brushStrokes=[];item.brushApplied=false;invalidateBrush(item);drawImageInspector();scheduleAutosave()};
     el('image-brush-apply').onclick=()=>{const item=selectedImageLayer();if(isTrackLocked('image'))return;if(!item?.brushStrokes.length)return log('manual-log','Önce video oynatıcıdaki görsel üzerinde kalacak veya silinecek alanı boyayın.','error');remember();item.brushApplied=true;S.brushPainting=false;invalidateBrush(item);drawImageInspector();scheduleAutosave();log('manual-log','Görselin fırça maskesi uygulandı; sonuç önizleme ve çıktıda korunacak.','info')};
     el('image-settings-reset').onclick=()=>{const item=selectedImageLayer();if(!item||isTrackLocked('image'))return;remember();Object.assign(item,imageLayerSettings());S.selectedImageKeyframe=null;S.brushPainting=false;S.imageChromaCache.clear();invalidateBrush(item);drawClips();log('manual-log','Görselin dönüştürme, keyframe, efekt ve arka plan ayarları sıfırlandı.','info')};
-    el('mask-image-remove').onclick=()=>{const clip=selectedClip();if(!clip)return;remember();clip.maskImageId=clip.maskImageFileId=clip.maskImageSrc=clip.maskImageName='';applyVideoEffectPreview();drawClipInspector();log('manual-log','Maske içindeki görsel kaldırıldı.','info')};
+    el('mask-image-remove').onclick=()=>{const clip=selectedClip();if(!clip||isVideoTrackLocked(clip))return;remember();clip.maskImageId=clip.maskImageFileId=clip.maskImageSrc=clip.maskImageName='';applyVideoEffectPreview();drawClipInspector();log('manual-log','Maske içindeki görsel kaldırıldı.','info')};
     window.addEventListener('resize',()=>requestAnimationFrame(drawBrushCanvas));
-    el('clip-animation-remove').onclick=()=>{const clip=selectedClip();if(!clip)return;remember();clip.animation='none';drawClips();log('manual-log','Klip animasyonu kaldırıldı.','info')};
-    document.querySelectorAll('.clip-style-card').forEach(button=>button.onclick=()=>{const clip=selectedClip();if(!clip)return;remember();clip.effect=button.dataset.clipStyle;drawClips();log('manual-log','K'+(S.selected+1)+' klibine '+VIDEO_EFFECTS[clip.effect].name+' stili uygulandı.','info')});
+    el('clip-animation-remove').onclick=()=>{const clip=selectedClip();if(!clip||isVideoTrackLocked(clip))return;remember();clip.animation='none';drawClips();log('manual-log','Klip animasyonu kaldırıldı.','info')};
+    document.querySelectorAll('.clip-style-card').forEach(button=>button.onclick=()=>{const clip=selectedClip();if(!clip||isVideoTrackLocked(clip)||clip.effect===button.dataset.clipStyle)return;remember();clip.effect=button.dataset.clipStyle;drawClips();log('manual-log','K'+(S.selected+1)+' klibine '+VIDEO_EFFECTS[clip.effect].name+' stili uygulandı.','info')});
     el('clip-settings-reset').onclick=()=>{const clip=selectedClip();if(!clip||isVideoTrackLocked(clip))return;const defaults=clipSettings();if(!canResizeVideoClip(clip,{...clip,...defaults}))return;remember();Object.assign(clip,defaults);S.selectedZoomKeyframe=null;drawClips();log('manual-log','Seçili klibin video ayarları sıfırlandı.','info')};
     function drawClipSelectionControls(){
       const clip=S.clips[S.selected],hasClips=S.clips.length>0,videoLocked=isTrackLocked('video');
@@ -1974,6 +2062,10 @@
       S.trackState=entry.trackState||defaultTrackState();
       S.videoTracks=(entry.videoTracks||[{id:1,name:'Video 1',...S.trackState.video}]).map(track=>({...track}));
       S.activeVideoTrack=entry.activeVideoTrack||1;ensureVideoTracks();
+      if(entry.canvas&&(entry.canvas.width!==S.canvas?.width||entry.canvas.height!==S.canvas?.height)){
+        el('canvas-preset').value=entry.canvas.width+'x'+entry.canvas.height;
+        updateCanvas();
+      }
       if(S.clips[S.selected])setPreviewSource(S.selected,undefined,false);
       drawClips();showTextProperties();
     }
@@ -2360,13 +2452,13 @@
     }
     el('studio-layer-remove').onclick=removeTimelineSelection;
     const layerVolume=el('studio-layer-volume');
-    const rememberLayerVolume=()=>{if(S.selectedLayer?.type==='audio'&&!isTrackLocked('audio'))remember()};
-    layerVolume.onpointerdown=rememberLayerVolume;
-    layerVolume.onkeydown=event=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key))rememberLayerVolume()};
     layerVolume.oninput=()=>{
       const item=studioLayerSelection();
       if(!item||S.selectedLayer?.type!=='audio'||isTrackLocked('audio'))return;
-      item.volume=Number(layerVolume.value)/100;el('studio-layer-volume-value').textContent=layerVolume.value+'%';
+      const value=Number(layerVolume.value)/100;
+      if(value===item.volume)return;
+      rememberInspectorEdit(layerVolume,item);
+      item.volume=value;el('studio-layer-volume-value').textContent=layerVolume.value+'%';
       syncProjectAudio();scheduleAutosave();
     };
     function layerSelected(type,id){return S.selectedLayer?.type===type&&S.selectedLayer?.id===id}
@@ -2501,8 +2593,16 @@
     function textTransformAtTime(item,outputTime=currentOutputTime()){const frames=normalizedTextKeyframes(item),relative=Math.max(0,Math.min(item.end-item.start,(+outputTime||0)-item.start));let previous={time:0,scale:100,x:item.x,y:item.y,opacity:100,easing:'smoother'};for(const frame of frames){if(frame.time<=.0005){previous=frame;continue}if(relative<=frame.time){const progress=(relative-previous.time)/Math.max(.001,frame.time-previous.time),eased=zoomEase(progress,frame.easing);return{scale:previous.scale+(frame.scale-previous.scale)*eased,x:previous.x+(frame.x-previous.x)*eased,y:previous.y+(frame.y-previous.y)*eased,opacity:previous.opacity+(frame.opacity-previous.opacity)*eased}}previous=frame}return{scale:previous.scale,x:previous.x,y:previous.y,opacity:previous.opacity}}
     function drawTextKeyframeEditor(){const item=selectedText(),list=el('text-kf-list');if(!item||!list)return;const frames=normalizedTextKeyframes(item),selected=frames.find(frame=>frame.id===S.selectedTextKeyframe),live=textTransformAtTime(item),frame=selected||live;el('text-kf-scale').value=Math.round(frame.scale);el('text-kf-opacity').value=Math.round(frame.opacity);el('text-kf-x').value=Math.round(frame.x);el('text-kf-y').value=Math.round(frame.y);el('text-kf-easing').value=normalizeZoomEasing(selected?.easing);el('text-kf-scale-value').textContent=Math.round(frame.scale)+'%';el('text-kf-opacity-value').textContent=Math.round(frame.opacity)+'%';el('text-kf-delete').disabled=!selected;el('text-kf-clear').disabled=!frames.length;list.innerHTML=frames.length?frames.map(keyframe=>'<button type="button" class="zoom-keyframe-chip '+(keyframe.id===S.selectedTextKeyframe?'active':'')+'" data-text-kf="'+keyframe.id+'"><span>◆ '+ft(item.start+keyframe.time)+'</span><b>'+Math.round(keyframe.scale)+'% · α'+Math.round(keyframe.opacity)+'%</b></button>').join(''):'<span class="text-[10px] text-slate-600">Bu metinde henüz keyframe yok.</span>';list.querySelectorAll('[data-text-kf]').forEach(button=>button.onclick=()=>{const keyframe=frames.find(value=>value.id===button.dataset.textKf);if(!keyframe)return;S.selectedTextKeyframe=keyframe.id;seekOutputTime(item.start+keyframe.time);drawTextKeyframeEditor();drawTexts()})}
     function addTextKeyframe(){const item=selectedText();if(!item)return;const type=item.kind==='subtitle'?'subtitle':'text';if(isTrackLocked(type))return;const time=Math.max(0,Math.min(item.end-item.start,currentOutputTime()-item.start)),frame={id:'TZ'+S.nextZoomKeyframeId++,time,scale:+el('text-kf-scale').value,x:+el('text-kf-x').value,y:+el('text-kf-y').value,opacity:+el('text-kf-opacity').value,easing:normalizeZoomEasing(el('text-kf-easing').value)};remember();const existing=(item.transformKeyframes||[]).find(value=>Math.abs(value.time-time)<.03);if(existing)Object.assign(existing,frame,{id:existing.id});else item.transformKeyframes.push(frame);item.transformKeyframes=normalizedTextKeyframes(item);S.selectedTextKeyframe=(existing||frame).id;drawClips();log('manual-log',ft(item.start+time)+' noktasına metin keyframe’i eklendi.','info')}
-    function updateSelectedTextKeyframe(field,value){const item=selectedText(),frame=item?.transformKeyframes?.find(entry=>entry.id===S.selectedTextKeyframe);if(!item||!frame)return;frame[field]=field==='easing'?normalizeZoomEasing(value):field==='scale'?Math.max(25,Math.min(300,+value||100)):Math.max(0,Math.min(100,+value||0));item.transformKeyframes=normalizedTextKeyframes(item);drawTextOverlay();drawTextKeyframeEditor();drawTexts()}
-    function deleteSelectedTextKeyframe(){const item=selectedText();if(!item||!S.selectedTextKeyframe)return;remember();item.transformKeyframes=item.transformKeyframes.filter(frame=>frame.id!==S.selectedTextKeyframe);S.selectedTextKeyframe=null;drawClips()}
+    function updateSelectedTextKeyframe(field,value,control=null){
+      const item=selectedText(),frame=item?.transformKeyframes?.find(entry=>entry.id===S.selectedTextKeyframe);
+      if(!frame||isTrackLocked(item.kind==='subtitle'?'subtitle':'text'))return;
+      const next=field==='easing'?normalizeZoomEasing(value):field==='scale'?Math.max(25,Math.min(300,+value||100)):Math.max(0,Math.min(100,+value||0));
+      if(frame[field]===next)return;
+      rememberInspectorEdit(control,item,frame.id);
+      frame[field]=next;item.transformKeyframes=normalizedTextKeyframes(item);
+      drawTextOverlay();drawTextKeyframeEditor();drawTexts();scheduleAutosave();
+    }
+    function deleteSelectedTextKeyframe(){const item=selectedText();if(!item||!S.selectedTextKeyframe||isTrackLocked(item.kind==='subtitle'?'subtitle':'text'))return;remember();item.transformKeyframes=item.transformKeyframes.filter(frame=>frame.id!==S.selectedTextKeyframe);S.selectedTextKeyframe=null;drawClips()}
     function addTextPreset(styleName,startAt=currentOutputTime(),fontFamily='default'){
       const total=outDuration(),style=TEXT_STYLES[styleName]||TEXT_STYLES.classic;
       if(!total)return log('manual-log','Metin eklemek için önce video yükleyin.','error');
@@ -2543,7 +2643,7 @@
       const box=el('timeline'),top=S.videoLaneTops?.[S.activeVideoTrack]??S.timelineVideoTop;
       if(box.clientHeight>0&&(top<box.scrollTop||top+height>box.scrollTop+box.clientHeight))box.scrollTop=Math.max(0,top-44);
     }
-    function drawTexts(){
+    function drawTexts(editedControl=null){
       const track=el('text-track'),subtitleTrack=el('subtitle-track'),total=outDuration(),trackWidth=Math.max(34,total*S.zoom),regular=S.texts.filter(item=>item.kind!=='subtitle'),subtitles=S.texts.filter(item=>item.kind==='subtitle');track.innerHTML='';subtitleTrack.innerHTML='';track.style.width=subtitleTrack.style.width=trackWidth+'px';el('text-count').textContent=regular.length+' metin';
       const makeLanes=items=>{const ends=[],map=new Map();[...items].sort((a,b)=>a.start-b.start||a.end-b.end).forEach(item=>{let lane=ends.findIndex(end=>end<=item.start+.001);if(lane<0){lane=ends.length;ends.push(item.end)}else ends[lane]=item.end;map.set(item.id,lane)});return {count:Math.max(1,ends.length),map}};
       const compact=window.matchMedia('(min-width:1100px) and (min-height:650px)').matches,textLanes=makeLanes(regular),subtitleLanes=makeLanes(subtitles),geometry=timelineRowGeometry({compact,counts:timelineOptionalCounts(),textLanes:textLanes.count,subtitleLanes:subtitleLanes.count,imageKeyframes:S.imageLayers.some(item=>item.transformKeyframes?.length),videoTracks:ensureVideoTracks().length,dropTarget:setTimelineDropTarget.type||null}),{videoTop,videoHeight,timelineHeight}=geometry;
@@ -2551,20 +2651,51 @@
       S.timelineVideoTop=videoTop;el('track-separator').style.top=(videoTop-5)+'px';el('track').style.top=videoTop+'px';el('track').style.height=videoHeight+'px';el('video-label').style.top=(videoTop+videoHeight/2-12)+'px';el('timeline').style.height=timelineHeight+'px';el('timeline-content').style.height=timelineHeight+'px';drawEmptyTrackLockMenu();
       layoutVideoTracks(videoTop,videoHeight,trackWidth);revealActiveVideoTrack(compact,videoHeight);
       const paint=(items,target,lanes,type)=>items.forEach(item=>{hydrateText(item);const b=document.createElement('button'),duration=Math.max(.05,item.end-item.start),keyframes=normalizedTextKeyframes(item).map(frame=>'<span class="text-transform-keyframe '+(frame.id===S.selectedTextKeyframe?'selected':'')+'" data-text-keyframe-id="'+frame.id+'" data-text-keyframe-time="'+frame.time+'" style="left:'+(frame.time/duration*100)+'%" title="Metin '+Math.round(frame.scale)+'% · Saydamlık '+Math.round(frame.opacity)+'%"></span>').join('');b.className=(type==='subtitle'?'subtitle-clip ':'text-clip ')+(item.id===S.selectedText?'selected':'');b.style.left=(item.start*S.zoom)+'px';b.style.top=((lanes.get(item.id)||0)*42+4)+'px';b.style.width=Math.max(0,duration*S.zoom)+'px';b.dataset.textId=item.id;b.innerHTML=keyframes+'<span class="timed-clip-label"><b class="block text-[10px] truncate">'+escapeHtml(item.text)+'</b><span data-timeline-time class="text-[9px] opacity-70">'+ft(item.start)+' → '+ft(item.end)+'</span></span>';b.querySelectorAll('[data-text-keyframe-id]').forEach(marker=>{marker.onpointerdown=event=>{event.preventDefault();event.stopPropagation()};marker.onclick=event=>{event.preventDefault();event.stopPropagation();selectText(item.id,false);S.selectedTextKeyframe=marker.dataset.textKeyframeId;seekOutputTime(item.start+(+marker.dataset.textKeyframeTime||0));drawTexts();showTextProperties()}});appendTrimHandles(b,type,item.id);b.onclick=()=>{if(S.suppressTextClipClick)return;selectText(item.id,true)};b.onpointerdown=e=>beginTextClipDrag(e,item.id,b);b.oncontextmenu=e=>openContextMenu(e,{type,id:item.id});if(isTrackLocked(type))b.classList.add('track-locked');target.appendChild(b)});
-      paint(regular,track,textLanes.map,'text');paint(subtitles,subtitleTrack,subtitleLanes.map,'subtitle');drawStickerTimeline();drawTimelineMediaLayers();drawTransitions();drawSubtitleEditor();
+      paint(regular,track,textLanes.map,'text');paint(subtitles,subtitleTrack,subtitleLanes.map,'subtitle');drawStickerTimeline();drawTimelineMediaLayers();drawTransitions();drawSubtitleEditor(editedControl);
     }
     function beginTextClipDrag(event,id,button){const item=S.texts.find(value=>value.id===id);if(item)return beginTimedLayerDrag(event,item.kind==='subtitle'?'subtitle':'text',id,button)}
     function escapeHtml(value){const node=document.createElement('span');node.textContent=value;return node.innerHTML}
     function selectText(id,seek=true){S.selectedText=id;S.selectedTextKeyframe=null;S.selectedSticker=null;S.selectedLayer=null;drawTexts();showTextProperties();const item=selectedText();if(seek&&item)seekOutputTime(Math.min(item.end-.01,item.start+.01));if(item?.kind==='subtitle'){switchClipInspectorTab('video');el('subtitle-section').open=true}drawTextOverlay()}
-    function showTextProperties(){
-      const item=selectedText(),fields=el('text-fields'),empty=el('text-empty');window.StudioFonts?.refreshSelection();fields.classList.toggle('hidden',!item);empty.classList.toggle('hidden',!!item);if(!item)return;
-      hydrateText(item);el('text-content').value=item.text;el('text-color').value=item.color;el('text-outline').value=item.outlineColor;el('text-size').value=item.size;el('text-size-value').textContent=Math.round(item.size);el('text-x').value=item.x;el('text-y').value=item.y;el('text-start').value=item.start.toFixed(2);el('text-end').value=item.end.toFixed(2);el('text-bg-opacity').value=item.backgroundOpacity;drawSubtitleEditor();drawTextKeyframeEditor();
+    function writeInspectorValue(id,value,editedControl=null){
+      const input=el(id);
+      if(input!==editedControl&&input.value!==String(value))input.value=value;
     }
-    function updateSelectedText(){
-      const item=selectedText(),type=item?.kind==='subtitle'?'subtitle':'text';if(!item||isTrackLocked(type))return;const total=outDuration(),start=+el('text-start').value,end=+el('text-end').value;
-      const textValue=el('text-content').value;if([...textValue].length>200)return log('manual-log','Metin en fazla 200 karakter olabilir.','error');item.text=textValue||'METİN';item.color=el('text-color').value;item.outlineColor=el('text-outline').value;item.size=+el('text-size').value;item.x=+el('text-x').value;item.y=+el('text-y').value;item.backgroundOpacity=+el('text-bg-opacity').value;
-      if(Number.isFinite(start)&&Number.isFinite(end)&&start>=0&&end>start&&end<=total+.01){item.start=start;item.end=Math.min(end,total)}
-      el('text-size-value').textContent=Math.round(item.size);drawTexts();drawTextOverlay();
+    function showTextProperties(editedControl=null){
+      const item=selectedText(),fields=el('text-fields'),empty=el('text-empty');
+      window.StudioFonts?.refreshSelection();
+      fields.classList.toggle('hidden',!item);empty.classList.toggle('hidden',!!item);
+      if(!item)return;
+      hydrateText(item);
+      for(const [id,value] of Object.entries({
+        'text-content':item.text,'text-color':item.color,'text-outline':item.outlineColor,
+        'text-size':item.size,'text-x':item.x,'text-y':item.y,'text-start':item.start.toFixed(2),
+        'text-end':item.end.toFixed(2),'text-bg-opacity':item.backgroundOpacity
+      }))writeInspectorValue(id,value,editedControl);
+      el('text-size-value').textContent=Math.round(item.size);
+      drawSubtitleEditor(editedControl);drawTextKeyframeEditor();
+    }
+    function updateSelectedTextField(event,field,subtitleOnly=false){
+      const control=event.currentTarget,item=selectedText(),subtitle=item?.kind==='subtitle';
+      if(!item||(subtitleOnly&&!subtitle)||isTrackLocked(subtitle?'subtitle':'text'))return;
+      let value=control.value;
+      if(field==='text'){
+        if([...value].length>200)return log('manual-log',(subtitle?'Altyazı':'Metin')+' en fazla 200 karakter olabilir.','error');
+        value=value||(subtitle?'ALTYAZI':'METİN');
+      }else if(field!=='color'&&field!=='outlineColor'){
+        if(value===''||!Number.isFinite(Number(value)))return;
+        value=Number(value);
+        const total=outDuration();
+        if(field==='start'&&(value<0||value>=item.end))return;
+        if(field==='end'){
+          if(value>total+.01||Math.min(value,total)<=item.start)return;
+          value=Math.min(value,total);
+        }
+      }
+      if(item[field]===value)return;
+      rememberInspectorEdit(event.type==='change'?null:control,item);
+      item[field]=value;
+      drawTexts(control);drawTextOverlay();showTextProperties(control);
+      scheduleAutosave();
     }
     function hexRgba(hex,alpha){const value=hex.replace('#',''),r=parseInt(value.slice(0,2),16),g=parseInt(value.slice(2,4),16),b=parseInt(value.slice(4,6),16);return 'rgba('+r+','+g+','+b+','+alpha+')'}
     function drawTextOverlay(){
@@ -2596,20 +2727,24 @@
     }
     function beginPresetDrag(event,button){beginTimelinePresetDrag(event,button,'text',{preview:button.innerHTML,label:button.dataset.textStyle+' metin',flag:'suppressPresetClick',color:'#f59e0b',add:time=>addTextPreset(button.dataset.textStyle,time)})}
     document.querySelectorAll('.text-preset').forEach(button=>{button.onpointerdown=e=>beginPresetDrag(e,button);button.onclick=()=>{if(!S.suppressPresetClick)addTextPreset(button.dataset.textStyle)}});
-    ['text-content','text-color','text-outline','text-size','text-x','text-y','text-bg-opacity'].forEach(id=>el(id).addEventListener('input',updateSelectedText));
-    ['text-start','text-end'].forEach(id=>el(id).addEventListener('change',updateSelectedText));
+    const regularTextFields={'text-content':'text','text-color':'color','text-outline':'outlineColor','text-size':'size','text-x':'x','text-y':'y','text-bg-opacity':'backgroundOpacity','text-start':'start','text-end':'end'};
+    for(const [id,field] of Object.entries(regularTextFields)){
+      const eventType=field==='start'||field==='end'?'change':'input';
+      el(id).addEventListener(eventType,event=>updateSelectedTextField(event,field));
+    }
     el('text-delete').onclick=deleteSelectedText;
-    [['text-kf-scale','scale'],['text-kf-opacity','opacity'],['text-kf-x','x'],['text-kf-y','y']].forEach(([id,field])=>{const input=el(id);input.onpointerdown=()=>{if(S.selectedTextKeyframe)remember()};input.oninput=()=>{const valueNode=el(id+'-value');if(valueNode)valueNode.textContent=Math.round(+input.value)+'%';if(S.selectedTextKeyframe)updateSelectedTextKeyframe(field,input.value)}});
-    el('text-kf-easing').onchange=()=>{if(S.selectedTextKeyframe){remember();updateSelectedTextKeyframe('easing',el('text-kf-easing').value)}};el('text-kf-add').onclick=addTextKeyframe;el('text-kf-delete').onclick=deleteSelectedTextKeyframe;el('text-kf-clear').onclick=()=>{const item=selectedText();if(!item?.transformKeyframes?.length)return;remember();item.transformKeyframes=[];S.selectedTextKeyframe=null;drawClips()};
+    [['text-kf-scale','scale'],['text-kf-opacity','opacity'],['text-kf-x','x'],['text-kf-y','y']].forEach(([id,field])=>{const input=el(id);input.oninput=()=>{const valueNode=el(id+'-value');if(valueNode)valueNode.textContent=Math.round(+input.value)+'%';if(S.selectedTextKeyframe)updateSelectedTextKeyframe(field,input.value,input)}});
+    el('text-kf-easing').onchange=event=>updateSelectedTextKeyframe('easing',event.target.value);el('text-kf-add').onclick=addTextKeyframe;el('text-kf-delete').onclick=deleteSelectedTextKeyframe;el('text-kf-clear').onclick=()=>{const item=selectedText();if(!item?.transformKeyframes?.length||isTrackLocked(item.kind==='subtitle'?'subtitle':'text'))return;remember();item.transformKeyframes=[];S.selectedTextKeyframe=null;drawClips()};
 
     // AUTOMATIC SUBTITLES
     const subtitleKey=clip=>[clip.fileId||S.manualId,(+clip.start).toFixed(3),(+clip.end).toFixed(3),clipTimelineStart(clip).toFixed(3)].join(':');
-    function drawSubtitleEditor(){
+    function drawSubtitleEditor(editedControl=null){
       const item=selectedText(),editor=el('subtitle-editor'),isSubtitle=item?.kind==='subtitle';window.StudioFonts?.refreshSelection();window.StudioCaptions?.refresh();editor.classList.toggle('hidden',!isSubtitle);if(!isSubtitle)return;
-      el('subtitle-content').value=item.text;el('subtitle-selected-style').value=item.styleName||'classic';el('subtitle-color').value=item.color||'#FFFFFF';el('subtitle-size').value=item.size||72;el('subtitle-size-value').textContent=Math.round(item.size||72);
-    }
-    function updateSelectedSubtitle(){
-      const item=selectedText();if(item?.kind!=='subtitle'||isTrackLocked('subtitle'))return;const textValue=el('subtitle-content').value;if([...textValue].length>200)return log('manual-log','Altyazı en fazla 200 karakter olabilir.','error');item.text=textValue||'ALTYAZI';item.color=el('subtitle-color').value;item.size=+el('subtitle-size').value;el('subtitle-size-value').textContent=Math.round(item.size);drawTexts();drawTextOverlay();showTextProperties();
+      writeInspectorValue('subtitle-content',item.text,editedControl);
+      writeInspectorValue('subtitle-selected-style',item.styleName||'classic',editedControl);
+      writeInspectorValue('subtitle-color',item.color||'#FFFFFF',editedControl);
+      writeInspectorValue('subtitle-size',item.size||72,editedControl);
+      el('subtitle-size-value').textContent=Math.round(item.size||72);
     }
     function applySelectedSubtitleStyle(){
       const item=selectedText(),styleName=el('subtitle-selected-style').value,style=TEXT_STYLES[styleName];if(item?.kind!=='subtitle'||!style||isTrackLocked('subtitle'))return;remember();const keep={id:item.id,text:item.text,start:item.start,end:item.end,x:item.x,y:item.y,rotation:item.rotation,kind:item.kind,sourceKey:item.sourceKey,targetLanguage:item.targetLanguage,transformKeyframes:item.transformKeyframes||[]};Object.assign(item,style,keep,{styleName});drawClips();showTextProperties();
@@ -2672,7 +2807,11 @@
         if(isCurrent()){activeSubtitleJob=null;button.disabled=false;progress.classList.add('hidden')}
       }
     }
-    el('subtitle-generate').onclick=generateSubtitles;el('subtitle-content').addEventListener('input',updateSelectedSubtitle);el('subtitle-color').addEventListener('input',updateSelectedSubtitle);el('subtitle-size').addEventListener('input',updateSelectedSubtitle);el('subtitle-selected-style').addEventListener('change',applySelectedSubtitleStyle);el('subtitle-delete').onclick=deleteSelectedText;
+    el('subtitle-generate').onclick=generateSubtitles;
+    for(const [id,field] of [['subtitle-content','text'],['subtitle-color','color'],['subtitle-size','size']]){
+      el(id).addEventListener('input',event=>updateSelectedTextField(event,field,true));
+    }
+    el('subtitle-selected-style').addEventListener('change',applySelectedSubtitleStyle);el('subtitle-delete').onclick=deleteSelectedText;
 
     // TRANSITIONS
     const TRANSITION_NAMES={fade:'Yumuşak',dissolve:'Çözülme',smoothleft:'Yumuşak Sola',smoothright:'Yumuşak Sağa',wipeleft:'Perde Sola',pixelize:'Piksel',zoomin:'Yakınlaş',fadeblack:'Siyaha Geç',wiperight:'Perde Sağa',wipeup:'Perde Yukarı',wipedown:'Perde Aşağı',slideleft:'Sola Kaydır',slideright:'Sağa Kaydır',slideup:'Yukarı Kaydır',slidedown:'Aşağı Kaydır',circlecrop:'Daire Kırp',rectcrop:'Kare Kırp',distance:'Uzaklık',fadewhite:'Beyaza Geç',radial:'Radyal',smoothup:'Yumuşak Yukarı',smoothdown:'Yumuşak Aşağı',circleopen:'Daire Aç',circleclose:'Daire Kapat',vertopen:'Dikey Aç',vertclose:'Dikey Kapat',horzopen:'Yatay Aç',horzclose:'Yatay Kapat',diagtl:'Çapraz Sol',diagbr:'Çapraz Sağ'};
@@ -2698,7 +2837,12 @@
     function fitPreviewStage(){const shell=el('preview-shell'),stage=el('preview-stage'),ratio=S.canvas.width/S.canvas.height;if(shell.clientWidth&&shell.clientHeight){const width=Math.min(shell.clientWidth,shell.clientHeight*ratio);stage.style.width=width+'px';stage.style.height=(width/ratio)+'px'}else{stage.style.width=ratio<.8?'min(46%,460px)':ratio<1.2?'min(68%,680px)':'100%';stage.style.height=''}}
     function updateCanvas(){const value=el('canvas-preset').value,[w,h]=value.split('x').map(Number);S.canvas={width:w,height:h};el('canvas-preset-top').value=value;el('canvas-info').textContent=canvasLabels[value];el('canvas-info-top').textContent=canvasLabels[value];el('export-resolution').textContent=w+'×'+h;el('preview-stage').style.aspectRatio=w+'/'+h;fitPreviewStage();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();applyMaskImagePreview(S.clips[S.preview]||S.clips[S.selected])}
     let previewResizeFrame=0;new ResizeObserver(()=>{cancelAnimationFrame(previewResizeFrame);previewResizeFrame=requestAnimationFrame(()=>{fitPreviewStage();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();drawBrushCanvas()})}).observe(el('preview-shell'));
-    el('canvas-preset').onchange=()=>{updateCanvas();drawClips()};el('canvas-preset-top').onchange=()=>{el('canvas-preset').value=el('canvas-preset-top').value;updateCanvas();drawClips()};
+    function selectCanvasPreset(event){
+      const preset=event.currentTarget.value;
+      if(preset===S.canvas.width+'x'+S.canvas.height||!Object.hasOwn(canvasLabels,preset))return;
+      remember();el('canvas-preset').value=preset;updateCanvas();drawClips();
+    }
+    el('canvas-preset').onchange=el('canvas-preset-top').onchange=selectCanvasPreset;
     function setExportModal(open){const modal=el('export-modal');modal.classList.toggle('hidden',!open);modal.classList.toggle('flex',open);if(open){window.StudioCommands?.refreshExportScope();el('export-resolution').textContent=S.canvas.width+'×'+S.canvas.height;el('export-render-start').focus()}}
     function buildMaskImageLayers(){const items=[];S.clips.forEach((clip,index)=>{const start=clipTimelineStart(clip),duration=clipOutputDuration(clip),asset=clip.maskImageId?assetById(clip.maskImageId):null,fileId=asset?.fileId||clip.maskImageFileId;if(fileId&&clip.mask!=='none'&&videoTrackState(clip.videoTrack||1).visible!==false)items.push({id:'MASK'+index,ownerClipId:clip.clipId,ownerVideoTrack:clip.videoTrack||1,fileId,name:asset?.name||clip.maskImageName||'Maske görseli',start,end:start+duration,x:50,y:50,scale:100,rotation:0,mask:clip.mask,maskScale:clip.maskScale,maskX:clip.maskX,maskY:clip.maskY,maskFeather:clip.maskFeather})});return items}
     function exportableClips(){ensureClipTimelinePositions();return [...S.clips].sort((a,b)=>clipTimelineStart(a)-clipTimelineStart(b)).map(clip=>({...clip,videoTrack:clip.videoTrack||1,trackVisible:videoTrackState(clip.videoTrack).visible,trackMuted:videoTrackState(clip.videoTrack).muted,backgroundMode:clip.backgroundMode==='brush'&&!clip.brushApplied?'none':clip.backgroundMode,brushStrokes:clip.brushApplied?clip.brushStrokes:[],mask:clip.maskImageId||clip.maskImageFileId?'none':clip.mask}))}

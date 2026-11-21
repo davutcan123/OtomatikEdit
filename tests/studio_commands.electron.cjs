@@ -32,6 +32,101 @@ async function waitFor(ready) {
   } while (Date.now() < deadline);
   assert.fail('Fixture action did not finish.');
 }
+async function checkInspectorHistory() {
+  await cursor(.5);
+  await evaluate("addTextPreset('classic',.5)");
+  const original=await evaluate('selectedText().text');
+  await cursor(1);
+  await key('M');
+  await key('Z',[mod]);
+  assert.equal(await evaluate('S.redoHistory.length'),1);
+  const depth=await evaluate('S.history.length');
+  await evaluate("el('text-content').focus();el('text-content').select()");
+  assert.equal(await evaluate("document.activeElement.id"),'text-content');
+  assert.equal(await evaluate('S.redoHistory.length'),1,'Focusing an inspector field keeps redo intact');
+  await window.webContents.insertText('Yeni');
+  await window.webContents.insertText(' başlık');
+  assert.equal(await evaluate('selectedText().text'),'Yeni başlık');
+  assert.equal(await evaluate('S.history.length'),depth+1,'Multiple characters in one focus session make one edit');
+  assert.equal(await evaluate("el('redo').disabled"),true);
+  await key('Z',[mod]);
+  assert.equal(await evaluate('S.history.length'),depth+1,'The timeline undo shortcut leaves the focused textarea alone');
+  if(await evaluate('selectedText().text')==='Yeni başlık'){
+    window.webContents.undo();await frames();
+  }
+  assert.notEqual(await evaluate('selectedText().text'),'Yeni başlık');
+  window.webContents.redo();await frames();
+  assert.equal(await evaluate('selectedText().text'),'Yeni başlık');
+  await cursor(1.2);
+  await key('Z',[mod,'shift']);
+  assert.equal(await evaluate('S.studioTimeline'),null,'Old marker redo cannot overwrite the new text');
+  await key('Z',[mod]);
+  assert.equal(await evaluate('selectedText().text'),original);
+  await key('Z',[mod,'shift']);
+  assert.equal(await evaluate("el('text-content').value"),'Yeni başlık');
+
+  await cursor(1.4);await key('M');await key('Z',[mod]);
+  const sliderStart=await evaluate("el('text-x').focus();selectedText().x");
+  const sliderDepth=await evaluate('S.history.length');
+  assert.equal(await evaluate('document.activeElement.id'),'text-x');
+  window.webContents.sendInputEvent({type:'keyDown',keyCode:'Right'});
+  window.webContents.sendInputEvent({type:'keyDown',keyCode:'Right',isAutoRepeat:true});
+  window.webContents.sendInputEvent({type:'keyUp',keyCode:'Right'});
+  await frames();
+  const sliderEnd=await evaluate('selectedText().x');
+  assert.ok(sliderEnd>sliderStart);
+  assert.deepEqual(await evaluate('[S.history.length,S.redoHistory.length]'),[sliderDepth+1,0]);
+  await cursor(1.4);await key('Z',[mod]);
+  assert.equal(await evaluate('selectedText().x'),sliderStart);
+  await key('Z',[mod,'shift']);
+  assert.equal(await evaluate('selectedText().x'),sliderEnd);
+  const first=await evaluate('projectPayload()');
+  assert.equal(first.name,'Studio fixture');
+  assert.equal(first.timelines[0].state.studioTimeline.range.out,3);
+
+  await evaluate(`restoreProject({id:'12345678-1234-1234-1234-123456789abc',name:'Altyazı projesi',
+    activeTimelineId:'captions',timelines:[{id:'captions',name:'Diyalog',state:{
+      ...emptyTimelineState(),manualId:'source.mp4',clips:[{clipId:'c',start:0,end:6,sourceDuration:6,fileId:'source.mp4',timelineStart:0}],
+      videoTracks:[{id:1,name:'Video 1',locked:false,visible:true,muted:false},{id:2,name:'Kilitli',locked:true,visible:true,muted:false}]
+    }}]});StudioWorkspace.openSection('captions')`);
+  await evaluate(`StudioCaptions.importFile(new File([${JSON.stringify('1\n00:00:00,200 --> 00:00:01,500\nİlk satır\n')}],
+    'captions.srt',{type:'application/x-subrip'}))`);
+  assert.equal(await evaluate('selectedText().text'),'İlk satır');
+  await cursor(1);await key('M');await key('Z',[mod]);
+  const captionDepth=await evaluate('S.history.length');
+  await evaluate("el('subtitle-content').focus();el('subtitle-content').select()");
+  assert.equal(await evaluate('document.activeElement.id'),'subtitle-content');
+  await window.webContents.insertText('Düzenlenen altyazı');
+  assert.equal(await evaluate("el('studio-caption-text').value"),'Düzenlenen altyazı');
+  assert.deepEqual(await evaluate('[S.history.length,S.redoHistory.length]'),[captionDepth+1,0]);
+
+  await cursor(2);await key('M');await key('Z',[mod]);
+  await evaluate(`el('studio-caption-text').value='SRT güncellemesi';
+    el('studio-caption-end').value='1.8';el('studio-caption-apply-edit').click()`);
+  assert.deepEqual(await evaluate("[selectedText().text,selectedText().end,el('redo').disabled]"),['SRT güncellemesi',1.8,true]);
+  await evaluate(`el('text-end').value='2.2';el('text-end').dispatchEvent(new Event('change'));
+    el('text-font-weight').value=selectedText().bold?'400':'700';el('text-font-weight').dispatchEvent(new Event('change'))`);
+  assert.equal(await evaluate('selectedText().end'),2.2);
+  const bold=await evaluate('selectedText().bold');
+  await evaluate('undoEdit()');assert.notEqual(await evaluate('selectedText().bold'),bold);
+  await evaluate('redoEdit()');assert.equal(await evaluate('selectedText().bold'),bold);
+  assert.ok(await evaluate('videoTrackState(2).locked'));
+  await evaluate("toggleTrackAction('subtitle','lock')");
+  assert.ok(await evaluate("isTrackLocked('subtitle')"));
+  const lockDepth=await evaluate('S.history.length');
+  await evaluate(`el('subtitle-content').value='Kilitli değişiklik';
+    el('subtitle-content').dispatchEvent(new Event('input'));persistProjectRecovery()`);
+  assert.deepEqual(await evaluate('[selectedText().text,S.history.length]'),['SRT güncellemesi',lockDepth]);
+
+  const loaded=new Promise(resolve=>window.webContents.once('did-finish-load',resolve));
+  window.webContents.reload();await loaded;await evaluate('projectWorkspaceInitialization');
+  assert.deepEqual(await evaluate("[el('project-name').value,selectedText().text,selectedText().end,selectedText().bold,isTrackLocked('subtitle'),videoTrackState(2).locked]"),
+    ['Altyazı projesi','SRT güncellemesi',2.2,bold,true,true]);
+  await evaluate('restoreProject('+JSON.stringify(first)+')');
+  assert.deepEqual(await evaluate("[el('project-name').value,selectedText().text,selectedText().x,S.history.length,S.redoHistory.length]"),
+    ['Studio fixture','Yeni başlık',sliderEnd,0,0]);
+}
+
 async function route(request, response, media) {
   const pathname = new URL(request.url, 'http://fixture').pathname;
   const json = value => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(value)); };
@@ -185,6 +280,7 @@ app.whenReady().then(async () => {
   assert.deepEqual(await evaluate('[S.history.length,S.redoHistory.length]'), [0, 0]);
   await evaluate('switchTimeline("two")');
   assert.deepEqual(await evaluate('[S.studioTimeline,S.history.length,S.redoHistory.length]'), [null, 0, 0]);
+  await checkInspectorHistory();
   console.log('Native studio keys, preference conflict and reset, marker undo and per-timeline output ranges verified.');
 }).catch(error => {
   console.error(error);

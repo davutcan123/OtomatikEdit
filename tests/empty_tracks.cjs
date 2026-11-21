@@ -4,7 +4,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 const test=require('node:test');
 const html=fs.readFileSync(path.join(__dirname,'../templates/index.html'),'utf8');
-const source=html.slice(html.indexOf('    function timelineOptionalCounts()'),html.indexOf('    function drawTexts(){'));
+const source=html.slice(html.indexOf('    function timelineOptionalCounts()'),html.indexOf('    function drawTexts('));
 const plain=value=>JSON.parse(JSON.stringify(value));
 function fixture(){
   const listeners=new Map(),box={scrollTop:17,scrollLeft:91,clientHeight:200},nodes=new Map([['timeline',box]]),S={stickers:[],texts:[],imageLayers:[],audioLayers:[],timelineCursor:8,trackState:{image:{locked:true,visible:false},audio:{muted:true}}};
