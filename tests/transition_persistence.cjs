@@ -34,7 +34,7 @@ function fixture() {
     window: { addEventListener: (name, callback) => listeners.set(name, callback), removeEventListener: name => listeners.delete(name) },
     requestAnimationFrame: callback => { const id = nextFrame++;frames.set(id, callback);return id; }, cancelAnimationFrame: id => frames.delete(id),
     setTimeout: () => 1, clearTimeout() {}, invalidateSubtitleJob() {}, workspaceGeneration: 0, timelineGeneration: 0, savedProjectState: null, normalizeZoomEasing: value => value || 'smoother',
-    isTrackLocked: type => type==='video'?context.isVideoTrackLocked(state.clips[state.selected]||state.activeVideoTrack||1):!!state.trackState?.[type]?.locked, resetLiveTransition() {}, stopProjectAudio() {}, restoreAutoCutterState() {}, captureAutoCutterState: () => null,
+    isTrackLocked: type => type==='video'?context.isVideoTrackLocked(state.clips[state.selected]||state.activeVideoTrack||1):!!state.trackState?.[type]?.locked, resetLiveTransition() {}, stopProjectAudio() {}, clearProjectAudio() {}, restoreAutoCutterState() {}, captureAutoCutterState: () => null,
     setupThumbnailSource() {}, setPreviewSource() {}, updateCanvas() {}, updateZoomLabel() {}, drawMagnetButton() {},
     showTextProperties() {}, drawProjectLibrary() {}, drawTimelineTabs() {}, applyVideoEffectPreview() {}, drawClipInspector() {}, invalidateBrush() {},
     scheduleAutosave: () => scheduled++, log() {}, ft: String, currentOutputTime: () => context.outputTime || 0,

@@ -569,6 +569,15 @@
           </div>
         </div>
 
+        <section id="studio-layer-inspector" class="panel hidden" aria-labelledby="studio-layer-title">
+          <div class="studio-layer-heading"><h2 id="studio-layer-title"></h2><button id="studio-layer-remove" type="button" class="project-action">Sil</button></div>
+          <p id="studio-layer-name"></p>
+          <dl class="studio-layer-timing">
+            <div><dt>Başlangıç</dt><dd id="studio-layer-start"></dd></div><div><dt>Bitiş</dt><dd id="studio-layer-end"></dd></div>
+            <div><dt>Süre</dt><dd id="studio-layer-duration"></dd></div>
+          </dl>
+          <label id="studio-layer-volume-control">Ses seviyesi <output id="studio-layer-volume-value"></output><input id="studio-layer-volume" type="range" min="0" max="100" value="100"></label>
+        </section>
         <section id="studio-inspector-empty" class="panel">
           <h2>Özellikler</h2>
           <div><span class="studio-inspector-mark" aria-hidden="true">☷</span><p>Özelliklerini görmek için timeline’dan bir öğe seçin.</p></div>
@@ -818,7 +827,7 @@
     function portableMediaItem(item,fallbackFileId){const normalized={...item},fileId=item.fileId||fallbackFileId;if(fileId)normalized.src='/video/'+encodeURIComponent(fileId);const maskFileId=item.maskImageFileId||S.mediaAssets.find(asset=>asset.id===item.maskImageId)?.fileId;if(maskFileId)normalized.maskImageSrc='/video/'+encodeURIComponent(maskFileId);return normalized}
     function portableTimelineState(state){const clips=copy(state.clips||[]),transitions=resolveClipTransitions(clips,copyTransitions(state.transitions||[]));return{...state,transitions,clips:clips.map(item=>portableMediaItem(item,state.manualId)),imageLayers:(state.imageLayers||[]).map(item=>portableMediaItem(item)),audioLayers:(state.audioLayers||[]).map(item=>portableMediaItem(item))}}
     function restoreAssetSources(){S.mediaAssets.forEach(asset=>Object.assign(asset,portableMediaItem(asset)));S.clips.forEach(clip=>Object.assign(clip,portableMediaItem(clip,S.manualId)));S.imageLayers.forEach(item=>Object.assign(item,portableMediaItem(item)));S.audioLayers.forEach(item=>Object.assign(item,portableMediaItem(item)))}
-    function applyTimelineState(raw){resetLiveTransition(false);window.multiTrackPreview?.reset();S.cancelPreviewSource?.();const state={...emptyTimelineState(),...(raw||{})};S.studioTimeline=window.StudioCommands?window.StudioCommands.normalizeTimeline(state.studioTimeline):(state.studioTimeline??null);stopProjectAudio();S.manualId=state.manualId;S.manualName=state.manualName||'';S.duration=+state.duration||0;S.clips=copy(state.clips||[]);S.texts=copyTexts(state.texts||[]).map(hydrateText);S.stickers=copyLayers(state.stickers||[]);S.transitions=copyTransitions(state.transitions||[]);clampClipTransitions();S.imageLayers=copyLayers(state.imageLayers||[]).map(hydrateImageLayer);S.audioLayers=copyLayers(state.audioLayers||[]);S.selected=Number.isInteger(state.selected)?state.selected:(S.clips.length?0:-1);S.preview=Number.isInteger(state.preview)?state.preview:S.selected;S.selectedText=state.selectedText||null;S.selectedTextKeyframe=state.selectedTextKeyframe||null;S.selectedSticker=state.selectedSticker||null;S.selectedLayer=state.selectedLayer||null;S.selectedImageKeyframe=state.selectedImageKeyframe||null;S.selectedZoomKeyframe=state.selectedZoomKeyframe||null;S.nextTextId=+state.nextTextId||1;S.nextStickerId=+state.nextStickerId||1;S.nextLayerId=+state.nextLayerId||1;S.nextZoomKeyframeId=+state.nextZoomKeyframeId||1;S.trackState=state.trackState||defaultTrackState();S.videoTracks=(raw?.videoTracks||[{id:1,name:'Video 1',...S.trackState.video}]).map(track=>({...track}));S.activeVideoTrack=+state.activeVideoTrack||1;ensureVideoTracks();S.canvas=state.canvas||{width:1920,height:1080};S.zoom=Math.max(.02,Math.min(80,+state.zoom||14));S.timelineMagnet=state.timelineMagnet!==false;S.timelineRipple=state.timelineRipple===true;S.selectedVideoClipIds=[];S.history=[];S.timelineCursor=null;S.previewGap=false;restoreAssetSources();const preset=S.canvas.width+'x'+S.canvas.height;if(document.querySelector('#canvas-preset option[value="'+preset+'"]')){el('canvas-preset').value=preset;el('canvas-preset-top').value=preset}updateCanvas();el('timeline-zoom').value=S.zoom;updateZoomLabel();drawMagnetButton();if(S.clips.length){const clip=S.clips[Math.max(0,Math.min(S.clips.length-1,S.preview))],src=clip.src||('/video/'+encodeURIComponent(clip.fileId||S.manualId));S.selected=S.preview=Math.max(0,Math.min(S.clips.length-1,S.preview));S.manualId=S.manualId||clip.fileId;S.manualName=S.manualName||clip.name||'';el('manual-placeholder').classList.add('hidden');el('media-title').textContent=el('media-title-top').textContent=S.manualName||clip.name||'Video';setupThumbnailSource(src);setPreviewSource(S.preview,undefined,false)}else{pausePreview();window.StudioMediaPreview?.release(el('manual-video'));el('manual-video').removeAttribute('src');el('manual-video').load();el('transition-video').removeAttribute('src');el('manual-placeholder').classList.remove('hidden');el('media-title').textContent=el('media-title-top').textContent='Henüz video yüklenmedi'}drawClips();showTextProperties();drawProjectLibrary()}
+    function applyTimelineState(raw){resetLiveTransition(false);window.multiTrackPreview?.reset();S.cancelPreviewSource?.();const state={...emptyTimelineState(),...(raw||{})};S.studioTimeline=window.StudioCommands?window.StudioCommands.normalizeTimeline(state.studioTimeline):(state.studioTimeline??null);clearProjectAudio();S.manualId=state.manualId;S.manualName=state.manualName||'';S.duration=+state.duration||0;S.clips=copy(state.clips||[]);S.texts=copyTexts(state.texts||[]).map(hydrateText);S.stickers=copyLayers(state.stickers||[]);S.transitions=copyTransitions(state.transitions||[]);clampClipTransitions();S.imageLayers=copyLayers(state.imageLayers||[]).map(hydrateImageLayer);S.audioLayers=copyLayers(state.audioLayers||[]);S.selected=Number.isInteger(state.selected)?state.selected:(S.clips.length?0:-1);S.preview=Number.isInteger(state.preview)?state.preview:S.selected;S.selectedText=state.selectedText||null;S.selectedTextKeyframe=state.selectedTextKeyframe||null;S.selectedSticker=state.selectedSticker||null;S.selectedLayer=state.selectedLayer||null;S.selectedImageKeyframe=state.selectedImageKeyframe||null;S.selectedZoomKeyframe=state.selectedZoomKeyframe||null;S.nextTextId=+state.nextTextId||1;S.nextStickerId=+state.nextStickerId||1;S.nextLayerId=+state.nextLayerId||1;S.nextZoomKeyframeId=+state.nextZoomKeyframeId||1;S.trackState=state.trackState||defaultTrackState();S.videoTracks=(raw?.videoTracks||[{id:1,name:'Video 1',...S.trackState.video}]).map(track=>({...track}));S.activeVideoTrack=+state.activeVideoTrack||1;ensureVideoTracks();S.canvas=state.canvas||{width:1920,height:1080};S.zoom=Math.max(.02,Math.min(80,+state.zoom||14));S.timelineMagnet=state.timelineMagnet!==false;S.timelineRipple=state.timelineRipple===true;S.selectedVideoClipIds=[];S.history=[];S.timelineCursor=null;S.previewGap=false;restoreAssetSources();const preset=S.canvas.width+'x'+S.canvas.height;if(document.querySelector('#canvas-preset option[value="'+preset+'"]')){el('canvas-preset').value=preset;el('canvas-preset-top').value=preset}updateCanvas();el('timeline-zoom').value=S.zoom;updateZoomLabel();drawMagnetButton();if(S.clips.length){const clip=S.clips[Math.max(0,Math.min(S.clips.length-1,S.preview))],src=clip.src||('/video/'+encodeURIComponent(clip.fileId||S.manualId));S.selected=S.preview=Math.max(0,Math.min(S.clips.length-1,S.preview));S.manualId=S.manualId||clip.fileId;S.manualName=S.manualName||clip.name||'';el('manual-placeholder').classList.add('hidden');el('media-title').textContent=el('media-title-top').textContent=S.manualName||clip.name||'Video';setupThumbnailSource(src);setPreviewSource(S.preview,undefined,false)}else{pausePreview();window.StudioMediaPreview?.release(el('manual-video'));el('manual-video').removeAttribute('src');el('manual-video').load();el('transition-video').removeAttribute('src');el('manual-placeholder').classList.remove('hidden');el('media-title').textContent=el('media-title-top').textContent='Henüz video yüklenmedi'}drawClips();showTextProperties();drawProjectLibrary()}
     function requestTimelineName(currentName){const dialog=el('timeline-name-dialog'),input=el('timeline-name-input');if(dialog.open)return Promise.resolve(null);input.value=currentName;dialog.returnValue='';el('timeline-name-cancel').onclick=()=>dialog.close('cancel');return new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='save'?input.value:null),{once:true});dialog.showModal();input.focus();input.select()})}
     function drawTimelineTabs(){const box=el('timeline-tabs'),add=el('timeline-add');box.querySelectorAll('.timeline-tab').forEach(node=>node.remove());S.timelines.forEach(timeline=>{const button=document.createElement('button');button.type='button';button.className='timeline-tab '+(timeline.id===S.activeTimelineId?'active':'');button.dataset.timelineId=timeline.id;button.innerHTML='<span>'+escapeHtml(timeline.name)+'</span>';button.title=timeline.name+' timeline’ına geç';button.onclick=()=>switchTimeline(timeline.id);button.ondblclick=async()=>{const name=await requestTimelineName(timeline.name);if(name?.trim()){timeline.name=name.trim().slice(0,60);drawTimelineTabs();scheduleAutosave()}};box.insertBefore(button,add)})}
     function activateTimeline(timeline){
@@ -1654,10 +1663,12 @@
         b.querySelectorAll('.zoom-keyframe-marker').forEach(marker=>{marker.onpointerdown=event=>{event.preventDefault();event.stopPropagation()};marker.onclick=event=>{event.preventDefault();event.stopPropagation();S.selectedVideoClipIds=[c.clipId];S.selected=S.preview=i;S.activeVideoTrack=c.videoTrack||1;S.selectedZoomKeyframe=marker.dataset.zoomKeyframeId;seekOutputTime(clipTimelineStart(c)+(+marker.dataset.zoomKeyframeTime||0));drawClips()}});appendTrimHandles(b,'video',i);b.onclick=event=>{if(S.suppressClick){S.suppressClick=false;return}const at=timelineTimeAtClientX(event.clientX);select(i,false);pausePreview();seekOutputTime(Math.max(clipTimelineStart(c),Math.min(clipTimelineEnd(c)-.001,at)))};b.onpointerdown=e=>beginClipDrag(e,i,b);b.oncontextmenu=e=>openContextMenu(e,{type:'video',index:i});if(isVideoTrackLocked(c))b.classList.add('track-locked');
         el('video-track-'+c.videoTrack).appendChild(b);addThumbnail(b,c,S.sourceToken)});
       const valid=S.selected>=0&&S.selected<S.clips.length,has=S.clips.length>0;
-      el('split').disabled=el('remove').disabled=!has||isTrackLocked('video');el('reset').disabled=!has||timelineResetLocked();el('left').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],-1)||isTrackLocked('video');el('right').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],1)||isTrackLocked('video');el('undo').disabled=!S.history.length;outputJobs.draw();
+      const actionTrack=timelineSelectedTrack(),actionLocked=isTrackLocked(actionTrack);
+      el('split').disabled=actionLocked||(actionTrack==='video'?!has:actionTrack!=='audio');
+      el('remove').disabled=actionLocked||(actionTrack==='video'&&!valid);el('reset').disabled=!has||timelineResetLocked();el('left').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],-1)||isTrackLocked('video');el('right').disabled=!valid||!neighboringVideoClip(S.clips[S.selected],1)||isTrackLocked('video');el('undo').disabled=!S.history.length;outputJobs.draw();
       el('clip-start').disabled=el('clip-end').disabled=el('trim').disabled=!valid||isTrackLocked('video');
       el('clip-start').value=valid?S.clips[S.selected].start.toFixed(2):'';el('clip-end').value=valid?S.clips[S.selected].end.toFixed(2):'';
-      const summaryText=S.clips.length+' klip · '+total.toFixed(2)+' sn çıktı';el('summary').textContent=summaryText;el('summary-top').textContent=summaryText;drawClipInspector();drawImageInspector();drawTexts();drawPlayhead();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();drawAnimations();drawVideoEffects();drawFilters();window.multiTrackPreview?.paint();applyVideoEffectPreview();drawTrackControls();syncProjectAudio(true);window.StudioLibrary?.refreshLookSelection();if(typeof drawRippleButton==='function')drawRippleButton();if(typeof paintTimelineVideoSelection==='function')paintTimelineVideoSelection();window.StudioTemplates?.refreshSources();scheduleAutosave();
+      const summaryText=S.clips.length+' klip · '+total.toFixed(2)+' sn çıktı';el('summary').textContent=summaryText;el('summary-top').textContent=summaryText;drawClipInspector();drawImageInspector();drawStudioLayerInspector();drawTexts();drawPlayhead();drawTextOverlay();drawMediaOverlay();drawStickerOverlay();drawAnimations();drawVideoEffects();drawFilters();window.multiTrackPreview?.paint();applyVideoEffectPreview();drawTrackControls();syncProjectAudio(true);window.StudioLibrary?.refreshLookSelection();if(typeof drawRippleButton==='function')drawRippleButton();if(typeof paintTimelineVideoSelection==='function')paintTimelineVideoSelection();window.StudioTemplates?.refreshSources();scheduleAutosave();
     }
     function drawRuler(total){
       const ruler=el('timeline-ruler');ruler.innerHTML='';const desiredSeconds=Math.max(.1,70/Math.max(.02,S.zoom)),power=Math.pow(10,Math.floor(Math.log10(desiredSeconds))),normalized=desiredSeconds/power,step=(normalized<=1?1:normalized<=2?2:normalized<=5?5:10)*power;
@@ -1788,7 +1799,7 @@
     function splitAudioLayer(){if(isTrackLocked('audio'))return log('manual-log','Ses kanalı kilitli.','error');const selected=S.selectedLayer;if(selected?.type!=='audio')return;const time=currentOutputTime(),inside=item=>item&&time>item.start+.05&&time<item.end-.05,preferred=S.audioLayers.find(x=>x.id===selected.id),item=inside(preferred)?preferred:S.audioLayers.find(inside);if(!item)return log('manual-log','Oynatma kafasını ses klibinin içine getirin.','error');remember();const right={...item,id:'A'+S.nextLayerId++,start:time,sourceStart:(+item.sourceStart||0)+(time-item.start)};item.end=time;S.audioLayers.push(right);S.selectedLayer={type:'audio',id:right.id};drawClips();log('manual-log',ft(time)+' noktasından ses kesildi.','info')}
     function splitSelected(){if(S.selectedLayer?.type==='audio')splitAudioLayer();else if(S.selectedLayer?.type==='image')log('manual-log','Görsel süresini kenardaki ok tutamaçlarıyla kısaltın.','info');else if(S.selectedSticker)log('manual-log','Sticker süresini kenardaki ok tutamaçlarıyla kısaltın.','info');else if(S.selectedText)log('manual-log','Metin süresini kenardaki ok tutamaçlarıyla kısaltın.','info');else splitClip()}
     function removeClip(){if(typeof selectedTimelineVideos==='function'&&selectedTimelineVideos().length>1)return deleteTimelineVideoSelection();if(isTrackLocked('video'))return log('manual-log','Video kanalı kilitli.','error');if(!S.clips[S.selected])return;remember();const removed=S.selected;S.transitions=S.transitions.filter(item=>item.leftClipId!==S.clips[removed].clipId&&item.rightClipId!==S.clips[removed].clipId);S.clips.splice(removed,1);clampClipTransitions();S.selected=Math.min(S.selected,S.clips.length-1);S.preview=S.selected;if(S.clips[S.selected])setPreviewSource(S.selected,undefined,false);else pausePreview();drawClips();log('manual-log','Seçili klip silindi.')}
-    el('split').onclick=splitSelected;el('remove').onclick=removeClip;
+    el('split').onclick=splitSelected;el('remove').onclick=removeTimelineSelection;
     function move(n){
       const selected=S.clips[S.selected],neighbor=neighboringVideoClip(selected,n);
       if(!selected||!neighbor||isVideoTrackLocked(selected))return;
@@ -2041,6 +2052,50 @@
     function videoClipFromAsset(asset,start,end,timelineStart){
       return hydrateClip({videoTrack:S.activeVideoTrack||1,assetId:asset.id,fileId:asset.fileId,src:asset.src,name:asset.name,sourceDuration:asset.duration,start,end,timelineStart:Math.max(0,timelineStart)});
     }
+    function timelineSelectedTrack(){
+      if(S.selectedLayer)return S.selectedLayer.type;
+      if(S.selectedSticker)return 'sticker';
+      if(S.selectedText)return selectedText()?.kind==='subtitle'?'subtitle':'text';
+      return 'video';
+    }
+    function removeTimelineSelection(){
+      if(S.selectedLayer)deleteSelectedLayer();
+      else if(S.selectedSticker)deleteSelectedSticker();
+      else if(S.selectedText)deleteSelectedText();
+      else removeClip();
+    }
+    function studioLayerSelection(){
+      if(S.selectedLayer)return S.selectedLayer.type==='audio'?S.audioLayers.find(item=>item.id===S.selectedLayer.id):null;
+      return S.selectedText?null:selectedSticker();
+    }
+    function drawStudioLayerInspector(){
+      const item=studioLayerSelection(),panel=el('studio-layer-inspector');
+      panel.classList.toggle('hidden',!item);
+      if(!item)return;
+      const type=S.selectedLayer?.type==='audio'?'audio':'sticker',locked=isTrackLocked(type),audio=type==='audio';
+      el('studio-layer-title').textContent=audio?'Ses klibi':'Çıkartma';
+      el('studio-layer-name').textContent=item.name||item.preset||(audio?'Ses':'Çıkartma');
+      el('studio-layer-start').textContent=ft(item.start);el('studio-layer-end').textContent=ft(item.end);
+      el('studio-layer-duration').textContent=ft(item.end-item.start);
+      el('studio-layer-remove').disabled=locked;
+      el('studio-layer-volume-control').classList.toggle('hidden',!audio);
+      if(audio){
+        const volume=Math.round((Number.isFinite(+item.volume)?+item.volume:1)*100);
+        el('studio-layer-volume').disabled=locked;el('studio-layer-volume').value=String(volume);
+        el('studio-layer-volume-value').textContent=volume+'%';
+      }
+    }
+    el('studio-layer-remove').onclick=removeTimelineSelection;
+    const layerVolume=el('studio-layer-volume');
+    const rememberLayerVolume=()=>{if(S.selectedLayer?.type==='audio'&&!isTrackLocked('audio'))remember()};
+    layerVolume.onpointerdown=rememberLayerVolume;
+    layerVolume.onkeydown=event=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key))rememberLayerVolume()};
+    layerVolume.oninput=()=>{
+      const item=studioLayerSelection();
+      if(!item||S.selectedLayer?.type!=='audio'||isTrackLocked('audio'))return;
+      item.volume=Number(layerVolume.value)/100;el('studio-layer-volume-value').textContent=layerVolume.value+'%';
+      syncProjectAudio();scheduleAutosave();
+    };
     function layerSelected(type,id){return S.selectedLayer?.type===type&&S.selectedLayer?.id===id}
     function drawTimelineMediaLayers(){
       const total=outDuration(),trackWidth=Math.max(34,total*S.zoom),draw=(items,type,track)=>{track.innerHTML='';track.style.width=trackWidth+'px';items.forEach(item=>{if(type==='image')hydrateImageLayer(item);const b=document.createElement('button');b.type='button';b.className='timeline-media-clip '+(type==='image'?'image-layer-clip ':'audio-layer-clip ')+(layerSelected(type,item.id)?'selected':'');b.style.left=(item.start*S.zoom)+'px';b.style.top='5px';b.style.width=Math.max(0,(item.end-item.start)*S.zoom)+'px';b.dataset.layerId=item.id;b.innerHTML='<span class="image-clip-label"><b class="block text-[10px] truncate">'+(type==='image'?'▧ ':'♫ ')+escapeHtml(item.name)+'</b><span data-timeline-time class="text-[9px] opacity-70">'+ft(item.start)+' → '+ft(item.end)+'</span>'+(type==='image'?'<small class="image-timeline-badges">'+imageToolLabels(item).map(([key,label])=>escapeHtml((key==='animation'?'↗ ':key==='effect'?'✦ ':'◉ ')+label)).join(' · ')+'</small>':'')+'</span>';b.title=item.name+(type==='image'?' · '+imageToolLabels(item).map(([,label])=>label).join(' · '):'');appendTrimHandles(b,type,item.id);b.onclick=event=>{if(S.suppressLayerClick)return;if(!layerSelected(type,item.id))S.selectedImageKeyframe=null;S.selectedLayer={type,id:item.id};S.selectedText=null;S.selectedSticker=null;drawClips();pausePreview();seekOutputTime(Math.max(item.start,Math.min(item.end-.001,timelineTimeAtClientX(event.clientX))))};b.onpointerdown=e=>beginTimelineLayerDrag(e,type,item.id,b);b.oncontextmenu=e=>openContextMenu(e,{type,id:item.id});if(isTrackLocked(type))b.classList.add('track-locked');track.appendChild(b);if(type==='image')normalizedImageKeyframes(item).forEach(frame=>{const marker=document.createElement('button');marker.type='button';marker.className='image-keyframe-marker '+(layerSelected('image',item.id)&&S.selectedImageKeyframe===frame.id?'selected':'');marker.dataset.imageKf=frame.id;marker.dataset.imageId=item.id;marker.style.left=((item.start+frame.time)*S.zoom)+'px';marker.title='◆ '+ft(item.start+frame.time)+' · '+Math.round(frame.scale)+'% · α'+Math.round(frame.opacity)+'%';marker.setAttribute('aria-label',marker.title);marker.onpointerdown=event=>event.stopPropagation();marker.onclick=event=>{event.stopPropagation();selectImageKeyframe(item.id,frame.id)};track.appendChild(marker)})})};draw(S.imageLayers,'image',el('image-track'));draw(S.audioLayers,'audio',el('audio-track'))
@@ -2071,12 +2126,32 @@
     }
     function mixedImageStyle(value,intensity,transform=false){const amount=Math.max(0,Math.min(1,(Number.isFinite(+intensity)?+intensity:100)/100));if(!value||value==='none'||!amount)return '';return value.replace(/([a-zA-Z-]+)\(([^)]+)\)/g,(_,name,args)=>{const neutral=/^(brightness|contrast|saturate|opacity|scale|scaleX|scaleY)$/.test(name)?1:0;return name+'('+args.replace(/#[0-9a-f]+|-?(?:\d*\.)?\d+(?:e[-+]?\d+)?/gi,number=>number.startsWith('#')?number:String(neutral+(Number(number)-neutral)*amount))+')'})}
     function paintImagePreview(wrap,item,time=currentOutputTime()){const state=imageTransformAtTime(item,time),animation=clipAnimationStyle({...item,speed:1,scale:100,zoomKeyframes:[]},time),effect=effectStyles(item),filter=CLIP_FILTERS[item.filter]||CLIP_FILTERS.none,image=wrap.querySelector('.preview-image');wrap.style.left=state.x+'%';wrap.style.top=state.y+'%';wrap.style.width=(item.scale*state.scale/100)+'%';wrap.style.transform='translate(-50%,-50%) rotate('+(item.rotation||0)+'deg)';image.style.opacity=String(state.opacity/100);image.style.filter=[mixedImageStyle(effect.filter,item.effectIntensity),mixedImageStyle(filter.filter,item.filterIntensity),animation.filter].filter(Boolean).join(' ')||'none';image.style.transform=[animation.transform,mixedImageStyle(effect.transform,item.effectIntensity,true)].filter(value=>value&&value!=='none').join(' ')||'none'}
+    function removeAudioElement(id,audio){
+      audio.pause();audio.removeAttribute('src');audio.load();audio.remove();
+      delete S.audioElements[id];
+    }
     function ensureAudioElement(item){
-      let audio=S.audioElements[item.id];if(!audio){audio=document.createElement('audio');audio.preload='auto';audio.src=item.src;el('project-audio-host').appendChild(audio);S.audioElements[item.id]=audio}return audio
+      const existing=S.audioElements[item.id];
+      if(existing&&existing.getAttribute('src')===item.src)return existing;
+      if(existing)removeAudioElement(item.id,existing);
+      const audio=document.createElement('audio');audio.preload='auto';audio.src=item.src;
+      el('project-audio-host').appendChild(audio);S.audioElements[item.id]=audio;
+      return audio;
     }
     function stopProjectAudio(){Object.values(S.audioElements).forEach(audio=>audio.pause())}
+    function clearProjectAudio(){Object.entries(S.audioElements).forEach(([id,audio])=>removeAudioElement(id,audio))}
     function syncProjectAudio(force=false){
-      const time=currentOutputTime(),validIds=new Set(S.audioLayers.map(x=>x.id));Object.entries(S.audioElements).forEach(([id,audio])=>{if(!validIds.has(id)){audio.pause();audio.remove();delete S.audioElements[id]}});if(S.trackState.audio.muted){stopProjectAudio();return}S.audioLayers.forEach(item=>{const audio=ensureAudioElement(item),active=time>=item.start&&time<item.end,desired=Math.max(0,item.sourceStart+time-item.start);audio.volume=Math.max(0,Math.min(1,item.volume*(window.StudioTransport?.volume()??1)));if(active){if(force||Math.abs(audio.currentTime-desired)>.35)try{audio.currentTime=desired}catch{}if(!!isPreviewPlaying())audio.play().catch(()=>{})}else audio.pause()})
+      const time=currentOutputTime(),validIds=new Set(S.audioLayers.map(item=>item.id));
+      for(const [id,audio] of Object.entries(S.audioElements))if(!validIds.has(id))removeAudioElement(id,audio);
+      if(S.trackState.audio.muted){stopProjectAudio();return}
+      for(const item of S.audioLayers){
+        const audio=ensureAudioElement(item),active=time>=item.start&&time<item.end,desired=Math.max(0,(+item.sourceStart||0)+time-item.start);
+        audio.volume=Math.max(0,Math.min(1,(Number.isFinite(+item.volume)?+item.volume:1)*(window.StudioTransport?.volume()??1)));
+        if(active){
+          if(force||Math.abs(audio.currentTime-desired)>.35)try{audio.currentTime=desired}catch{}
+          if(isPreviewPlaying())audio.play().catch(()=>{});
+        }else audio.pause();
+      }
     }
     drawProjectLibrary();
 

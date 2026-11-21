@@ -18,7 +18,7 @@ function fixture(){
     el:id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',removeAttribute(){},load(){},classList:{add(){},remove(){}}});return nodes.get(id)},
     crypto:{randomUUID:()=>String(++counter)},normalizeZoomEasing:value=>value||'linear',
     clampClipTransitions(){},copyTransitions:items=>plain(items),hydrateImageLayer:item=>item,
-    resetLiveTransition(){},stopProjectAudio(){},pausePreview(){},isPreviewPlaying:()=>false,
+    resetLiveTransition(){},stopProjectAudio(){},clearProjectAudio(){},pausePreview(){},isPreviewPlaying:()=>false,
     setupThumbnailSource(){},setPreviewSource:(index,time,playing)=>{c.lastPreview={index,time,playing}},
     updateCanvas(){},updateZoomLabel(){},drawMagnetButton(){},drawClips(){},showTextProperties(){},drawProjectLibrary(){},
     restoreAssetSources(){},undoProjectAssetRemoval:()=>false,scheduleAutosave:()=>saves++,seekOutputTime:time=>{c.seeked=time},log(){},ft:String,

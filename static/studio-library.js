@@ -179,7 +179,7 @@
     return grid;
   }
 
-  function applyLook(look, clip = selectedClip()) {
+  function applyLook(look, clip) {
     if (!clip) return log('manual-log','Görünüm uygulamak için zaman çizelgesinden bir video klibi seçin.','info');
     if (isVideoTrackLocked(clip)) return log('manual-log','Video kanalı kilitli.','error');
     const color = {...lookDefaults,...look.color};
@@ -192,7 +192,7 @@
   }
   function attachLook(button,look) {
     button.onclick = () => {
-      if (!button.dataset.suppressClick) applyLook(look);
+      if (!button.dataset.suppressClick)applyLook(look,S.selectedLayer||S.selectedText||S.selectedSticker?null:selectedClip());
     };
     button.onpointerdown = event => {
       if (event.button !== 0) return;
@@ -270,7 +270,8 @@
   }
   async function addBundled(item, button) {
     const generation = workspaceGeneration, timeline = timelineGeneration, key = generation+':'+item.id;
-    const locked = () => item.kind === 'audio' ? isTrackLocked('audio') : isVideoTrackLocked(S.activeVideoTrack);
+    const targetVideoTrack = item.kind === 'video' ? S.activeVideoTrack : null;
+    const locked = () => targetVideoTrack===null ? isTrackLocked('audio') : isVideoTrackLocked(targetVideoTrack);
     if (pending.has(key)) return;
     if (locked()) return log('manual-log','Kanal kilitli; eklemek için önce kilidi açın.','error');
     const position = currentOutputTime();
@@ -294,6 +295,10 @@
       }
       if (timeline !== timelineGeneration) {
         log('manual-log',item.name+' proje medyasına eklendi. Zaman çizelgesi değiştiği için orijinal konuma yerleştirilmedi.','info');
+        return;
+      }
+      if (targetVideoTrack!==null&&targetVideoTrack!==S.activeVideoTrack) {
+        log('manual-log',item.name+' proje medyasına eklendi. Seçili video kanalı değişti.','info');
         return;
       }
       addProjectAssetAt(asset,position,{extendAudio:item.kind==='audio'});

@@ -1,0 +1,242 @@
+'use strict';
+
+// Exercise the bundled media, renderer and FFmpeg with an isolated backend and real Electron inputs.
+const { app, BrowserWindow } = require('electron');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const net = require('node:net');
+const os = require('node:os');
+const path = require('node:path');
+const { spawn, execFileSync } = require('node:child_process');
+
+const root = path.resolve(__dirname,'..');
+const artifacts = fs.mkdtempSync(path.join(os.tmpdir(),'otomatik-studio-library-'));
+const token = crypto.randomBytes(24).toString('hex');
+const headers = {'X-Desktop-Token':token};
+const backendLines = [];
+let backend, win, origin;
+const evaluate = code => win.webContents.executeJavaScript(code);
+const frames = () => evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+
+async function waitFor(check,label,limit=12000) {
+  const deadline = Date.now()+limit;
+  while(Date.now()<deadline){
+    const value = await check();
+    if(value)return value;
+    await new Promise(resolve=>setTimeout(resolve,35));
+  }
+  throw new Error('Timed out waiting for '+label);
+}
+async function freePort() {
+  const socket = net.createServer();
+  await new Promise((resolve,reject)=>{socket.once('error',reject);socket.listen(0,'127.0.0.1',resolve)});
+  const {port} = socket.address();
+  await new Promise(resolve=>socket.close(resolve));
+  return port;
+}
+async function startBackend() {
+  const port = await freePort();
+  const pythonCandidates = process.platform==='win32'
+    ? [path.join(root,'.venv-windows','Scripts','python.exe'),path.join(root,'venv','Scripts','python.exe'),'python']
+    : [path.join(root,'venv','bin','python'),'python3'];
+  const python = process.env.SMART_EDITOR_PYTHON || pythonCandidates.find(candidate=>fs.existsSync(candidate)) || pythonCandidates.at(-1);
+  origin = 'http://127.0.0.1:'+port;
+  backend = spawn(python,[path.join(root,'app.py')],{cwd:root,windowsHide:true,
+    env:{...process.env,PYTHONUNBUFFERED:'1',SMART_EDITOR_DESKTOP:'1',SMART_EDITOR_DESKTOP_TOKEN:token,
+      SMART_EDITOR_DATA_DIR:path.join(artifacts,'data'),SMART_EDITOR_LEGACY_DIR:'',SMART_EDITOR_PORT:String(port),SMART_EDITOR_OPEN_BROWSER:'0'},
+    stdio:['ignore','pipe','pipe']});
+  let spawnError;
+  backend.on('error',error=>{spawnError=error});
+  for(const stream of [backend.stdout,backend.stderr])stream.on('data',data=>backendLines.push(String(data)));
+  await waitFor(async()=>{
+    if(spawnError)throw spawnError;
+    if(backend.exitCode!==null)throw new Error('Backend stopped before startup');
+    return (await fetch(origin+'/api/health',{headers}).catch(()=>null))?.ok;
+  },'studio backend');
+}
+async function point(selector) {
+  await evaluate(`void document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'nearest',inline:'nearest'})`);
+  await frames();
+  const result = await evaluate(`(()=>{
+    const node=document.querySelector(${JSON.stringify(selector)}),rect=node.getBoundingClientRect();
+    const x=Math.round(rect.left+rect.width/2),y=Math.round(rect.top+rect.height/2);
+    return {x,y,reachable:!node.disabled&&node.contains(document.elementFromPoint(x,y))};
+  })()`);
+  assert.ok(result.reachable,'Reachable control '+selector);
+  return {x:result.x,y:result.y};
+}
+const send = (type,position) => win.webContents.sendInputEvent({type,button:'left',clickCount:1,...position});
+async function click(selector) {
+  const at = await point(selector);
+  send('mouseDown',at);send('mouseUp',at);await frames();
+}
+async function search(value) {
+  await evaluate(`el('studio-asset-search').value=${JSON.stringify(value)};el('studio-asset-search').dispatchEvent(new Event('input',{bubbles:true}))`);
+}
+async function screenshot(name) {
+  fs.writeFileSync(path.join(artifacts,name+'.png'),(await win.webContents.capturePage()).toPNG());
+}
+
+async function renderColorSample(name) {
+  const job = await evaluate(`(async()=>{
+    const data=manualExportData();data.resolution={width:320,height:180};
+    data.options.hardware='cpu';data.options.fps=24;data.clips[0].end=1;
+    const response=await fetch('/start-render',{method:'POST',body:buildRenderForm(data)});
+    if(!response.ok)throw new Error(await response.text());
+    return events((await response.json()).job_id,()=>{});
+  })()`);
+  const download = await fetch(origin+job.download_url,{headers});
+  assert.ok(download.ok);
+  const filename = path.join(artifacts,name+'.mp4');
+  fs.writeFileSync(filename,Buffer.from(await download.arrayBuffer()));
+  const packagedFFmpeg = path.join(root,'tools','ffmpeg','bin','ffmpeg.exe');
+  const ffmpeg = process.env.SMART_EDITOR_FFMPEG || (process.platform==='win32'&&fs.existsSync(packagedFFmpeg)?packagedFFmpeg:'ffmpeg');
+  const rgb = execFileSync(ffmpeg,['-v','error','-i',filename,'-frames:v','1','-pix_fmt','rgb24','-f','rawvideo','-'],{timeout:12000});
+  let sum=0;
+  for(let i=0;i<rgb.length;i+=3)sum+=Math.max(rgb[i],rgb[i+1],rgb[i+2])-Math.min(rgb[i],rgb[i+1],rgb[i+2]);
+  return sum/(rgb.length/3);
+}
+
+async function checkPlayerAndLooks() {
+  assert.equal(await evaluate('mv.controls'),false);
+  assert.ok(await evaluate('el("studio-play-toggle").disabled'));
+  await click('#studio-add-demo');
+  await waitFor(()=>evaluate('S.clips.length===1 && mv.readyState>=2 && !mv.seeking'),'example upload and video decode');
+  const sample = await evaluate('({zoom:S.zoom,duration:S.clips[0].end,file:S.clips[0].fileId})');
+  assert.ok(sample.zoom>=50 && sample.duration>7 && sample.file.endsWith('_alpine-tour.mp4'));
+  await click('#studio-play-toggle');
+  await waitFor(()=>evaluate('!mv.paused && mv.currentTime>.05'),'visible play control');
+  await click('#studio-play-toggle');
+  assert.ok(await evaluate('mv.paused && el("studio-play-toggle").getAttribute("aria-label")==="Oynat"'));
+
+  await click('[data-asset-tab="filter"]');
+  assert.equal(await evaluate('document.querySelectorAll("[data-studio-look]").length'),10);
+  await search('film gumus');
+  assert.deepEqual(await evaluate('[...document.querySelectorAll("#studio-look-groups [data-studio-item]:not([hidden])")].map(node=>node.dataset.studioItem)'),['look:silver-print']);
+  await click('[data-studio-favorite="look:silver-print"]');
+  await search('');await click('#studio-favorites');
+  assert.equal(await evaluate('document.querySelectorAll("#studio-look-groups [data-studio-item]:not([hidden])").length'),1);
+  const before = await renderColorSample('alpine-original');
+  await click('[data-studio-look="silver-print"]');
+  assert.equal(await evaluate('S.clips[0].saturation'),0);
+  assert.equal(await evaluate('el("manual-video").style.filter.includes("saturate(0)")'),true);
+  assert.equal(await evaluate('document.querySelector("[data-studio-look=silver-print]").getAttribute("aria-pressed")'),'true');
+  const after = await renderColorSample('alpine-silver-print');
+  assert.ok(before>15&&after<3,`Rendered chroma before ${before}, after ${after}`);
+  await screenshot('looks-applied-1440x900');
+  await evaluate('undoEdit()');
+  assert.equal(await evaluate('S.clips[0].saturation'),100);
+  await evaluate('videoTrackState(1).locked=true;drawClips()');
+  await click('[data-studio-look="silver-print"]');
+  assert.equal(await evaluate('S.clips[0].saturation'),100);
+  await evaluate('videoTrackState(1).locked=false;drawClips()');
+  await click('#studio-favorites');
+  await search('krem');
+  const from = await point('[data-studio-look="cream-studio"]'), target = await point('#video-track-1 .clip');
+  send('mouseDown',from);send('mouseMove',{x:from.x+14,y:from.y+10});await frames();
+  send('mouseMove',target);await frames();send('mouseUp',target);await frames();
+  assert.equal(await evaluate('S.clips[0].brightness'),111,'Drag applies the look to the actual video clip');
+  return {before,after,initialZoom:sample.zoom};
+}
+
+async function checkAudioAndRecovery() {
+  await click('[data-asset-tab="sounds"]');
+  assert.equal(await evaluate('el("studio-sound-cards").querySelectorAll(".studio-sound-card").length'),9);
+  await search('hizli gecis');
+  await click('[data-studio-item="sound:whoosh"] button[aria-pressed]');
+  assert.equal(await evaluate(`document.querySelector('[data-studio-item="sound:whoosh"] button').getAttribute('aria-pressed')`),'true');
+  await evaluate('seekOutputTime(1.3)');
+  const effectAdd = '[data-studio-item="sound:whoosh"] button[title="Oynatma noktasına ekle"]';
+  await click(effectAdd);
+  await waitFor(()=>evaluate('S.audioLayers.length===1'),'sound effect upload and placement');
+  const layer = await evaluate('S.audioLayers[0]');
+  assert.ok(Math.abs(layer.start-1.3)<.04 && layer.end-layer.start>.5 && layer.fileId.endsWith('_whoosh.wav'));
+  await evaluate('seekOutputTime(2.2)');
+  await click(effectAdd);
+  await waitFor(()=>evaluate('S.audioLayers.length===2'),'reused effect placement');
+  assert.equal(await evaluate('S.audioLayers[1].fileId'),layer.fileId);
+  assert.equal(await evaluate('S.mediaAssets.filter(asset=>asset.studioSource==="whoosh").length'),1);
+  await search('lo-fi');
+  await click('[data-studio-item="music:coast"] button[title="Oynatma noktasına ekle"]');
+  await waitFor(()=>evaluate('S.audioLayers.length===3'),'music upload and placement');
+  assert.ok(await evaluate('Math.abs(S.audioLayers[2].end-S.audioLayers[2].start-10)<.1'));
+  assert.ok(await evaluate('outDuration()>S.clips[0].end'), 'Music retains its full length after the video');
+  assert.equal(await evaluate('el("studio-layer-title").textContent'),'Ses klibi');
+  await evaluate(`el('studio-layer-volume').value='52';el('studio-layer-volume').dispatchEvent(new Event('input',{bubbles:true}))`);
+  assert.equal(await evaluate('S.audioLayers[2].volume'),.52);
+  await click('#remove');
+  assert.equal(await evaluate('S.clips.length'),1,'Timeline delete leaves the unrelated video clip alone');
+  assert.equal(await evaluate('S.audioLayers.length'),2);
+  await evaluate('undoEdit()');
+  assert.equal(await evaluate('S.audioLayers.length'),3);
+  await search('');await screenshot('sound-library-1440x900');
+  await evaluate(`window.oldSoundFixture=S.audioElements.A1;window.oldTimelineFixture=S.activeTimelineId;createTimeline();
+    addProjectAssetAt(S.mediaAssets.find(asset=>asset.studioSource==='coast'),0,{extendAudio:true})`);
+  assert.deepEqual(await evaluate(`({
+    id:S.audioLayers[0].id, oldRetired:oldSoundFixture.paused&&!oldSoundFixture.isConnected&&!oldSoundFixture.getAttribute('src'),
+    replaced:S.audioElements.A1!==oldSoundFixture, sourceMatches:S.audioElements.A1.getAttribute('src')===S.audioLayers[0].src
+  })`),{id:'A1',oldRetired:true,replaced:true,sourceMatches:true});
+  await click('#studio-play-toggle');
+  await waitFor(()=>evaluate('S.audioElements.A1?.currentTime>.05&&!S.audioElements.A1.paused&&oldSoundFixture.paused'),'only current timeline audio plays');
+  await click('#studio-play-toggle');
+  await evaluate('switchTimeline(oldTimelineFixture)');
+  assert.equal(await evaluate('S.audioElements.A1.getAttribute("src")===S.audioLayers[0].src'),true);
+  for(const id of ['fonts','templates','captions']){
+    assert.ok(await evaluate(`StudioWorkspace.openSection('${id}') && el('studio-library-filters').classList.contains('hidden')`));
+  }
+  await evaluate('S.zoom=37;drawClips();persistProjectRecovery()');
+  await win.loadURL(origin);
+  await evaluate('projectWorkspaceInitialization');
+  assert.equal(await evaluate('S.zoom'),37);
+  assert.equal(await evaluate('S.audioLayers.length'),3);
+  await click('[data-asset-tab="filter"]');
+  assert.equal(await evaluate(`document.querySelector('[data-studio-favorite="look:silver-print"]').getAttribute('aria-pressed')`),'true');
+  return {effectDuration:layer.end-layer.start,audioCount:3,isolatedRepeatedLayerId:true,recoveredZoom:37};
+}
+
+async function checkDelayedExampleLane() {
+  await evaluate(`(() => {
+    restoreProject({name:'Gecikmeli örnek',timelines:[{id:'TL1',name:'Çizelge',state:emptyTimelineState()}]});
+    StudioWorkspace.openSection('media');
+    const original=upload;
+    upload=async(...args)=>{
+      const uploaded=await original(...args);
+      return new Promise(resolve=>{window.releaseLibraryUpload=()=>{upload=original;resolve(uploaded)}});
+    };
+  })()`);
+  await click('#studio-add-demo');
+  await waitFor(()=>evaluate('!!window.releaseLibraryUpload'),'received upload held before renderer placement');
+  await click('#video-track-add');
+  assert.equal(await evaluate('S.activeVideoTrack'),2);
+  await evaluate('releaseLibraryUpload()');
+  await waitFor(()=>evaluate('S.mediaAssets.length===1&&!el("studio-add-demo").disabled'),'stored unplaced project media');
+  assert.equal(await evaluate('S.clips.length'),0,'Delayed example must not insert into the newly selected video lane');
+  assert.match(await evaluate('el("manual-log-summary").textContent'),/Seçili video kanalı değişti/);
+}
+
+app.whenReady().then(async()=>{
+  await startBackend();
+  win = new BrowserWindow({show:false,width:1440,height:900,useContentSize:true,
+    webPreferences:{contextIsolation:true,sandbox:true,backgroundThrottling:false,partition:'studio-library-'+token}});
+  win.webContents.session.webRequest.onBeforeSendHeaders({urls:[origin+'/*']},(details,callback)=>{
+    callback({requestHeaders:{...details.requestHeaders,...headers}});
+  });
+  await win.loadURL(origin);await evaluate('projectWorkspaceInitialization');win.showInactive();
+  const looks=await checkPlayerAndLooks(), audio=await checkAudioAndRecovery();
+  await checkDelayedExampleLane();
+  console.log(JSON.stringify({ok:true,looks,audio,delayedExampleLanePreserved:true,artifacts}));
+}).catch(error=>{
+  console.error(error);
+  console.error(backendLines.join('').split('\n').slice(-12).join('\n'));
+  console.error('Artifacts: '+artifacts);
+  process.exitCode=1;
+}).finally(async()=>{
+  win?.destroy();
+  if(backend&&backend.exitCode===null&&backend.pid){
+    const stopped=new Promise(resolve=>backend.once('exit',resolve));backend.kill();
+    await Promise.race([stopped,new Promise(resolve=>setTimeout(resolve,2000))]);
+    if(backend.exitCode===null)backend.kill('SIGKILL');
+  }
+  app.exit(process.exitCode||0);
+});

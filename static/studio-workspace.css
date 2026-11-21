@@ -111,7 +111,7 @@
 #studio-inspector-empty h2 { font-size: 13px; font-weight: 750; padding-bottom: 8px; border-bottom: 1px solid var(--studio-border); }
 #studio-inspector-empty > div { display: grid; place-items: center; gap: 8px; text-align: center; margin: 20px auto 0; max-width: 160px; font-size: 11px; color: var(--studio-soft); }
 .studio-inspector-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; font-size: 17px; border: 1px solid #475b53; color: var(--studio-mint); background: var(--studio-active); }
-.studio-shell #right-editor-column:has(#clip-inspector:not(.hidden),#image-inspector:not(.hidden),#text-fields:not(.hidden)) #studio-inspector-empty,
+.studio-shell #right-editor-column:has(#clip-inspector:not(.hidden),#image-inspector:not(.hidden),#text-fields:not(.hidden),#studio-layer-inspector:not(.hidden)) #studio-inspector-empty,
 .studio-shell #studio-text-inspector:has(#text-fields.hidden),
 .studio-shell #right-editor-column:has(#clip-inspector:not(.hidden)) #studio-text-inspector { display: none; }
 .studio-shell #right-editor-column section, .studio-shell #right-editor-column .panel { border-radius: 9px; }
@@ -266,3 +266,16 @@
 
 .studio-look-card.active { border-color: var(--studio-mint); box-shadow: inset 0 0 0 1px var(--studio-mint); }
 .studio-sound-duration { display: block; color: var(--studio-soft); font-size: 9px; line-height: 10px; font-weight: 500; }
+
+.studio-shell #studio-layer-inspector { flex: 1; min-height: 0; padding: 10px; overflow: auto; }
+.studio-layer-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-bottom: 1px solid var(--studio-border); padding-bottom: 7px; }
+.studio-layer-heading h2 { font-size: 13px; font-weight: 750; }
+#studio-layer-name { font-size: 12px; font-weight: 700; margin: 8px 0; overflow-wrap: anywhere; }
+.studio-layer-timing { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 5px; }
+.studio-layer-timing div { border: 1px solid var(--studio-border); border-radius: 5px; padding: 4px; min-width: 0; }
+.studio-layer-timing dt { color: var(--studio-muted); font-size: 9px; }
+.studio-layer-timing dd { margin: 2px 0 0; color: var(--studio-mint); font-size: 11px; font-variant-numeric: tabular-nums; }
+#studio-layer-volume-control { display: block; margin-top: 10px; font-size: 11px; }
+#studio-layer-volume-control.hidden { display: none; }
+#studio-layer-volume-control output { color: var(--studio-mint); float: right; }
+#studio-layer-volume { display: block; width: 100%; }

@@ -36,7 +36,7 @@ function fixture() {
     window: {addEventListener(name, callback) {windowEvents.set(name, callback);}, removeEventListener(name) {windowEvents.delete(name);}},
     crypto: {randomUUID: () => 'unique-' + (++serial)}, ResizeObserver: class {observe() {}},
     normalizeZoomEasing: value => value || 'linear', TRANSITION_NAMES: {fade: 'Fade'},
-    hydrateImageLayer: item => item, resetLiveTransition() {}, stopProjectAudio() {}, pausePreview() {},
+    hydrateImageLayer: item => item, resetLiveTransition() {}, stopProjectAudio() {}, clearProjectAudio() {}, pausePreview() {},
     currentOutputTime: () => c.cursor, seekOutputTime(time) {c.cursor = time;},
     setPreviewSource(index) {c.S.preview = index;}, setupThumbnailSource() {},
     drawClips() {c.normalizeVideoRipple(); c.paintTimelineVideoSelection();}, drawClipInspector() {},
