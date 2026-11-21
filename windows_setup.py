@@ -1,14 +1,14 @@
 """Windows setup helper for Smart Video Editor.
 
-Downloads a private FFmpeg/FFprobe copy when neither a bundled nor a system
-installation is available. No administrator permission or PATH change is
-required.
+Downloads a private FFmpeg/FFprobe copy when neither a local nor a system
+installation is available. Desktop packaging uses --bundled to install the
+pinned copy even when a system installation is present.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
+import hashlib
 from pathlib import Path
 import shutil
 import subprocess
@@ -20,7 +20,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent
 LOCAL_BIN = ROOT / "tools" / "ffmpeg" / "bin"
-FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+FFMPEG_URL = "https://github.com/GyanD/codexffmpeg/releases/download/8.0.1/ffmpeg-8.0.1-essentials_build.zip"
+FFMPEG_SHA256 = "e2aaeaa0fdbc397d4794828086424d4aaa2102cef1fb6874f6ffd29c0b88b673"
 
 
 def local_executable(name: str) -> Path:
@@ -80,35 +81,48 @@ def download(url: str, destination: Path) -> None:
     print()
 
 
-def install_ffmpeg() -> None:
-    if check_tools(verbose=False):
+def install_ffmpeg(*, bundled: bool = False) -> None:
+    if not bundled and check_tools(verbose=False):
         print("[OK] FFmpeg ve FFprobe zaten hazır.")
         return
 
-    print("FFmpeg bulunamadı. Projeye özel Windows sürümü indiriliyor...")
+    print("Projeye özel Windows FFmpeg sürümü indiriliyor...")
     LOCAL_BIN.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="smart-editor-ffmpeg-") as temp_dir:
-        archive = Path(temp_dir) / "ffmpeg.zip"
+    with tempfile.TemporaryDirectory(prefix="install-", dir=LOCAL_BIN.parent) as temp_dir:
+        staging = Path(temp_dir)
+        archive = staging / "ffmpeg.zip"
         download(FFMPEG_URL, archive)
+        checksum = hashlib.sha256()
+        with archive.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                checksum.update(chunk)
+        if checksum.hexdigest() != FFMPEG_SHA256:
+            raise RuntimeError("FFmpeg arşivinin SHA-256 doğrulaması başarısız oldu.")
+
+        names = ("ffmpeg", "ffprobe")
         with zipfile.ZipFile(archive) as package:
-            members = package.namelist()
-            for executable in ("ffmpeg.exe", "ffprobe.exe"):
-                suffix = f"/bin/{executable}".lower()
-                member = next((name for name in members if name.lower().endswith(suffix)), None)
+            for name in names:
+                executable = local_executable(name).name
+                suffix = f"/bin/{executable}"
+                member = next((entry for entry in package.namelist() if entry.lower().endswith(suffix)), None)
                 if not member:
                     raise RuntimeError(f"İndirilen pakette {executable} bulunamadı.")
-                target = LOCAL_BIN / executable
-                with package.open(member) as source, target.open("wb") as output:
+                with package.open(member) as source, (staging / executable).open("wb") as output:
                     shutil.copyfileobj(source, output)
 
-    if not check_tools(verbose=False):
-        raise RuntimeError("FFmpeg indirildi ancak çalıştırılamadı.")
+        if not all(executable_works(str(staging / local_executable(name).name)) for name in names):
+            raise RuntimeError("İndirilen FFmpeg veya FFprobe çalıştırılamadı.")
+        for name in names:
+            target = local_executable(name)
+            (staging / target.name).replace(target)
     print("[OK] FFmpeg ve FFprobe projeye kuruldu.")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true", help="Yalnızca gerekli araçları kontrol et")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="Yalnızca gerekli araçları kontrol et")
+    mode.add_argument("--bundled", action="store_true", help="Paketleme için sabit FFmpeg sürümünü kur")
     args = parser.parse_args()
     if sys.version_info < (3, 10):
         print("[HATA] Python 3.10 veya daha yeni bir sürüm gereklidir.")
@@ -116,7 +130,7 @@ def main() -> int:
     try:
         if args.check:
             return 0 if check_tools() else 1
-        install_ffmpeg()
+        install_ffmpeg(bundled=args.bundled)
         return 0
     except Exception as error:
         print(f"[HATA] Windows hazırlığı tamamlanamadı: {error}")

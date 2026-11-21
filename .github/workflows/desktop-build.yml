@@ -56,24 +56,38 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          python windows_setup.py
+          python windows_setup.py --bundled
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $ffmpegBin = Join-Path $env:GITHUB_WORKSPACE 'tools/ffmpeg/bin'
-          if (Test-Path -LiteralPath $ffmpegBin -PathType Container) {
-            $ffmpegBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          }
+          $ffmpegBin = (Resolve-Path -LiteralPath 'tools/ffmpeg/bin').Path
+          $ffmpegBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Verify Windows media tools in the shared PATH
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           foreach ($tool in 'ffmpeg', 'ffprobe') {
+            $expected = (Resolve-Path -LiteralPath "tools/ffmpeg/bin/$tool.exe").Path
             $executable = (Get-Command $tool -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+            if ($executable -ne $expected) { throw "Expected $expected on PATH, found $executable" }
             & $executable -version
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
       - name: Install macOS FFmpeg
         if: runner.os == 'macOS'
-        run: brew install ffmpeg
+        run: |
+          brew install ffmpeg@8
+          printf '%s/bin\n' "$(brew --prefix ffmpeg@8)" >> "$GITHUB_PATH"
+      - name: Verify macOS media tools in the shared PATH
+        if: runner.os == 'macOS'
+        run: |
+          ffmpeg_bin="$(brew --prefix ffmpeg@8)/bin"
+          for tool in ffmpeg ffprobe; do
+            executable="$(command -v "$tool")"
+            if [[ "$executable" != "$ffmpeg_bin/$tool" ]]; then
+              printf 'Expected %s on PATH, found %s\n' "$ffmpeg_bin/$tool" "$executable" >&2
+              exit 1
+            fi
+            "$executable" -version
+          done
       - name: Verify Windows source launcher dependency checks
         if: runner.os == 'Windows'
         run: python scripts/windows_launcher_smoke.py
