@@ -28,6 +28,8 @@ async function waitFor(check, label) {
 }
 
 async function click(selector) {
+  if (['#project-load','#project-delete'].includes(selector)
+      && !await evaluate("el('studio-project-menu').open")) await click('#studio-project-menu summary');
   await evaluate(`void document.querySelector(${json(selector)}).scrollIntoView({block:'nearest',inline:'nearest'})`);
   await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   const point = await evaluate(`(() => {

@@ -53,7 +53,7 @@
     for (const entry of entries.values()) dispose(entry); entries.clear();
     for (const group of groups.values()) group.remove(); groups.clear();
     entered = false; cursor = anchor = 0; controls.hidden = true; host.hidden = true;
-    primary.style.visibility = S.trackState.video.visible ? 'visible' : 'hidden'; primary.controls = true;
+    primary.style.visibility = S.trackState.video.visible ? 'visible' : 'hidden'; primary.controls = !window.StudioTransport;
     el('transition-video').style.visibility = S.trackState.video.visible ? 'visible' : 'hidden';
   }
   function audioGraph(entry) {
@@ -67,7 +67,7 @@
     } catch (error) { console.warn('Kanal ses zinciri kurulamadı', error); return null; }
   }
   function updateAudio(entry, clip, sourceTime, weight) {
-    const track = videoTrackState(clip.videoTrack), volume = (track.muted || clip.muted || clip.reverse ? 0 : clipAudioPreviewVolume(clip, sourceTime) * weight * masterVolume);
+    const track = videoTrackState(clip.videoTrack), volume = (track.muted || clip.muted || clip.reverse ? 0 : clipAudioPreviewVolume(clip, sourceTime) * weight * (window.StudioTransport?.volume() ?? masterVolume));
     const graph = audioGraph(entry); entry.video.muted = volume === 0;
     if (!graph) { entry.video.volume = Math.min(1, volume); return; }
     entry.video.volume = 1; const now = audioContext.currentTime, set = (param, value) => param.setTargetAtTime(value, now, .02);
@@ -175,7 +175,7 @@
   function tick(){if(!playing)return;cursor=time();if(cursor>=outDuration()-.001){pause();return}paint();raf=requestAnimationFrame(tick)}
   function seek(value){enter();cursor=clamp(Number(value)||0,0,outDuration());anchor=cursor;started=performance.now();S.timelineCursor=cursor;S.previewGap=!S.clips.some(clip=>cursor>=clipTimelineStart(clip)&&cursor<clipTimelineEnd(clip));const index=S.clips.findIndex(clip=>(clip.videoTrack||1)===(S.activeVideoTrack||1)&&cursor>=clipTimelineStart(clip)&&cursor<clipTimelineEnd(clip));if(index>=0)S.preview=index;paint(true);return cursor}
   async function play(){enter();if(playing)return;if(cursor>=outDuration()-.001)cursor=0;const token=++generation;paint(true);const until=performance.now()+8000;while([...entries.values()].some(entry=>entry.active&&!entry.failed&&(entry.video.readyState<2||entry.video.seeking))&&performance.now()<until){await new Promise(resolve=>setTimeout(resolve,20));if(token!==generation)return}if(token!==generation)return;playing=true;anchor=cursor;started=performance.now();audioContext?.resume().catch(()=>{});paint();cancelAnimationFrame(raf);raf=requestAnimationFrame(tick)}
-  function pause(){if(!entered)return;cursor=time();anchor=cursor;playing=false;generation++;cancelAnimationFrame(raf);raf=0;for(const entry of entries.values())entry.video.pause();stopProjectAudio();playButton.textContent='▶';S.timelineCursor=cursor}
+  function pause(){if(!entered)return;cursor=time();anchor=cursor;playing=false;generation++;cancelAnimationFrame(raf);raf=0;for(const entry of entries.values())entry.video.pause();stopProjectAudio();playButton.textContent='▶';S.timelineCursor=cursor;window.StudioTransport?.update(cursor,outDuration())}
   playButton.onclick=()=>playing?pause():play();seekBar.oninput=()=>{pause();seek(+seekBar.value)};controls.querySelector('.composite-volume').oninput=event=>{masterVolume=+event.target.value;paint()};
   window.multiTrackPreview={enabled,time,isPlaying:()=>playing,play,pause,seek,paint,reset,cropOf};
   window.addEventListener('resize',()=>{if(enabled())paint(true)});

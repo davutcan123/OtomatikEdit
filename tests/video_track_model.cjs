@@ -45,7 +45,7 @@ test('clicking a video channel label clears stale selection and targets its clip
   c.el=()=>labels.get(1);c.document.querySelector=()=>labels.get(2);
   c.S.clips=[{clipId:'a',videoTrack:1,start:0,end:4,timelineStart:0},{clipId:'b',videoTrack:2,start:0,end:4,timelineStart:0}];
   c.S.selected=0;c.S.selectedText='stale-text';c.outputTime=2;
-  vm.runInContext(line('function drawVideoTrackLabels(){'),c);c.drawVideoTrackLabels();
+  vm.runInContext([line('function drawVideoTrackLabels(){'),between('    function paintStudioTrackControl(', '    function drawTrackControls(')].join('\n'),c);c.drawVideoTrackLabels();
   labels.get(2).querySelector().onclick();
   assert.equal(c.S.activeVideoTrack,2);assert.equal(c.S.selected,1);assert.equal(c.S.selectedText,null);assert.equal(c.splitVideoTarget(2).clip.clipId,'b');
   c.outputTime=8;labels.get(1).querySelector().onclick();assert.equal(c.S.selected,-1);assert.equal(c.S.activeVideoTrack,1);

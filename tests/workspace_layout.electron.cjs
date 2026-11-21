@@ -42,7 +42,7 @@ function serve(req, res) {
     res.end(data.subarray(start,end+1));return;
   }
   if (route === '/projects' || route.startsWith('/api/')) {
-    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({projects:[],version:'fixture',update_available:false}));return;
+    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({projects:[],version:'1.1.10',update_available:false}));return;
   }
   if (route.startsWith('/waveform/')) {
     res.writeHead(200,{'Content-Type':'image/svg+xml'});
@@ -57,10 +57,10 @@ app.whenReady().then(async () => {
   window=new BrowserWindow({show:false,width:1440,height:900,useContentSize:true,
     webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
   await window.loadURL(`http://127.0.0.1:${server.address().port}/`);
-  await evalPage('projectWorkspaceInitialization');await frames();
+  await evalPage('projectWorkspaceInitialization');await evalPage('Promise.all(document.getAnimations().map(animation=>animation.finished.catch(()=>{})))');await frames();
   await screenshot('studio-empty-1440x900');
   await evalPage(`(() => {
-    const asset={id:'M1',fileId:'studio-fixture.mp4',name:'Alp vadisi',kind:'video',duration:6,src:'/video/studio-fixture.mp4'};
+    const asset={id:'M1',fileId:'studio-fixture.mp4',name:'Alp vadisi',kind:'video',duration:8,src:'/video/studio-fixture.mp4'};
     restoreProject({name:'Alp vadisi · İlk kurgu',mediaAssets:[asset],timelines:[{id:'TL1',name:'Dağ rotası',state:emptyTimelineState()}]});
     addProjectAssetAt(S.mediaAssets[0],0);seekOutputTime(1.6);
   })()`);
@@ -70,6 +70,7 @@ app.whenReady().then(async () => {
     poll();
   })`);
   await frames();await screenshot('studio-edit-1440x900');
+  assert.ok(await evalPage(`!mv.controls&&el('studio-play-toggle').getAttribute('aria-label')==='Oynat'&&S.zoom>=50`));
   await evalPage(`(() => {
     StudioWorkspace.openSection('text');
     const presets=el('text-presets');

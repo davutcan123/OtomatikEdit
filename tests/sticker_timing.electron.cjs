@@ -33,7 +33,7 @@ async function checkEditorStatus() {
     assert.ok(layout.preview.height>=220&&layout.timeline.height>=200,'Preview and timeline must remain usable during render');
     assert.ok(Math.abs(layout.stage.width/layout.stage.height-16/9)<.01,'Video aspect ratio must remain intact');
     assert.ok(layout.snapshot.reachable&&layout.render.reachable&&layout.terminal.reachable,'Top actions and terminal must be directly clickable');
-    assert.ok(layout.snapshot.right<=layout.render.left&&Math.abs(layout.snapshot.top-layout.render.top)<2,'Snapshot must sit beside render, not in its dialog');
+    assert.ok(layout.render.bottom<=layout.snapshot.top&&layout.snapshot.left>=layout.preview.left&&layout.snapshot.right<=layout.preview.right,'Export stays global and capture stays on the player');
     assert.ok(layout.snapshot.bottom<layout.preview.top&&layout.render.bottom<layout.preview.top,'Actions must not cover the video');
     assert.ok(layout.barHeight>=16&&layout.percentageFont>=14&&layout.progressValue==='43','Render progress must be readable and accessible');
     assert.ok(layout.dock.bottom<=height&&layout.timeline.bottom<=layout.dock.top,'Status must not obscure the timeline');

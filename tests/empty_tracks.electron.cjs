@@ -23,7 +23,7 @@ function assertVisible(g,types){for(const[type,row]of Object.entries(g.rows)){as
 async function begin(type){
   await evaluate(`window.__emptyDragEvents=[];for(const type of ['pointerdown','pointermove','pointerup','pointercancel','blur'])window.addEventListener(type,event=>{window.__emptyDragEvents.push({type:event.type,target:event.target.id||event.target.className,button:event.button,x:event.clientX,y:event.clientY});window.__emptyDragEvents=window.__emptyDragEvents.slice(-12)},{capture:true,once:true})`);
   const selector=type==='sticker'?'.sticker-card[data-sticker="heart"]':type==='text'?'.text-preset[data-text-style="classic"]':`.project-card[data-asset-id="${type}"]`;
-  if(type==='sticker'||type==='text')await evaluate(`switchAssetTab(${json(type)})`);
+  await click(`[data-asset-tab=${json(type==='sticker'||type==='text'?type:'media')}]`);
   await evaluate(`document.querySelector(${json(selector)}).scrollIntoView({block:'nearest',inline:'nearest'})`);await frames();
   const from=await evaluate(`(()=>{const node=document.querySelector(${json(selector)}),r=node.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;return{x,y,reachable:node.contains(document.elementFromPoint(x,y))}})()`);
   assert.ok(from.reachable,'Source is pointer reachable '+selector+' '+json(from));send('mouseDown',from);send('mouseMove',{x:from.x+12,y:from.y+12});await frames();

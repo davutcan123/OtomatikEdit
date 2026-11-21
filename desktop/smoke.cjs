@@ -111,15 +111,18 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   assert.ok(recoveredVideo.duration >= 1.9);
   assert.equal(await mainWindow.webContents.executeJavaScript('getComputedStyle(document.querySelector(".brush-stage-toolbar")).display'), 'none');
   const layouts = [];
-  for (const [width, height] of [[1366, 740], [1920, 1020]]) {
+  for (const [width, height] of [[1440, 900], [1366, 740], [1100, 700]]) {
     mainWindow.setContentSize(width, height);
     await mainWindow.webContents.executeJavaScript('new Promise(r=>setTimeout(r,180))');
-    const layout = await mainWindow.webContents.executeJavaScript(`(()=>{const bounds=id=>{const r=document.getElementById(id).getBoundingClientRect();return{top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height}};return{width:innerWidth,height:innerHeight,pageHeight:document.documentElement.scrollHeight,pageWidth:document.documentElement.scrollWidth,preview:bounds('preview-shell'),stage:bounds('preview-stage'),timeline:bounds('timeline'),timelinePanel:bounds('timeline-panel')}})()`);
+    const layout = await mainWindow.webContents.executeJavaScript(`(()=>{const bounds=id=>{const r=document.getElementById(id).getBoundingClientRect();return{top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height}};return{width:innerWidth,height:innerHeight,pageHeight:document.documentElement.scrollHeight,pageWidth:document.documentElement.scrollWidth,preview:bounds('preview-shell'),stage:bounds('preview-stage'),timeline:bounds('timeline'),timelinePanel:bounds('timeline-panel'),core:bounds('manual-core'),assets:bounds('asset-editor'),player:bounds('preview-panel'),inspector:bounds('right-editor-column'),transport:bounds('studio-play-toggle'),nativeControls:document.getElementById('manual-video').controls}})()`);
     assert.ok(layout.pageHeight <= height + 2, JSON.stringify(layout));
     assert.ok(layout.pageWidth <= width + 2, JSON.stringify(layout));
     assert.ok(layout.preview.height >= 219 && layout.timeline.height >= 199, JSON.stringify(layout));
     assert.ok(layout.timeline.bottom <= height && layout.preview.bottom <= layout.timelinePanel.top, JSON.stringify(layout));
     assert.ok(Math.abs(layout.stage.width / layout.stage.height - 16 / 9) < .01, JSON.stringify(layout));
+    assert.ok(layout.assets.right < layout.player.left && layout.player.right < layout.inspector.left, JSON.stringify(layout));
+    assert.ok(Math.abs(layout.timelinePanel.left - layout.core.left) < 2 && Math.abs(layout.timelinePanel.right - layout.core.right) < 2, JSON.stringify(layout));
+    assert.ok(layout.transport.width > 20 && layout.transport.bottom <= layout.player.bottom && !layout.nativeControls, JSON.stringify(layout));
     layouts.push(layout);
     await fs.writeFile(path.join(dataDir, `workspace-${width}.png`), (await mainWindow.webContents.capturePage()).toPNG());
   }
@@ -199,7 +202,7 @@ exports.run = async ({ mainWindow, origin, token, dataDir, health }) => {
   assert.ok((await fs.stat(path.join(dataDir, 'saved-' + captures[0]))).isFile());
   // Validate new parallel/crop/clipboard modules inside the actual packaged
   // application, using real uploads and disk recovery, not a substitute page.
-  for (const assetPath of ['/static/video_tracks.js','/static/video_tracks.css','/static/timeline_tools.js','/static/timeline_tools.css']) {
+  for (const assetPath of ['/static/video_tracks.js','/static/video_tracks.css','/static/timeline_tools.js','/static/timeline_tools.css','/static/studio-workspace.css','/static/studio-transport.js','/static/studio-library.js','/static/studio/previews/alpine.jpg','/static/studio/demo/alpine-tour.mp4','/static/studio/sounds/whoosh.wav','/static/studio/music/twilight.mp3']) {
     const response=await request(assetPath);assert.equal(response.status,200,assetPath);assert.ok((await response.text()).length>100,assetPath);
   }
   const multitrackAssets=[];
