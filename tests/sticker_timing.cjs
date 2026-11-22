@@ -34,7 +34,7 @@ function context() {
     between('    function drawStickerOverlay', '    function beginStickerPresetDrag'),
     between('    function timelineBoundaries', '    function fitClipPosition'),
     between('    function beginTimedTrim', '    function setPreviewSource'),
-    between('    function overlayTransformAtTime', '    function textTransformAtTime'),
+    between('    function interpolateOverlayChannels', '    function textTransformAtTime'),
     between('    function newPositionKeyframeId', '    function positionKeyframeTime'),
   ].join('\n'), c);
   return { c, nodes, listeners };

@@ -162,6 +162,7 @@ app.whenReady().then(() => withStudioBrowser(async ({ evaluate, win, temporary, 
     assert.equal(edited.transformKeyframes.length, 2, `${type}: moving at the new time creates a keyframe`);
     const [initial, final] = edited.transformKeyframes;
     assert.deepEqual(initial, first, `${type}: retains the first keyframe`);
+    if (type !== 'sticker') assert.ok(initial.positionOnly && final.positionOnly, `${type}: timeline positions preserve the scale and opacity animation`);
     assert.deepEqual([edited.x, edited.y], [item.x, item.y], `${type}: the base position remains the same`);
     coordinate(final.time, endTime - item.start, .035, `${type} last keyframe time`);
     if (item.end === state.duration) assert.equal(final.time, item.end - item.start, `${type}: the terminal keyframe reaches the clip end`);
@@ -222,6 +223,32 @@ app.whenReady().then(() => withStudioBrowser(async ({ evaluate, win, temporary, 
     const exportCollection = layer.type === 'image' ? 'images' : layer.collection;
     assert.deepEqual(exported[exportCollection][0].transformKeyframes, original, `${layer.type}: both keyframes reach the export form`);
   }
+
+  const sticker = layers.find(layer => layer.type === 'sticker');
+  const limitFrames = Array.from({ length: 120 }, (_, i) => ({ id: `limit-${i}`, time: i / 100, x: 16, y: 18, scale: 100, opacity: 100, easing: 'linear' }));
+  // Densely packed loaded keyframes leave an empty interval later in the layer.
+  await evaluate(`S.stickers[0].transformKeyframes = ${j(limitFrames)};selectSticker(${j(sticker.item.id)}, false)`);
+  await scrub(3.75);
+  assert.equal(await evaluate("el('timeline-position-keyframe-add').disabled"), true, 'The timeline button rejects a 121st frame');
+  const limitTarget = await evaluate(`(() => {
+    const rect = el('preview-stage').getBoundingClientRect();
+    return {x: Math.round(rect.left + rect.width * .75), y: Math.round(rect.top + rect.height * .75)};
+  })()`);
+  const beforeLimitDrag = await history();
+  await drag(await pointFor(overlaySelector(sticker)), limitTarget);
+  assert.deepEqual((await itemState(sticker)).transformKeyframes, limitFrames, 'Dragging at an empty time leaves all 120 frames intact');
+  assert.equal(await history(), beforeLimitDrag);
+
+  await scrub(1.5);
+  await drag(await pointFor(overlaySelector(sticker)), limitTarget);
+  const updated = (await itemState(sticker)).transformKeyframes;
+  assert.equal(updated.length, 120);
+  assert.equal(updated[50].id, 'limit-50', 'Dragging at a keyframe updates the existing frame');
+  coordinate(updated[50].x, 75, 1, 'The existing frame can still move at the limit');
+  assert.deepEqual(updated.filter(frame => frame.id !== 'limit-50'), limitFrames.filter(frame => frame.id !== 'limit-50'));
+  await click(await pointFor('#timeline-position-keyframe-delete'));
+  assert.equal((await itemState(sticker)).transformKeyframes.length, 119, 'Existing frames can still be deleted at the limit');
+
   console.log('Native layer motion passed for stickers, text and images, including scrubbing, interpolation, marker seeking, undo, redo and persistence.');
 })).then(() => app.exit(0), error => {
   console.error(error);

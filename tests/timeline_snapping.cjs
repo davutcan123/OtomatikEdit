@@ -127,6 +127,55 @@ test('text and subtitle trims preserve keyframe boundary state and absolute rema
   }
 });
 
+test('a position-only text keyframe keeps the original scale and opacity easing', () => {
+  const { c } = fixture();
+  const item = { start: 2, end: 3, x: 30, y: 40, transformKeyframes: [
+    { id: 'style-start', time: 0, x: 30, y: 40, scale: 100, opacity: 100, easing: 'linear' },
+    { id: 'style-end', time: 1, x: 70, y: 60, scale: 200, opacity: 20, easing: 'easeIn' },
+  ] };
+  const times = [2.25, 2.5, 2.75];
+  const original = times.map(time => c.textTransformAtTime(item, time));
+  item.transformKeyframes.push({ id: 'pos', time: .5, x: 15, y: 25, scale: 115, opacity: 80, easing: 'easeIn', positionOnly: true });
+  const edited = times.map(time => c.textTransformAtTime(item, time));
+  assert.deepEqual([edited[1].x, edited[1].y], [15, 25]);
+  assert.deepEqual(edited.map(({ scale, opacity }) => [scale, opacity]), original.map(({ scale, opacity }) => [scale, opacity]));
+});
+
+test('extending a sticker to the left keeps its motion anchored to the original start', () => {
+  const { c, pointer, move, up, makeNode } = fixture();
+  const item = { id: 'S1', start: 5, end: 8, x: 20, y: 30,
+    transformKeyframes: [{ id: 'destination', time: 2, x: 80, y: 70, easing: 'easeIn' }] };
+  c.S.stickers = [item];
+  c.S.timelineMagnet = false;
+  const position = time => {
+    const { x, y } = c.overlayTransformAtTime(item, c.normalizedPositionKeyframes('sticker', item), time);
+    return [x, y];
+  };
+  const times = [5, 5.5, 6, 6.75, 7, 8];
+  const original = times.map(position);
+  c.beginTimedTrim(pointer(400), 'sticker', item.id, 'left', makeNode());
+  move(380);
+  up();
+  assert.equal(item.start, 4);
+  assert.deepEqual(position(4.5), [20, 30]);
+  assert.deepEqual(times.map(position), original);
+  assert.equal(item.start + item.transformKeyframes.find(frame => frame.id === 'destination').time, 7);
+});
+
+test('a trim that requires a 121st keyframe leaves the sticker unchanged', () => {
+  const { c, pointer, move, up, history, makeNode } = fixture();
+  const item = { id: 'S1', start: 5, end: 8, x: 20, y: 30,
+    transformKeyframes: Array.from({ length: 120 }, (_, i) => ({ id: `frame-${i}`, time: i / 40, x: 20, y: 30, easing: 'linear' })) };
+  c.S.stickers = [item];
+  c.S.timelineMagnet = false;
+  const original = plain(item);
+  c.beginTimedTrim(pointer(400), 'sticker', item.id, 'right', makeNode());
+  move(420);
+  up();
+  assert.deepEqual(item, original);
+  assert.equal(history.length, 0);
+});
+
 test('timed geometry has no minimum-duration visual lie at any zoom, and handles describe both directions', () => {
   const { c, makeNode } = fixture(), item = { start: 2, end: 3.5 };
   for (const type of ['image', 'audio', 'text', 'subtitle', 'sticker']) for (const zoom of [.02, 8, 80]) {

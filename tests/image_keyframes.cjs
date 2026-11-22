@@ -20,6 +20,9 @@ function fixture() {
   vm.runInContext([between('    const ZOOM_EASINGS=', '    const clipSettings='),
     line('const imageLayerSettings='), line('const hydrateImageLayer='), line('const selectedImageLayer='), line('const copyLayers='),
     between('    function normalizedImageKeyframes', '    function imageToolLabels'), line('function applyImageTool('), line('function mixedImageStyle('), line('function paintImagePreview('), between('    const inspectorGestures=', '    const selectedClip='),
+    between('    function overlayKeyframeInsideTrim', '    function rebaseTimedOverlayKeyframes'),
+    between('    function interpolateOverlayChannels', '    function textTransformAtTime'),
+    between('    function overlayInspectorFrame', '    function editPositionKeyframe'),
   ].join('\n'), c);
   const a = { id: 'A', name: 'First', start: 1, end: 6, x: 50, y: 50, scale: 40, transformKeyframes: [
     { id: 'IZ1', time: 0, scale: 100, x: 35, y: 40, opacity: 100, easing: 'linear' },
@@ -46,6 +49,26 @@ test('all nine easing choices interpolate smoothly and keep endpoints exact', ()
     assert.ok(values.every((value, i) => !i || value >= values[i - 1]));
     assert.ok(Math.max(...values.slice(1).map((value, i) => value - values[i])) < 6);
   }
+});
+
+test('a position-only image keyframe keeps the original scale and opacity easing', () => {
+  const { c, a } = fixture();
+  a.transformKeyframes[1].easing = 'easeIn';
+  const times = [2, 3, 4];
+  const original = times.map(time => c.imageTransformAtTime(a, time));
+  a.transformKeyframes.push({ id: 'pos', time: 2, x: 15, y: 25, scale: 115, opacity: 80, easing: 'easeIn', positionOnly: true });
+  const edited = times.map(time => c.imageTransformAtTime(a, time));
+  assert.deepEqual([edited[1].x, edited[1].y], [15, 25]);
+  assert.deepEqual(edited.map(({ scale, opacity }) => [scale, opacity]), original.map(({ scale, opacity }) => [scale, opacity]));
+  c.S.selectedImageKeyframe = 'pos';
+  const selectedFrame = () => a.transformKeyframes.find(frame => frame.id === 'pos');
+  assert.equal(c.updateSelectedImageKeyframe('scale', original[1].scale), false);
+  c.updateSelectedImageKeyframe('x', 28);
+  assert.equal(selectedFrame().positionOnly, true);
+  c.updateSelectedImageKeyframe('scale', 150);
+  assert.equal(selectedFrame().positionOnly, undefined);
+  const { scale, opacity, x } = c.imageTransformAtTime(a, 3);
+  assert.deepEqual([scale, opacity, x], [150, original[1].opacity, 28]);
 });
 
 test('selected image frame edits do not alter its base settings or other images; time input is output seconds', () => {
