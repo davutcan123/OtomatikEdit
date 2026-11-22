@@ -2,9 +2,9 @@
 
 ## Kurulum
 
-Windows 10/11 64-bit için `OtomatikEdit-1.2.0-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
+Windows 10/11 64-bit için `OtomatikEdit-1.2.1-win-x64.exe` dosyasını çalıştırın. Kurulum kullanıcı hesabınıza yapılır; Python, Node.js veya FFmpeg kurmanız gerekmez. Masaüstündeki **Otomatik Edit** kısayolu editörü kendi penceresinde açar.
 
-Apple Silicon Mac için `OtomatikEdit-1.2.0-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
+Apple Silicon Mac için `OtomatikEdit-1.2.1-mac-arm64.dmg` içinden uygulamayı Applications klasörüne taşıyın. Intel Mac paketi bu derlemenin hedefi değildir.
 
 Kurulum paketleri şu aşamada yayıncı sertifikasıyla imzalı/noter onaylı değildir. İşletim sistemi yayıncı doğrulama uyarısı gösterebilir. Genel dağıtım için Windows kod imzası ve Apple Developer imzalama/noter onayı ayrıca yapılandırılmalıdır.
 
@@ -61,6 +61,10 @@ Otomatik altyazı için önce bir video klibi seçin ve **Altyazı → Otomatik 
 Dışa aktarma tamamlandığında etkin projede kaydetme konumu sorulur. Konum seçimini iptal ettiyseniz veya başka bir projeye geçtiyseniz tamamlanan dosyayı **Son çıktılar** içinden tekrar kaydedebilirsiniz. **Terminal** işlem kayıtlarını ayrı bir pencerede açar.
 
 **Otomatik kırpıcı** sonuçta kaynak, korunan ve çıkarılan süreyi ve klip sayısını gösterir. **Zaman çizelgesine aktar**, kesimler için boş ve kilitsiz çizelgeyi kullanır veya gerekirse yeni bir çizelge açar.
+
+## Çıkartma, metin, altyazı ve görsellerde konum hareketi
+
+Zaman çizelgesinde öğeyi seçin ve oynatma kafasını hareketin başlayacağı ana getirin. Öğeyi tuvalde başlangıç konumuna taşıyıp **Konum karesi ekle** düğmesine tıklayın. Oynatma kafasını öğenin süresi içinde ileri alın ve öğeyi tuvalde hedef konuma sürükleyin. İkinci konum karesi otomatik eklenir. Bir konum karesine gidip öğeyi sürükleyerek konumu güncelleyebilir veya **Konum karesini sil** ile kareyi kaldırabilirsiniz.
 
 ## Görsellerde fırça ve silgi
 
