@@ -1109,6 +1109,10 @@ def normalize_sticker_items(items, total_duration: float) -> list[dict]:
             continue
         start = max(0.0, min(start, max(0.0, total_duration - 0.05)))
         end = max(start + 0.05, min(end, total_duration))
+        raw_frames = item.get("transformKeyframes", [])
+        if isinstance(raw_frames, list):
+            raw_frames = [{**frame, "x": frame.get("x", x), "y": frame.get("y", y)}
+                          if isinstance(frame, dict) else frame for frame in raw_frames]
         normalized.append({
             "preset": preset,
             "start": start,
@@ -1117,6 +1121,7 @@ def normalize_sticker_items(items, total_duration: float) -> list[dict]:
             "y": max(0.0, min(y, 100.0)),
             "scale": max(5.0, min(scale, 80.0)),
             "rotation": max(-3600.0, min(rotation, 3600.0)),
+            "transformKeyframes": normalize_zoom_keyframes(raw_frames, end - start),
         })
     return normalized
 
@@ -1381,10 +1386,15 @@ def create_sticker_overlay(path: str, item: dict, width: int, height: int):
     sticker = sticker.resize((target_width, target_height), Image.Resampling.LANCZOS)
     if abs(item.get("rotation", 0)) > 0.01:
         sticker = sticker.rotate(-item["rotation"], expand=True, resample=Image.Resampling.BICUBIC)
-    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    paste_x = round(width * item["x"] / 100 - sticker.width / 2)
-    paste_y = round(height * item["y"] / 100 - sticker.height / 2)
-    canvas.paste(sticker, (paste_x, paste_y), sticker)
+    if item.get("transformKeyframes"):
+        canvas_size = sticker.size
+        position = (0, 0)
+    else:
+        canvas_size = (width, height)
+        position = (round(width * item["x"] / 100 - sticker.width / 2),
+                    round(height * item["y"] / 100 - sticker.height / 2))
+    canvas = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    canvas.paste(sticker, position, sticker)
     canvas.save(path, "PNG")
 
 async def detect_silence(filepath: str, threshold: float, min_duration: float):
@@ -2015,8 +2025,11 @@ async def run_render_job(job_id: str):
                 create_sticker_overlay, overlay_path, sticker_item, render_width, render_height
             )
             sticker_overlay_paths.append(overlay_path)
-            x, y, _, _ = await prepare(compact_overlay, overlay_path)
-            sticker_overlay_positions.append((x, y))
+            position = (0, 0)
+            if not sticker_item.get("transformKeyframes"):
+                x, y, _, _ = await prepare(compact_overlay, overlay_path)
+                position = (x, y)
+            sticker_overlay_positions.append(position)
         
         # Prepare static selections once, without modifying imported assets.
         gif_inputs = {index for index, item in enumerate(image_items) if item["_gif"]}
@@ -2658,7 +2671,7 @@ async def run_render_job(job_id: str):
         for index, sticker_item in enumerate(sticker_items):
             current_video = append_sticker_overlay(
                 lines, current_video, index, len(video_inputs) + len(text_overlay_paths) + index,
-                sticker_item, sticker_overlay_positions[index], target_fps,
+                sticker_item, sticker_overlay_positions[index], target_fps, snapshot,
             )
         lines.append(f"{current_video}null[outv]")
 

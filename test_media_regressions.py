@@ -425,6 +425,55 @@ class MediaRegressionTests(unittest.TestCase):
             self.assertGreater(snapshot_area, 10)
             self.assertAlmostEqual(video_area, snapshot_area, delta=max(10, snapshot_area * .12))
 
+    def test_delayed_position_keyframes_move_sticker_text_and_image_in_video_and_snapshot(self):
+        clip = {"fileId": "short-audio.mp4", "start": 0, "end": 3}
+        layers = {
+            "texts": [{"text": "I", "size": 180, "outlineWidth": 0, "shadow": False}],
+            "stickers": [{"preset": "heart", "scale": 16}],
+            "images": [{"fileId": "still.png", "scale": 10}],
+        }
+        for layer, y in zip(layers.values(), (22, 47, 72)):
+            layer[0].update(start=1, end=2.5, x=50, y=50, transformKeyframes=[
+                {"time": 0, "scale": 100, "opacity": 100, "x": 20, "y": y},
+                {"time": 1, "scale": 100, "opacity": 100, "x": 80, "y": y + 6, "easing": "linear"},
+            ])
+        output = self.export([clip], **layers)
+        self.assertIsNone(self.frame(output, .5).getbbox())
+        self.assertIsNone(self.frame(output, 2.8).getbbox())
+
+        initial_tops = {}
+        for time, progress in ((1, 0), (1.5, .5), (2, 1), (2.4, 1)):
+            snapshot = self.frame(self.export([clip], snapshot_time=time, **layers))
+            rendered = self.frame(output, time)
+            for kind, (top, bottom) in zip(layers, ((8, 34), (34, 60), (60, 92))):
+                with self.subTest(time=time, layer=kind):
+                    bounds = [frame.crop((0, top, 160, bottom)).convert("L")
+                              .point(lambda value: 255 if value > 80 else 0).getbbox()
+                              for frame in (snapshot, rendered)]
+                    self.assertIsNotNone(bounds[0])
+                    self.assertIsNotNone(bounds[1])
+                    left, top_edge, right, _ = bounds[0]
+                    self.assertAlmostEqual((left + right) / 2, 32 + 96 * progress, delta=2)
+                    initial_top = initial_tops.setdefault(kind, top_edge)
+                    self.assertAlmostEqual(top_edge - initial_top, 96 * .06 * progress, delta=2)
+                    for actual, expected in zip(bounds[1], bounds[0]):
+                        self.assertAlmostEqual(actual, expected, delta=2)
+
+    def test_keyframed_sticker_at_canvas_edge_keeps_static_sprite_alignment(self):
+        clip = {"fileId": "short-audio.mp4", "start": 0, "end": 3}
+        for x, y in ((0, 0), (100, 100)):
+            with self.subTest(x=x, y=y):
+                sticker = {"preset": "target", "start": .8, "end": 2.5, "scale": 35,
+                           "rotation": 30, "x": x, "y": y}
+                keyed = {**sticker, "x": 50, "y": 50, "transformKeyframes": [{"time": 0, "x": x, "y": y}]}
+                static, animated = [self.frame(self.export([clip], snapshot_time=1.5, stickers=[item]))
+                                    .convert("L").point(lambda value: 255 if value > 80 else 0)
+                                    for item in (sticker, keyed)]
+                self.assertIsNotNone(static.getbbox())
+                self.assertIsNotNone(animated.getbbox())
+                for actual, expected in zip(animated.getbbox(), static.getbbox()):
+                    self.assertAlmostEqual(actual, expected, delta=2)
+
     def test_upload_quotes_paths_and_discards_unreadable_or_wrong_stream_files(self):
         for source, filename, content_type, expected_kind in (
             ("changing.mp4", "Örnek #1?.MP4", "application/octet-stream", "video"),

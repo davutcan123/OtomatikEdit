@@ -233,12 +233,18 @@ def append_text_overlay(lines, current_video, index, input_index, text_item, pos
     return next_label
 
 
-def append_sticker_overlay(lines, current_video, index, input_index, sticker_item, position, fps):
+def append_sticker_overlay(lines, current_video, index, input_index, sticker_item, position, fps, snapshot):
     next_label = f"[stickerv{index}]"
     x, y = position
+    frames = sticker_item.get("transformKeyframes", [])
+    if frames:
+        x = zoom_keyframe_focus_expression(frames, "x", sticker_item["x"])
+        y = zoom_keyframe_focus_expression(frames, "y", sticker_item["y"])
+        x = f"round(W*({layer_time_expression(x, sticker_item, fps, snapshot)})-w/2)"
+        y = f"round(H*({layer_time_expression(y, sticker_item, fps, snapshot)})-h/2)"
     lines.append(f"[{input_index}:v]loop=loop=-1:size=1:start=0,setpts=N/({fps}*TB)[stickercached{index}]")
     lines.append(
-        f"{current_video}[stickercached{index}]overlay={x}:{y}:"
+        f"{current_video}[stickercached{index}]overlay=x='{x}':y='{y}':"
         f"enable='between(t,{sticker_item['start']},{sticker_item['end']})':"
         f"eof_action=pass:shortest=1{next_label}"
     )
