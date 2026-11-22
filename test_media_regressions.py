@@ -474,6 +474,21 @@ class MediaRegressionTests(unittest.TestCase):
                 for actual, expected in zip(animated.getbbox(), static.getbbox()):
                     self.assertAlmostEqual(actual, expected, delta=2)
 
+    def test_sticker_supports_all_120_keyframes_in_video_and_snapshot(self):
+        clip = {"fileId": "short-audio.mp4", "start": 0, "end": 3}
+        sticker = {"preset": "target", "start": .5, "end": 4.6, "scale": 16,
+                   "transformKeyframes": [{"time": index / 30, "x": 20 + 60 * index / 119, "y": 50}
+                                          for index in range(120)]}
+        output = self.export([clip], stickers=[sticker])
+        for time, index in ((.5, 0), (2.5, 60), (4.5, 119)):
+            with self.subTest(time=time):
+                snapshot = self.export([clip], snapshot_time=time, stickers=[sticker])
+                for frame in (self.frame(snapshot), self.frame(output, time)):
+                    bounds = frame.convert("L").point(lambda value: 255 if value > 80 else 0).getbbox()
+                    self.assertIsNotNone(bounds)
+                    left, _, right, _ = bounds
+                    self.assertAlmostEqual((left + right) / 2, 32 + 96 * index / 119, delta=2)
+
     def test_upload_quotes_paths_and_discards_unreadable_or_wrong_stream_files(self):
         for source, filename, content_type, expected_kind in (
             ("changing.mp4", "Örnek #1?.MP4", "application/octet-stream", "video"),

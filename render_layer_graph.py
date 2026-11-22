@@ -36,14 +36,23 @@ def _keyframe_expression(base_value, keyframes, read_value):
             anchors[0] = anchor
         else:
             anchors.append(anchor)
-    expression = f"{anchors[-1][1]:.8f}"
-    for (left_time, left_value, _), (right_time, right_value, easing) in reversed(list(zip(anchors, anchors[1:]))):
+    def interval(first, last):
+        # FFmpeg limits expression recursion depth. Divide at the middle
+        # anchor so even the maximum number of keyframes fits that limit.
+        if first < last:
+            middle = (first + last + 1) // 2
+            cutoff = anchors[middle][0]
+            return f"if(lt(t,{cutoff:.8f}),{interval(first, middle - 1)},{interval(middle, last)})"
+        left_time, left_value, _ = anchors[first]
+        if first == len(anchors) - 1:
+            return f"{left_value:.8f}"
+        right_time, right_value, easing = anchors[first + 1]
         span = max(.0001, right_time - left_time)
         progress = f"((t-{left_time:.8f})/{span:.8f})"
         eased = zoom_keyframe_easing_expression(progress, easing)
-        value = f"({left_value:.8f}+({right_value-left_value:.8f})*({eased}))"
-        expression = f"if(lt(t,{right_time:.8f}),{value},{expression})"
-    return expression
+        return f"({left_value:.8f}+({right_value-left_value:.8f})*({eased}))"
+
+    return interval(0, len(anchors) - 1)
 
 
 def zoom_keyframe_scale_expression(base_scale: float, keyframes: list[dict]) -> str:
