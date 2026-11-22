@@ -135,6 +135,7 @@ def append_animated_image(lines, source, destination, item, index, width, height
     surface, bounded by the largest visible portion of this image object.
     """
     frames = item.get("transformKeyframes", [])
+    scale_opacity_frames = [frame for frame in frames if not frame.get("positionOnly")]
     animation = image_animation_expressions(
         item.get("animation", "none"),
         item.get("snapshot_layer_duration", item["end"] - item["start"]),
@@ -144,8 +145,8 @@ def append_animated_image(lines, source, destination, item, index, width, height
     def local(expression, variable="t"):
         return layer_time_expression(expression, item, fps, snapshot, variable)
 
-    scale = zoom_keyframe_scale_expression(100, frames)
-    opacity = zoom_keyframe_opacity_expression(item.get("opacity", 100), frames)
+    scale = zoom_keyframe_scale_expression(100, scale_opacity_frames)
+    opacity = zoom_keyframe_opacity_expression(item.get("opacity", 100), scale_opacity_frames)
     focus_x = zoom_keyframe_focus_expression(frames, "x", item.get("x", 50))
     focus_y = zoom_keyframe_focus_expression(frames, "y", item.get("y", 50))
     sx = f"({scale})*({animation['scale_x']})"
@@ -163,7 +164,7 @@ def append_animated_image(lines, source, destination, item, index, width, height
     y = f"H*({focus_y})-h/2+({dx})*{math.sin(base_angle):.8f}+({dy})*{math.cos(base_angle):.8f}"
     # Keep small objects compact. Very large objects need only the portion that
     # can reach the canvas, including the extra off-center travel of slide cards.
-    maximum_scale = max([1.0] + [frame["scale"] / 100 for frame in frames])
+    maximum_scale = max([1.0] + [frame["scale"] / 100 for frame in scale_opacity_frames])
     maximum_width, maximum_height = base_width * maximum_scale * 1.25, base_height * maximum_scale * 1.25
     rotated = item.get("rotation", 0) != 0 or animation["angle"] != "0"
     bound_width = bound_height = math.hypot(maximum_width, maximum_height)
@@ -175,7 +176,7 @@ def append_animated_image(lines, source, destination, item, index, width, height
     stage_height = max(4, 2 * math.ceil(min(bound_height, 2 * (height + extra_travel)) / 2) + 4)
     filters = ["format=rgba"]
     needs_opacity = (item.get("opacity", 100) != 100 or animation["opacity"] != "1"
-                     or any(frame.get("opacity", 100) != 100 for frame in frames))
+                     or any(frame.get("opacity", 100) != 100 for frame in scale_opacity_frames))
     if needs_opacity or animation["brightness"] != "1" or animation["contrast"] != "1":
         brightness = local(animation["brightness"], "T")
         contrast = local(animation["contrast"], "T")
@@ -213,12 +214,13 @@ def append_text_overlay(lines, current_video, index, input_index, text_item, pos
     frames = text_item.get("transformKeyframes", [])
     x_expr, y_expr = map(str, position)
     if frames:
-        text_scale = zoom_keyframe_scale_expression(100, frames)
-        text_opacity = zoom_keyframe_opacity_expression(100, frames)
+        scale_opacity_frames = [frame for frame in frames if not frame.get("positionOnly")]
+        text_scale = zoom_keyframe_scale_expression(100, scale_opacity_frames)
+        text_opacity = zoom_keyframe_opacity_expression(100, scale_opacity_frames)
         text_scale = layer_time_expression(text_scale, text_item, fps, snapshot)
         text_opacity = layer_time_expression(text_opacity, text_item, fps, snapshot, "T")
         source_width, source_height = size
-        maximum_scale = max(1.0, max(frame.get("scale", 100) for frame in frames) / 100)
+        maximum_scale = max([1.0] + [frame["scale"] / 100 for frame in scale_opacity_frames])
         padded_width = max(4, int(math.ceil(source_width * maximum_scale / 2) * 2 + 4))
         padded_height = max(4, int(math.ceil(source_height * maximum_scale / 2) * 2 + 4))
         text_x = zoom_keyframe_focus_expression(frames, "x", text_item.get("x", 50))

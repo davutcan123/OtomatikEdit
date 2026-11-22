@@ -1154,7 +1154,7 @@ def normalize_zoom_keyframes(items, output_duration: float) -> list[dict]:
         easing = item.get("easing")
         if not isinstance(easing, str) or easing not in ZOOM_KEYFRAME_EASINGS:
             easing = "smoother"
-        by_time[round(time, 4)] = {
+        frame = {
             "time": time,
             "scale": max(25.0, min(300.0, scale)),
             "x": max(0.0, min(100.0, focus_x)),
@@ -1162,6 +1162,9 @@ def normalize_zoom_keyframes(items, output_duration: float) -> list[dict]:
             "opacity": max(0.0, min(100.0, opacity)),
             "easing": easing,
         }
+        if item.get("positionOnly") is True:
+            frame["positionOnly"] = True
+        by_time[round(time, 4)] = frame
     return [by_time[key] for key in sorted(by_time)]
 
 

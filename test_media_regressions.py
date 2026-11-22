@@ -491,6 +491,46 @@ class MediaRegressionTests(unittest.TestCase):
                     left, _, right, _ = bounds
                     self.assertAlmostEqual((left + right) / 2, 32 + 96 * index / 119, delta=2)
 
+    def test_position_only_keyframes_preserve_text_and_image_scale_and_opacity(self):
+        clip = {"fileId": "short-audio.mp4", "start": 0, "end": 3}
+        styles = [{"time": 0, "scale": 100, "opacity": 50}, {"time": 1, "scale": 200, "opacity": 100}]
+        for existing_style in ([], styles):
+            with self.subTest(style=bool(existing_style)):
+                baseline = {
+                    "texts": [{"text": "TEST", "size": 125, "y": 25, "outlineWidth": 0, "shadow": False}],
+                    "images": [{"fileId": "still.png", "scale": 9, "y": 75, "opacity": 60}],
+                }
+                keyed = {}
+                for kind, (item,) in baseline.items():
+                    item.update(start=.5, end=2.5, transformKeyframes=existing_style)
+                    keyed[kind] = [{**item, "transformKeyframes": [*existing_style, {
+                        "time": .5, "x": 75, "y": item["y"], "scale": 280, "opacity": 5, "positionOnly": True,
+                    }]}]
+                baseline_video = self.export([clip], **baseline)
+                keyed_video = self.export([clip], **keyed)
+                for time in (.75, 1.25):
+                    before = self.export([clip], snapshot_time=time, **baseline)
+                    after = self.export([clip], snapshot_time=time, **keyed)
+                    for original, moved in ((self.frame(before), self.frame(after)),
+                                            (self.frame(baseline_video, time), self.frame(keyed_video, time))):
+                        for top, bottom in ((0, 48), (48, 96)):
+                            original_layer = original.crop((0, top, 160, bottom)).convert("L")
+                            moved_layer = moved.crop((0, top, 160, bottom)).convert("L")
+                            bounds = [layer.point(lambda value: 255 if value > 70 else 0).getbbox()
+                                      for layer in (original_layer, moved_layer)]
+                            self.assertTrue(all(bounds), (time, top, bounds))
+                            left, y1, right, y2 = bounds[0]
+                            moved_left, moved_y1, moved_right, moved_y2 = bounds[1]
+                            self.assertGreater((moved_left + moved_right - left - right) / 2, 10)
+                            self.assertAlmostEqual(moved_right - moved_left, right - left, delta=2)
+                            self.assertAlmostEqual(moved_y2 - moved_y1, y2 - y1, delta=2)
+                            if top == 0:
+                                self.assertAlmostEqual(moved_layer.getextrema()[1], original_layer.getextrema()[1], delta=13)
+                            else:
+                                original_color = original_layer.getpixel(((left + right) // 2, (y1 + y2) // 2))
+                                moved_color = moved_layer.getpixel(((moved_left + moved_right) // 2, (moved_y1 + moved_y2) // 2))
+                                self.assertAlmostEqual(moved_color, original_color, delta=7)
+
     def test_position_keyframes_use_ruler_time_across_overlaps_and_export_ranges(self):
         clips = [{"fileId": "short-audio.mp4", "start": 0, "end": 2, "timelineStart": index * 2}
                  for index in range(3)]
