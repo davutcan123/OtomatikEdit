@@ -84,6 +84,14 @@ def freeze_snapshot_expressions(filters, elapsed, fps):
 def layer_time_expression(expression, item, fps, snapshot, variable="t"):
     if snapshot:
         return snapshot_time_expression(expression, item["snapshot_elapsed"], fps)
+    if steps := item.get("_keyframe_ruler_steps"):
+        expression, count = re.subn(r"\bt\b", "ld(0)", expression)
+        if count == 0:
+            return expression
+        offsets = "".join(f"+{duration:.8f}*gte({variable},{cut:.8f})" for cut, duration in steps)
+        start = item["_keyframe_ruler_start"]
+        # Use a register local to this expression to evaluate the clock once.
+        return f"(st(0,max(0,{variable}{offsets}-{start:.8f}));{expression})"
     return re.sub(r"\bt\b", f"max(0,{variable}-{item['start']:.8f})", expression)
 
 

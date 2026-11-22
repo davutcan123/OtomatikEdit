@@ -82,7 +82,7 @@ class MediaRegressionTests(unittest.TestCase):
         response = self.client.get(f"/stream-events/{job_id}")
         return job_id, [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
 
-    def export(self, clips, *, snapshot_time=None, fps=30, multitrack=False, **layers):
+    def export(self, clips, *, snapshot_time=None, fps=30, multitrack=False, timeline_range=None, **layers):
         snapshot = snapshot_time is not None
         payload = {
             "file_id": clips[0]["fileId"], "segments": json.dumps(clips), "width": 160, "height": 96,
@@ -92,6 +92,8 @@ class MediaRegressionTests(unittest.TestCase):
         }
         if snapshot:
             payload["timeline_time"] = snapshot_time
+        if timeline_range is not None:
+            payload["range_in"], payload["range_out"] = timeline_range
         job_id, events = self.events("/start-snapshot" if snapshot else "/start-render", payload)
         self.assertFalse([item for item in events if item["type"] == "error"], events)
         self.assertTrue(any(item["type"] == "result" for item in events), events)
@@ -488,6 +490,39 @@ class MediaRegressionTests(unittest.TestCase):
                     self.assertIsNotNone(bounds)
                     left, _, right, _ = bounds
                     self.assertAlmostEqual((left + right) / 2, 32 + 96 * index / 119, delta=2)
+
+    def test_position_keyframes_use_ruler_time_across_overlaps_and_export_ranges(self):
+        clips = [{"fileId": "short-audio.mp4", "start": 0, "end": 2, "timelineStart": index * 2}
+                 for index in range(3)]
+        transitions = [{"boundary": index, "type": "fade", "duration": .5} for index in range(2)]
+        texts = [{"text": "I", "size": 180, "outlineWidth": 0, "shadow": False}]
+        stickers = [{"preset": "target", "scale": 16}]
+        images = [{"fileId": "still.png", "scale": 10}]
+        for layer, y, start in ((texts, 22, 1), (stickers, 47, 1), (images, 75, 2.5)):
+            layer[0].update(start=start, end=5.5, y=y, transformKeyframes=[
+                {"time": 0, "x": 20, "y": y},
+                {"time": 5 - start, "x": 80, "y": y, "easing": "linear"},
+            ])
+        layers = {"texts": texts, "stickers": stickers, "images": images, "transitions": transitions}
+        full = self.export(clips, **layers)
+        ranged = self.export(clips, timeline_range=(3, 5.25), **layers)
+        for ruler, output_time in ((1.8, 1.8), (3, 2.5), (5, 4)):
+            snapshot = self.export(clips, snapshot_time=ruler, **layers)
+            frames = [self.frame(snapshot), self.frame(full, output_time)]
+            if ruler >= 3:
+                frames.append(self.frame(ranged, output_time - 2.5))
+            for top, bottom, start in ((8, 34, 1), (34, 60, 1), (60, 92, 2.5)):
+                with self.subTest(ruler=ruler, band=top):
+                    for frame in frames:
+                        pixels = frame.crop((0, top, 160, bottom)).convert("L")
+                        bounds = pixels.point(lambda value: 255 if value > 80 else 0).getbbox()
+                        if ruler < start:
+                            self.assertIsNone(bounds)
+                        else:
+                            self.assertIsNotNone(bounds)
+                            left, _, right, _ = bounds
+                            progress = (ruler - start) / (5 - start)
+                            self.assertAlmostEqual((left + right) / 2, 32 + 96 * progress, delta=2)
 
     def test_upload_quotes_paths_and_discards_unreadable_or_wrong_stream_files(self):
         for source, filename, content_type, expected_kind in (

@@ -1208,12 +1208,17 @@ def adjust_texts_for_transitions(
     if not transitions:
         return items
     boundaries = crossfade_boundaries(segments, transitions)
+    ruler_steps = []
+    removed = 0.0
+    for boundary, duration in boundaries:
+        # The range projection collapses the consumed incoming pictures at
+        # the cut. Past that point, the layer reads the remaining ruler time.
+        ruler_steps.append((boundary - removed, duration))
+        removed += duration
     actual_duration = max(
         [s.get("timelineStart", 0) + (s["end"] - s["start"]) / s.get("speed", 1) for s in segments]
         + [item["end"] for item in items]
-    ) - sum(
-        item["duration"] for item in transitions
-    )
+    ) - removed
     adjusted = []
     for item in items:
         copy_item = dict(item)
@@ -1221,6 +1226,9 @@ def adjust_texts_for_transitions(
         end_shift = sum(duration for boundary, duration in boundaries if boundary < item["end"])
         copy_item["start"] = max(0.0, item["start"] - start_shift)
         copy_item["end"] = min(actual_duration, item["end"] - end_shift)
+        if item.get("transformKeyframes"):
+            copy_item["_keyframe_ruler_start"] = item["start"]
+            copy_item["_keyframe_ruler_steps"] = ruler_steps
         # Subtitle windows that straddle an overlap may collapse here. Their
         # final frame is resolved on the composed output clock.
         if item.get("kind") == "subtitle" or copy_item["end"] - copy_item["start"] >= 0.05:
