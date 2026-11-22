@@ -5,7 +5,6 @@ const test = require('node:test');
 const vm = require('node:vm');
 const html = fs.readFileSync(path.join(__dirname, '../templates/index.html'), 'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-const line = marker => script.split('\n').find(value => value.includes(marker));
 const between = (first, next) => script.slice(script.indexOf(first), script.indexOf(next, script.indexOf(first) + first.length));
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -38,7 +37,8 @@ function fixture() {
     between('    function beginTimedTrim', '    function setPreviewSource'),
     between('    function beginTimelineLayerDrag', '    function deleteSelectedLayer'),
     between('    function writeInspectorValue', '    function showTextProperties'),
-    line('function normalizedTextKeyframes('), line('function textTransformAtTime('),
+    between('    function normalizedTextKeyframes', '    function drawTextKeyframeEditor'),
+    between('    function newPositionKeyframeId', '    function positionKeyframeTime'),
   ].join('\n'), c);
   const pointer = x => ({ button: 0, clientX: x, preventDefault() {}, stopPropagation() {} });
   return { c, nodes, history, makeNode, pointer, move(x) { handlers.get('pointermove')?.(pointer(x)); }, up() { handlers.get('pointerup')?.(); }, handlers };
@@ -121,7 +121,7 @@ test('text and subtitle trims preserve keyframe boundary state and absolute rema
   for (const kind of ['text', 'subtitle']) for (const edge of ['left', 'right']) {
     const { c } = fixture(), original = { kind, start: 2, end: 8, x: 50, y: 50, transformKeyframes: [{ id: 'first', time: 0, scale: 100, x: 30, y: 40, opacity: 100, easing: 'linear' }, { id: 'last', time: 6, scale: 200, x: 70, y: 60, opacity: 20, easing: 'linear' }] }, item = plain(original);
     if (edge === 'left') item.start = 3.5;else item.end = 6;
-    c.rebaseTextKeyframes(item, original, edge);
+    c.rebaseTimedOverlayKeyframes(kind, item, original, edge);
     for (const time of [3.5, 4, 5, 6]) { const actual = c.textTransformAtTime(item, time), expected = c.textTransformAtTime(original, time);for (const key of ['scale', 'x', 'y', 'opacity']) assert.ok(Math.abs(actual[key] - expected[key]) < 1e-9, key); }
     if (edge === 'left') assert.equal(item.transformKeyframes.at(-1).time + item.start, 8);
   }

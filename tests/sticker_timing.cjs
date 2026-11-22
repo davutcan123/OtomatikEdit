@@ -28,7 +28,15 @@ function context() {
   // Include the shared sticker geometry helper when present, as well as the
   // production drawing/trim functions, rather than duplicating their logic.
   const start = script.includes('    function paintStickerClipTiming') ? '    function paintStickerClipTiming' : '    function drawStickerTimeline';
-  vm.runInContext(between(start, '    function beginStickerClipDrag') + between('    function drawStickerOverlay', '    function beginStickerPresetDrag') + between('    function timelineBoundaries', '    function fitClipPosition') + between('    function beginTimedTrim', '    function setPreviewSource'), c);
+  vm.runInContext([
+    between('    const ZOOM_EASINGS=', '    const clipSettings='),
+    between(start, '    function beginStickerClipDrag'),
+    between('    function drawStickerOverlay', '    function beginStickerPresetDrag'),
+    between('    function timelineBoundaries', '    function fitClipPosition'),
+    between('    function beginTimedTrim', '    function setPreviewSource'),
+    between('    function overlayTransformAtTime', '    function textTransformAtTime'),
+    between('    function newPositionKeyframeId', '    function positionKeyframeTime'),
+  ].join('\n'), c);
   return { c, nodes, listeners };
 }
 
