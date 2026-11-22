@@ -139,9 +139,10 @@ def append_animated_image(lines, source, destination, item, index, width, height
     """
     frames = item.get("transformKeyframes", [])
     scale_opacity_frames = [frame for frame in frames if not frame.get("positionOnly")]
+    layer_duration = item.get("_keyframe_ruler_duration", item["end"] - item["start"])
     animation = image_animation_expressions(
         item.get("animation", "none"),
-        item.get("snapshot_layer_duration", item["end"] - item["start"]),
+        item.get("snapshot_layer_duration", layer_duration),
         item.get("animationDuration", 1),
     )
 

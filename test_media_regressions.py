@@ -590,6 +590,25 @@ class MediaRegressionTests(unittest.TestCase):
         still = self.export(clips, snapshot_time=2.3, transitions=transitions, stickers=stickers)
         self.assertEqual(visible_bands(self.frame(still)), [True, False, True])
 
+    def test_keyframed_image_fadeout_keeps_ruler_duration_across_a_transition(self):
+        clips = [{"fileId": "short-audio.mp4", "start": 0, "end": 2, "timelineStart": index * 2}
+                 for index in range(2)]
+        transitions = [{"boundary": 0, "type": "fade", "duration": .5}]
+        image = {"fileId": "still.png", "start": 1, "end": 3.5, "scale": 30,
+                 "animation": "fadeout", "animationDuration": .4}
+        keyed = {**image, "transformKeyframes": [{"time": 0, "x": 50, "y": 50, "positionOnly": True}]}
+        baseline = self.export(clips, transitions=transitions, images=[image])
+        full = self.export(clips, transitions=transitions, images=[keyed])
+        ranged = self.export(clips, timeline_range=(3.3, 3.5), transitions=transitions, images=[keyed])
+        still = self.export(clips, snapshot_time=3.3, transitions=transitions, images=[keyed])
+
+        expected = self.frame(still).convert("L").getpixel((80, 48))
+        self.assertAlmostEqual(expected, 113, delta=8)
+        for output, time in ((baseline, 2.8), (full, 2.8), (ranged, 0)):
+            with self.subTest(output=output):
+                actual = self.frame(output, time).convert("L").getpixel((80, 48))
+                self.assertAlmostEqual(actual, expected, delta=8)
+
     def test_upload_quotes_paths_and_discards_unreadable_or_wrong_stream_files(self):
         for source, filename, content_type, expected_kind in (
             ("changing.mp4", "Örnek #1?.MP4", "application/octet-stream", "video"),

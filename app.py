@@ -1236,6 +1236,7 @@ def adjust_texts_for_transitions(
                 boundary <= item["end"] < boundary + duration for boundary, duration in boundaries
             )
             copy_item.update(start=start, end=end, _keyframe_ruler_start=item["start"],
+                             _keyframe_ruler_duration=item["end"] - item["start"],
                              _keyframe_ruler_steps=ruler_steps, _keyframe_end_exclusive=end_exclusive)
             adjusted.append(copy_item)
             continue
