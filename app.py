@@ -38,7 +38,7 @@ from render_overlays import compact_overlay
 from brush_masks import normalize_brush_strokes, brush_mask, create_brushed_image, brush_video_filter
 from render_layer_graph import (
     append_animated_image, append_sticker_overlay, append_text_overlay, freeze_snapshot_expressions,
-    image_effect_chain, image_visibility_expression, layer_time_expression, snapshot_time_expression,
+    image_effect_chain, layer_visibility_expression, layer_time_expression, snapshot_time_expression,
     zoom_keyframe_easing_expression, zoom_keyframe_focus_expression, zoom_keyframe_opacity_expression,
     zoom_keyframe_scale_expression,
 )
@@ -51,7 +51,7 @@ from studio_fonts import bundled_font_path, font_face_css, normalize_font_family
 from render_audio import atempo_chain, clip_audio_filter, join_audio, mix_audio_layers
 from render_timing import (
     align_output_frame_timestamps, crossfade_boundaries, first_output_frame, gif_clock_filters,
-    normalize_zoom_cadence, plan_render_timing, plan_video_frames, resolve_export_range,
+    normalize_zoom_cadence, plan_render_timing, plan_video_frames, project_legacy_ruler_time, resolve_export_range,
     source_frame_samples, subtitle_frame_interval,
 )
 
@@ -1225,13 +1225,24 @@ def adjust_texts_for_transitions(
     adjusted = []
     for item in items:
         copy_item = dict(item)
+        if item.get("transformKeyframes"):
+            start = project_legacy_ruler_time(item["start"], boundaries)
+            end = min(actual_duration, project_legacy_ruler_time(item["end"], boundaries))
+            if end - start <= 1e-8:
+                continue
+            # The composed frame at the cut uses the first remaining picture
+            # after the consumed incoming interval.
+            end_exclusive = any(
+                boundary <= item["end"] < boundary + duration for boundary, duration in boundaries
+            )
+            copy_item.update(start=start, end=end, _keyframe_ruler_start=item["start"],
+                             _keyframe_ruler_steps=ruler_steps, _keyframe_end_exclusive=end_exclusive)
+            adjusted.append(copy_item)
+            continue
         start_shift = sum(duration for boundary, duration in boundaries if boundary <= item["start"])
         end_shift = sum(duration for boundary, duration in boundaries if boundary < item["end"])
         copy_item["start"] = max(0.0, item["start"] - start_shift)
         copy_item["end"] = min(actual_duration, item["end"] - end_shift)
-        if item.get("transformKeyframes"):
-            copy_item["_keyframe_ruler_start"] = item["start"]
-            copy_item["_keyframe_ruler_steps"] = ruler_steps
         # Subtitle windows that straddle an overlap may collapse here. Their
         # final frame is resolved on the composed output clock.
         if item.get("kind") == "subtitle" or copy_item["end"] - copy_item["start"] >= 0.05:
@@ -2665,7 +2676,7 @@ async def run_render_job(job_id: str):
                 scaled_label = f"[imagestatic{index}]"
             lines.append(
                 f"{current_video}{scaled_label}overlay=x='{x_expr}':y='{y_expr}':"
-                f"enable='{image_visibility_expression(image_item)}':"
+                f"enable='{layer_visibility_expression(image_item)}':"
                 f"eof_action=pass:shortest=1{next_label}"
             )
             current_video = next_label

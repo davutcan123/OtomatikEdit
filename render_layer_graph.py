@@ -117,13 +117,16 @@ def image_effect_chain(lines, source, label, effect, intensity):
     return f"[{label}]"
 
 
-def image_visibility_expression(item):
+def layer_visibility_expression(item, *, exclusive_end=False):
     start, end = item["start"], item["end"]
+    time = "t"
     if item.get("_gif"):
-        start_us = round(start * MICROSECONDS_PER_SECOND)
-        end_us = round(end * MICROSECONDS_PER_SECOND)
-        return f"between(round(t*{MICROSECONDS_PER_SECOND}),{start_us},{end_us})"
-    return f"between(t,{start},{end})"
+        time = f"round(t*{MICROSECONDS_PER_SECOND})"
+        start = round(start * MICROSECONDS_PER_SECOND)
+        end = round(end * MICROSECONDS_PER_SECOND)
+    if exclusive_end or item.get("_keyframe_end_exclusive"):
+        return f"gte({time},{start})*lt({time},{end})"
+    return f"between({time},{start},{end})"
 
 
 def append_animated_image(lines, source, destination, item, index, width, height,
@@ -203,7 +206,7 @@ def append_animated_image(lines, source, destination, item, index, width, height
         lines.append(f"[{label}sharp][{label}blur]blend=all_expr='A*(1-({blur_amount}))+B*({blur_amount})'[{label}soft]")
         label += "soft"
     lines.append(f"{destination}[{label}]overlay=x='{local(x)}':y='{local(y)}':eval=frame:"
-                 f"enable='{image_visibility_expression(item)}':eof_action=pass:shortest=1[imagev{index}]")
+                 f"enable='{layer_visibility_expression(item)}':eof_action=pass:shortest=1[imagev{index}]")
     return f"[imagev{index}]"
 
 
@@ -241,10 +244,7 @@ def append_text_overlay(lines, current_video, index, input_index, text_item, pos
         overlay_input = animated_label
         x_expr = f"W*({text_x})-w/2"
         y_expr = f"H*({text_y})-h/2"
-    start, end = text_item["start"], text_item["end"]
-    visibility = f"between(t,{start},{end})"
-    if not snapshot and text_item["kind"] == "subtitle":
-        visibility = f"gte(t,{start})*lt(t,{end})"
+    visibility = layer_visibility_expression(text_item, exclusive_end=not snapshot and text_item["kind"] == "subtitle")
     lines.append(
         f"{current_video}{overlay_input}overlay=x='{x_expr}':y='{y_expr}':"
         f"enable='{visibility}':eof_action=pass:shortest=1{next_label}"
@@ -264,7 +264,7 @@ def append_sticker_overlay(lines, current_video, index, input_index, sticker_ite
     lines.append(f"[{input_index}:v]loop=loop=-1:size=1:start=0,setpts=N/({fps}*TB)[stickercached{index}]")
     lines.append(
         f"{current_video}[stickercached{index}]overlay=x='{x}':y='{y}':"
-        f"enable='between(t,{sticker_item['start']},{sticker_item['end']})':"
+        f"enable='{layer_visibility_expression(sticker_item)}':"
         f"eof_action=pass:shortest=1{next_label}"
     )
     return next_label

@@ -250,6 +250,14 @@ def crossfade_boundaries(segments, transitions):
     return boundaries
 
 
+def project_legacy_ruler_time(time, boundaries):
+    """Map editor time to export time after consuming legacy overlaps."""
+    # The incoming section used by an overlap shares an output boundary with
+    # the final outgoing picture in the legacy single-channel renderer.
+    removed = sum(min(duration, max(0, time - boundary)) for boundary, duration in boundaries)
+    return time - removed
+
+
 def subtitle_frame_interval(start, end, *, fps, duration):
     """Keep millisecond cue times and cover a real frame when a cue has none."""
     start_ms = round(start * 1000)
@@ -272,14 +280,8 @@ def resolve_export_range(start, end, *, fps, timeline_duration, output_duration,
         raise ValueError("Giriş ve çıkış noktaları timeline sınırları içinde olmalı.")
 
     boundaries = crossfade_boundaries(segments, transitions)
-
-    def projected(time):
-        # The incoming section already consumed by an overlap shares its end
-        # with the outgoing transition in the legacy single-channel renderer.
-        removed = sum(min(duration, max(0, time - boundary)) for boundary, duration in boundaries)
-        return min(time - removed, output_duration)
-
-    first, last = projected(start), projected(end)
+    first = min(project_legacy_ruler_time(start, boundaries), output_duration)
+    last = min(project_legacy_ruler_time(end, boundaries), output_duration)
     if last - first + .00001 < 1 / fps:
         raise ValueError("İşaretli çıktı aralığı en az bir kare sürmeli.")
     return first, last

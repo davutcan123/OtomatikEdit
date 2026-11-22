@@ -564,6 +564,32 @@ class MediaRegressionTests(unittest.TestCase):
                             progress = (ruler - start) / (5 - start)
                             self.assertAlmostEqual((left + right) / 2, 32 + 96 * progress, delta=2)
 
+    def test_animated_layer_visibility_uses_projected_overlap_boundaries(self):
+        clips = [{"fileId": "short-audio.mp4", "start": 0, "end": 2, "timelineStart": index * 2}
+                 for index in range(2)]
+        transitions = [{"boundary": 0, "type": "fade", "duration": .5}]
+        stickers = [{"preset": "target", "scale": 16, "start": start, "end": end, "y": y,
+                     "transformKeyframes": [{"time": 0, "x": 65, "y": y, "positionOnly": True}]}
+                    for y, start, end in ((20, 2.2, 3), (50, 1, 2.2), (80, 2.1, 2.4))]
+
+        def visible_bands(frame):
+            pixels = frame.convert("L").point(lambda value: 255 if value > 80 else 0)
+            return [bool(pixels.crop((0, top, 160, bottom)).getbbox()) for top, bottom in ((0, 34), (34, 62), (62, 96))]
+
+        full = self.export(clips, transitions=transitions, stickers=stickers)
+        ranged = self.export(clips, timeline_range=(2.2, 2.8), transitions=transitions, stickers=stickers)
+        for ruler, output_time, expected in ((1.8, 1.8, [False, True, False]),
+                                              (59 / 30, 59 / 30, [False, True, False]),
+                                              (2.5, 2, [True, False, False]),
+                                              (2.8, 2.3, [True, False, False])):
+            with self.subTest(ruler=ruler):
+                still = self.export(clips, snapshot_time=ruler, transitions=transitions, stickers=stickers)
+                self.assertEqual(visible_bands(self.frame(still)), expected)
+                self.assertEqual(visible_bands(self.frame(full, output_time)), expected)
+        self.assertEqual(visible_bands(self.frame(ranged, 0)), [True, False, False])
+        still = self.export(clips, snapshot_time=2.3, transitions=transitions, stickers=stickers)
+        self.assertEqual(visible_bands(self.frame(still)), [True, False, True])
+
     def test_upload_quotes_paths_and_discards_unreadable_or_wrong_stream_files(self):
         for source, filename, content_type, expected_kind in (
             ("changing.mp4", "Örnek #1?.MP4", "application/octet-stream", "video"),
